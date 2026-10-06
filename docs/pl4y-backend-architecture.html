@@ -1,0 +1,1464 @@
+<title>PL4Y Backend Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+:root{
+  --ground:#191817; --surface:#201F1D; --surface-2:#262523; --surface-3:#2E2C29;
+  --border:#37342F; --border-strong:#4A453D;
+  --text:#F2F0ED; --muted:#9C968D; --dim:#6E6862;
+  --accent:#FF641C; --accent-ink:#FF7C3E; --accent-soft:rgba(255,100,28,.13);
+  --ok:#4FB07A; --ok-soft:rgba(79,176,122,.14);
+  --warn:#D2A03A; --warn-soft:rgba(210,160,58,.14);
+  --crit:#E0575C; --crit-soft:rgba(224,87,92,.14);
+  --info:#7A9BEA; --info-soft:rgba(122,155,234,.14);
+  --shadow:0 1px 0 rgba(255,255,255,.03), 0 12px 32px -18px rgba(0,0,0,.8);
+  --display:"Archivo",system-ui,sans-serif;
+  --body:"Instrument Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --ground:#F7F5F2; --surface:#FFFFFF; --surface-2:#F1EEEA; --surface-3:#E9E5DF;
+    --border:#DED9D1; --border-strong:#C3BCB2;
+    --text:#1A1917; --muted:#6A645C; --dim:#8C857C;
+    --accent:#E24F0B; --accent-ink:#B83E06; --accent-soft:rgba(226,79,11,.09);
+    --ok:#1F7A4A; --ok-soft:rgba(31,122,74,.10);
+    --warn:#8A6414; --warn-soft:rgba(138,100,20,.10);
+    --crit:#BE3239; --crit-soft:rgba(190,50,57,.09);
+    --info:#33549E; --info-soft:rgba(51,84,158,.09);
+    --shadow:0 1px 2px rgba(26,25,23,.05), 0 10px 28px -20px rgba(26,25,23,.35);
+    color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --ground:#F7F5F2; --surface:#FFFFFF; --surface-2:#F1EEEA; --surface-3:#E9E5DF;
+  --border:#DED9D1; --border-strong:#C3BCB2;
+  --text:#1A1917; --muted:#6A645C; --dim:#8C857C;
+  --accent:#E24F0B; --accent-ink:#B83E06; --accent-soft:rgba(226,79,11,.09);
+  --ok:#1F7A4A; --ok-soft:rgba(31,122,74,.10);
+  --warn:#8A6414; --warn-soft:rgba(138,100,20,.10);
+  --crit:#BE3239; --crit-soft:rgba(190,50,57,.09);
+  --info:#33549E; --info-soft:rgba(51,84,158,.09);
+  --shadow:0 1px 2px rgba(26,25,23,.05), 0 10px 28px -20px rgba(26,25,23,.35);
+  color-scheme:light;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--text);
+  font-family:var(--body); font-size:15.5px; line-height:1.62;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+a{color:var(--accent-ink); text-decoration:none; border-bottom:1px solid var(--border-strong)}
+a:hover{border-bottom-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:3px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.mast{border-bottom:1px solid var(--border); background:var(--surface)}
+.mast-in{max-width:1220px;margin:0 auto;padding:34px 28px 26px}
+.wordmark{
+  font-family:var(--display); font-weight:800; font-stretch:118%;
+  font-size:clamp(32px,5.6vw,52px); line-height:.95; letter-spacing:-.035em;
+  margin:0; text-wrap:balance;
+}
+.wordmark em{font-style:normal;color:var(--accent)}
+.mast h2{
+  font-family:var(--display);font-weight:600;font-stretch:105%;
+  font-size:clamp(15px,2vw,19px);letter-spacing:-.01em;color:var(--muted);
+  margin:12px 0 0;max-width:64ch;line-height:1.45;
+}
+.metabar{
+  display:flex;flex-wrap:wrap;gap:0;margin:24px 0 0;
+  border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface-2);
+}
+.metabar div{flex:1 1 160px;padding:11px 15px;border-right:1px solid var(--border)}
+.metabar div:last-child{border-right:0}
+.metabar dt{font-family:var(--display);font-size:9.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0}
+.metabar dd{margin:3px 0 0;font-size:13px;font-weight:500;font-family:var(--mono)}
+
+.shell{max-width:1220px;margin:0 auto;padding:0 28px 80px;display:grid;grid-template-columns:214px minmax(0,1fr);gap:52px;align-items:start}
+@media (max-width:940px){.shell{grid-template-columns:1fr;gap:0}}
+
+.rail{position:sticky;top:0;padding:34px 0;max-height:100vh;overflow-y:auto}
+@media (max-width:940px){.rail{position:static;max-height:none;padding:20px 0 0}}
+.rail-title{font-family:var(--display);font-size:9.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0 0 12px}
+.rail ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px}
+.rail li{margin:0}
+.rail a{display:grid;grid-template-columns:24px 1fr;gap:6px;padding:5px 8px;border-radius:5px;border-bottom:0;color:var(--muted);font-size:13px;line-height:1.35}
+.rail a:hover{background:var(--surface-2);color:var(--text)}
+.rail a span{font-family:var(--mono);font-size:11.5px;color:var(--dim);padding-top:1px}
+.rail summary{cursor:pointer;font-family:var(--display);font-size:11px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);padding:10px 0;list-style:none}
+.rail summary::-webkit-details-marker{display:none}
+.rail summary::before{content:"\25B8  ";color:var(--accent)}
+.rail details[open] summary::before{content:"\25BE  "}
+@media (min-width:941px){.rail summary{display:none}}
+
+main{padding-top:34px;min-width:0}
+
+section{scroll-margin-top:12px}
+section+section{border-top:1px solid var(--border);margin-top:46px;padding-top:40px}
+.snum{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);display:block;margin-bottom:6px}
+h2.sh{font-family:var(--display);font-weight:700;font-stretch:110%;font-size:clamp(24px,3.4vw,32px);letter-spacing:-.028em;line-height:1.1;margin:0 0 12px;text-wrap:balance}
+h3{font-family:var(--display);font-weight:700;font-stretch:104%;font-size:17px;letter-spacing:-.012em;margin:36px 0 10px;text-wrap:balance}
+h4{font-family:var(--display);font-weight:700;font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:26px 0 8px}
+p{margin:0 0 14px;max-width:68ch}
+ul,ol.lst{margin:0 0 16px;padding-left:20px;max-width:68ch}
+li{margin-bottom:6px}
+li::marker{color:var(--dim)}
+strong{font-weight:600;color:var(--text)}
+em.lede{font-style:normal;color:var(--accent-ink)}
+.lead{font-size:17px;line-height:1.55;color:var(--muted);max-width:64ch;margin-bottom:20px}
+
+code{font-family:var(--mono);font-size:.875em;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;color:var(--text)}
+h3 code,h4 code,td code,th code,.dec code,.metabar code{background:transparent;border:0;padding:0}
+
+.code{margin:0 0 20px;border:1px solid var(--border);border-radius:9px;background:var(--surface);overflow:hidden;box-shadow:var(--shadow)}
+.code-hd{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.code-hd b{font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--text)}
+.code-hd i{font-style:normal;margin-left:auto;font-family:var(--display);letter-spacing:.11em;text-transform:uppercase;font-weight:700;font-size:9.5px;color:var(--dim)}
+.code pre{margin:0;padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.6px;line-height:1.68;color:var(--text);tab-size:2}
+.code .c{color:var(--dim)}
+.code .a{color:var(--accent-ink)}
+
+.tw{overflow-x:auto;margin:0 0 22px;border:1px solid var(--border);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;min-width:580px;font-size:13.4px}
+thead th{
+  font-family:var(--display);font-size:9.5px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--dim);text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2);white-space:nowrap;
+}
+td{padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--surface-2)}
+td.mono{font-family:var(--mono);font-size:12.3px}
+td.num{font-variant-numeric:tabular-nums;text-align:right}
+td.nw{white-space:nowrap}
+
+.pill{display:inline-block;font-family:var(--display);font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2.5px 7px;border-radius:4px;white-space:nowrap;line-height:1.5}
+.p-ok{background:var(--ok-soft);color:var(--ok)}
+.p-warn{background:var(--warn-soft);color:var(--warn)}
+.p-crit{background:var(--crit-soft);color:var(--crit)}
+.p-info{background:var(--info-soft);color:var(--info)}
+.p-acc{background:var(--accent-soft);color:var(--accent-ink)}
+.p-mute{background:var(--surface-3);color:var(--muted)}
+
+.note{border-left:2px solid var(--accent);background:var(--accent-soft);padding:13px 16px;border-radius:0 7px 7px 0;margin:0 0 20px;max-width:70ch}
+.note p:last-child{margin-bottom:0}
+.note b{font-family:var(--display);font-weight:700;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--accent-ink);display:block;margin-bottom:5px}
+.note.w{border-left-color:var(--warn);background:var(--warn-soft)}
+.note.w b{color:var(--warn)}
+
+.decisions{display:grid;grid-template-columns:repeat(auto-fit,minmax(266px,1fr));gap:1px;background:var(--border);border:1px solid var(--border);border-radius:9px;overflow:hidden;margin:0 0 22px}
+.dec{background:var(--surface);padding:15px 16px}
+.dec h5{font-family:var(--display);font-weight:700;font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);margin:0 0 5px}
+.dec b{display:block;font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--accent-ink);margin-bottom:6px;line-height:1.35}
+.dec p{margin:0;font-size:12.9px;line-height:1.55;color:var(--muted);max-width:none}
+
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:0 0 20px;padding:14px 16px;border:1px solid var(--border);border-radius:9px;background:var(--surface)}
+.flow .st{font-family:var(--mono);font-size:12px;font-weight:500;padding:4px 9px;border-radius:5px;background:var(--surface-3);color:var(--text);white-space:nowrap}
+.flow .st.t-ok{background:var(--ok-soft);color:var(--ok)}
+.flow .st.t-crit{background:var(--crit-soft);color:var(--crit)}
+.flow .st.t-warn{background:var(--warn-soft);color:var(--warn)}
+.flow .ar{color:var(--dim);font-size:13px}
+
+.dwrap{overflow-x:auto;border:1px solid var(--border);border-radius:9px;background:var(--surface);margin:0 0 10px;box-shadow:var(--shadow)}
+.dwrap svg{display:block;min-width:760px;width:100%;height:auto}
+.dg .bx{fill:var(--surface-2);stroke:var(--border-strong);stroke-width:1}
+.dg .bxa{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.2}
+.dg .grp{fill:none;stroke:var(--border-strong);stroke-width:1;stroke-dasharray:4 4}
+.dg .ln{stroke:var(--border-strong);stroke-width:1.3;fill:none}
+.dg .lna{stroke:var(--accent);stroke-width:1.4;fill:none}
+.dg .tl{font-family:var(--display);font-size:12.5px;font-weight:700;fill:var(--text);letter-spacing:-.01em}
+.dg .tm{font-family:var(--mono);font-size:11px;fill:var(--text)}
+.dg .ts{font-family:var(--body);font-size:10.5px;fill:var(--muted)}
+.dg .eb{font-family:var(--display);font-size:9px;font-weight:700;letter-spacing:.15em;fill:var(--dim)}
+.dg .lb{font-family:var(--mono);font-size:9.5px;fill:var(--dim)}
+.cap{font-size:12.5px;color:var(--dim);margin:0 0 24px;max-width:70ch}
+
+footer{border-top:1px solid var(--border);background:var(--surface)}
+.foot-in{max-width:1220px;margin:0 auto;padding:26px 28px 34px;display:flex;gap:20px;flex-wrap:wrap;align-items:baseline;justify-content:space-between}
+.foot-in p{margin:0;font-size:12.5px;color:var(--dim);max-width:62ch}
+.foot-in b{font-family:var(--display);font-weight:800;font-stretch:115%;letter-spacing:-.02em;font-size:15px;color:var(--text)}
+.foot-in b em{font-style:normal;color:var(--accent)}
+</style>
+
+<header class="mast">
+  <div class="mast-in">
+    <h1 class="wordmark">PL<em>4</em>Y &mdash; Backend Architecture</h1>
+    <h2>A buildable specification for the Phase&nbsp;1 platform: Express + TypeScript + GraphQL, PostgreSQL, Razorpay payments, Pusher live scoring, and a swappable Glicko&#8209;2 rating engine.</h2>
+    <dl class="metabar">
+      <div><dt>Runtime</dt><dd>Node 22 &middot; TS 5.x</dd></div>
+      <div><dt>API</dt><dd>GraphQL / Apollo 4</dd></div>
+      <div><dt>Payments</dt><dd>Razorpay</dd></div>
+      <div><dt>Realtime</dt><dd>Pusher Channels</dd></div>
+      <div><dt>Auth</dt><dd>Email OTP / Resend</dd></div>
+      <div><dt>Media</dt><dd>Cloudinary</dd></div>
+      <div><dt>Launch sport</dt><dd>Pickleball</dd></div>
+      <div><dt>Scope</dt><dd>Phase 1 + seams</dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="rail" aria-label="Sections">
+    <details open>
+      <summary>Contents</summary>
+      <p class="rail-title">Contents</p>
+      <ol>
+        <li><a href="#s1"><span>01</span>System shape</a></li>
+        <li><a href="#s2"><span>02</span>Runtime &amp; composition</a></li>
+        <li><a href="#s3"><span>03</span>Module map</a></li>
+        <li><a href="#s4"><span>04</span>Data model</a></li>
+        <li><a href="#s5"><span>05</span>GraphQL surface</a></li>
+        <li><a href="#s6"><span>06</span>Identity &amp; authorization</a></li>
+        <li><a href="#s7"><span>07</span>Registration &amp; payment</a></li>
+        <li><a href="#s8"><span>08</span>Tournament engine</a></li>
+        <li><a href="#s9"><span>09</span>Live scoring</a></li>
+        <li><a href="#s10"><span>10</span>Rating &amp; rankings</a></li>
+        <li><a href="#s11"><span>11</span>Jobs, cache, operations</a></li>
+        <li><a href="#s12"><span>12</span>Build order</a></li>
+        <li><a href="#s13"><span>13</span>Non-goals &amp; seams</a></li>
+      </ol>
+    </details>
+  </nav>
+
+  <main>
+
+  <section id="s1">
+    <span class="snum">&sect; 01</span>
+    <h2 class="sh">System shape</h2>
+    <p class="lead">One deployable API process, one worker process running the same image, and a small set of managed dependencies. Nothing here is a microservice, and nothing here needs to be.</p>
+
+    <p>The product loop in the brief &mdash; <em class="lede">discover &rarr; play &rarr; compete &rarr; track &rarr; rank</em> &mdash; is a single transactional story per player. Splitting it across services buys distributed transactions and buys nothing else at this scale. So: a <strong>modular monolith</strong>. Hard internal boundaries between thirteen modules, one process, one database. The boundaries are what make a later split cheap; the split itself waits until something forces it.</p>
+
+    <div class="dwrap">
+      <svg viewBox="0 0 980 620" class="dg" role="img" aria-label="Architecture diagram: mobile and web clients reach an Express API process exposing GraphQL plus three REST routes; a worker process shares the image; Postgres, Redis and Cloudinary sit below; Razorpay, Pusher, Resend and Cloudinary sit to the right.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <text class="eb" x="40" y="26">CLIENTS</text>
+        <rect class="bx" x="40" y="36" width="248" height="46" rx="7"/>
+        <text class="tl" x="56" y="59">PL4Y Mobile</text>
+        <text class="ts" x="56" y="74">Expo / React Native &middot; Apollo Client</text>
+        <rect class="bx" x="300" y="36" width="248" height="46" rx="7"/>
+        <text class="tl" x="316" y="59">Organizer Web</text>
+        <text class="ts" x="316" y="74">Next.js &middot; same GraphQL schema</text>
+
+        <g style="color:var(--border-strong)">
+          <path class="ln" d="M164 82 L164 108" marker-end="url(#ah)"/>
+          <path class="ln" d="M424 82 L424 108" marker-end="url(#ah)"/>
+          <path class="ln" d="M294 144 L294 168" marker-end="url(#ah)"/>
+          <path class="ln" d="M294 374 L294 398" marker-end="url(#ah)"/>
+          <path class="ln" d="M40 292 L16 292 L16 533 L34 533" marker-end="url(#ah)"/>
+          <path class="ln" d="M170 464 L170 500" marker-end="url(#ah)"/>
+          <path class="ln" d="M420 464 L420 500" marker-end="url(#ah)"/>
+        </g>
+
+        <rect class="bx" x="40" y="110" width="508" height="34" rx="7"/>
+        <text class="tm" x="56" y="132">TLS &middot; CDN &middot; WAF &middot; per-IP rate limit</text>
+
+        <rect class="bxa" x="40" y="168" width="508" height="206" rx="9"/>
+        <text class="eb" x="56" y="190">API PROCESS &mdash; EXPRESS 5 &middot; TYPESCRIPT</text>
+        <rect class="bx" x="56" y="200" width="236" height="50" rx="6"/>
+        <text class="tm" x="70" y="220">POST /graphql</text>
+        <text class="ts" x="70" y="236">Apollo Server 4 &middot; Pothos schema</text>
+        <rect class="bx" x="304" y="200" width="228" height="50" rx="6"/>
+        <text class="tm" x="318" y="220">POST /webhooks/razorpay</text>
+        <text class="ts" x="318" y="236">raw body &middot; HMAC &middot; idempotent</text>
+        <rect class="bx" x="56" y="258" width="236" height="50" rx="6"/>
+        <text class="tm" x="70" y="278">POST /pusher/auth</text>
+        <text class="ts" x="70" y="294">channel entitlement check</text>
+        <rect class="bx" x="304" y="258" width="228" height="50" rx="6"/>
+        <text class="tm" x="318" y="278">GET /healthz /readyz</text>
+        <text class="ts" x="318" y="294">liveness &middot; readiness &middot; metrics</text>
+        <rect class="bx" x="56" y="316" width="476" height="42" rx="6"/>
+        <text class="tm" x="70" y="334">13 domain modules</text>
+        <text class="ts" x="70" y="350">resolvers &rarr; services &rarr; repositories &middot; no resolver touches Prisma</text>
+
+        <rect class="bxa" x="40" y="398" width="508" height="66" rx="9"/>
+        <text class="eb" x="56" y="420">WORKER PROCESS &mdash; BULLMQ</text>
+        <text class="ts" x="56" y="438">seat-hold expiry &middot; score fan-out &middot; rating periods &middot; ranking rebuild</text>
+        <text class="ts" x="56" y="454">payment reconciliation &middot; push delivery &middot; bracket advance</text>
+
+        <rect class="grp" x="600" y="168" width="340" height="236" rx="9"/>
+        <text class="eb" x="616" y="190">THIRD PARTY</text>
+        <rect class="bx" x="616" y="200" width="308" height="46" rx="6"/>
+        <text class="tm" x="630" y="219">Razorpay</text>
+        <text class="ts" x="630" y="234">orders &middot; UPI / cards / netbanking &middot; refunds</text>
+        <rect class="bx" x="616" y="254" width="308" height="46" rx="6"/>
+        <text class="tm" x="630" y="273">Pusher Channels</text>
+        <text class="ts" x="630" y="288">live score &middot; standings &middot; personal events</text>
+        <rect class="bx" x="616" y="308" width="308" height="42" rx="6"/>
+        <text class="tm" x="630" y="327">Pusher Beams</text>
+        <text class="ts" x="630" y="342">push notifications &mdash; APNs / FCM</text>
+        <rect class="bx" x="616" y="358" width="308" height="40" rx="6"/>
+        <text class="tm" x="630" y="376">Resend</text>
+        <text class="ts" x="630" y="390">email OTP &middot; delivery + bounce webhooks</text>
+
+        <g style="color:var(--accent)">
+          <path class="lna" d="M548 223 L610 223" marker-end="url(#ah)"/>
+          <path class="lna" d="M548 277 L610 277" marker-end="url(#ah)"/>
+          <path class="lna" d="M548 430 L578 430 L578 329 L610 329" marker-end="url(#ah)"/>
+        </g>
+        <text class="lb" x="556" y="216">orders</text>
+        <text class="lb" x="556" y="270">publish</text>
+        <text class="lb" x="584" y="356">notify</text>
+
+        <text class="eb" x="36" y="492">MANAGED DATA</text>
+        <rect class="bx" x="36" y="500" width="288" height="66" rx="7"/>
+        <text class="tl" x="52" y="522">PostgreSQL 16</text>
+        <text class="ts" x="52" y="539">source of truth &middot; Prisma migrations</text>
+        <text class="ts" x="52" y="555">primary + replica for ranking reads</text>
+        <rect class="bx" x="340" y="500" width="288" height="66" rx="7"/>
+        <text class="tl" x="356" y="522">Redis 7</text>
+        <text class="ts" x="356" y="539">BullMQ queues &middot; rate limits</text>
+        <text class="ts" x="356" y="555">ranking cache &middot; persisted queries</text>
+        <rect class="bx" x="644" y="500" width="296" height="66" rx="7"/>
+        <text class="tl" x="660" y="522">Cloudinary</text>
+        <text class="ts" x="660" y="539">avatars &middot; event covers &middot; venue photos</text>
+        <text class="ts" x="660" y="555">signed upload &middot; named transforms</text>
+
+        <text class="lb" x="36" y="596">Everything above the managed-data line is provider-independent. Swapping Railway for AWS changes deployment, not design.</text>
+      </svg>
+    </div>
+    <p class="cap">Two processes from one image. The worker exists because seat-hold expiry, rating periods and score fan-out must not compete with request latency &mdash; not because the domain is distributed.</p>
+
+    <h3>The decisions that shape everything downstream</h3>
+    <div class="decisions">
+      <div class="dec">
+        <h5>API style</h5>
+        <b>GraphQL, one endpoint</b>
+        <p>The Home screen alone needs six unrelated collections. One typed round trip beats six REST calls on Indian mobile networks. The cost: depth and complexity limits are mandatory from day one, not later.</p>
+      </div>
+      <div class="dec">
+        <h5>Schema construction</h5>
+        <b>Pothos, code-first</b>
+        <p>Without NestJS decorators, Pothos gives the strongest TypeScript inference available. Its Prisma plugin resolves relations without hand-written loaders for the common cases.</p>
+      </div>
+      <div class="dec">
+        <h5>Realtime</h5>
+        <b>Pusher, not subscriptions</b>
+        <p>No WebSocket server to run, scale, or drain on deploy. The tradeoff: Pusher becomes a cache-invalidation transport and never a source of truth &mdash; see &sect;09.</p>
+      </div>
+      <div class="dec">
+        <h5>Money</h5>
+        <b>The webhook is the truth</b>
+        <p>Razorpay&rsquo;s client-side callback is a UI hint. A registration confirms only on a signature-verified <code>payment.captured</code> webhook, or on reconciliation against the Orders API.</p>
+      </div>
+      <div class="dec">
+        <h5>Rating</h5>
+        <b>Glicko&#8209;2, versioned</b>
+        <p>Amateur players compete in bursts around tournaments. Glicko&#8209;2&rsquo;s rating deviation models that inactivity; Elo cannot. Stored append-only with an algorithm version on every row.</p>
+      </div>
+      <div class="dec">
+        <h5>Sport-agnosticism</h5>
+        <b><code>sport_id</code> is NOT NULL</b>
+        <p>Every event, match, rating and ranking row carries it. Pickleball is a row in <code>sports</code>, never a branch in code. Formats and scoring rules are data, not enums.</p>
+      </div>
+    </div>
+
+    <div class="note">
+      <b>Hosting assumption</b>
+      <p>The brief specified Razorpay and Pusher but not a host. This document assumes containers on a managed platform &mdash; <strong>Railway or Render through Sprint&nbsp;6, AWS ECS Fargate at launch</strong> &mdash; with managed Postgres on Neon, managed Redis and Cloudinary for media. Nothing above the managed-data line changes if you decide otherwise; only &sect;11&rsquo;s deployment notes do.</p>
+    </div>
+  </section>
+
+  <section id="s2">
+    <span class="snum">&sect; 02</span>
+    <h2 class="sh">Runtime &amp; composition</h2>
+    <p class="lead">Express hosts four things: the GraphQL endpoint, the Razorpay webhook, the Pusher channel authorizer, and health checks. That list is closed &mdash; new features arrive as GraphQL fields, never as new routes.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Layer</th><th>Choice</th><th>Why this one</th></tr></thead>
+        <tbody>
+          <tr><td class="mono nw">Runtime</td><td class="mono">Node 22 LTS &middot; ESM &middot; TS <code>strict</code></td><td>Native fetch, stable test runner, long support window.</td></tr>
+          <tr><td class="mono nw">HTTP</td><td class="mono">Express 5</td><td>Async errors propagate to error middleware without a wrapper. That alone justifies not staying on 4.</td></tr>
+          <tr><td class="mono nw">GraphQL</td><td class="mono">Apollo Server 4 &middot; <code>expressMiddleware</code></td><td>Mounts as ordinary middleware, so webhook and auth routes stay plain Express.</td></tr>
+          <tr><td class="mono nw">Schema</td><td class="mono">Pothos + Prisma / Relay / DataLoader plugins</td><td>Code-first with real inference. SDL is generated and committed so clients can codegen.</td></tr>
+          <tr><td class="mono nw">Data access</td><td class="mono">Prisma 6</td><td>Migrations and a typed client, with <code>$queryRaw</code> for the few queries needing <code>FOR UPDATE</code>.</td></tr>
+          <tr><td class="mono nw">Jobs</td><td class="mono">BullMQ on Redis 7</td><td>Delayed jobs &mdash; the seat-hold expiry in &sect;07 depends on them &mdash; plus repeatable jobs for rating periods.</td></tr>
+          <tr><td class="mono nw">Validation</td><td class="mono">Zod</td><td>One library validates env vars at boot, webhook payloads, and GraphQL inputs.</td></tr>
+          <tr><td class="mono nw">Logging</td><td class="mono">Pino + OpenTelemetry</td><td>Structured JSON with a request ID that survives into enqueued jobs.</td></tr>
+          <tr><td class="mono nw">Tests</td><td class="mono">Vitest + Testcontainers</td><td>A real Postgres per suite. A mocked database hides exactly the constraint bugs this schema leans on.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Middleware order is load-bearing</h3>
+    <p>Razorpay signs the exact bytes it transmitted. If any JSON parser touches the webhook request first, the signature will never verify &mdash; and the failure presents as a credentials problem, which is how teams lose a day to it. Mount the webhook before the parser.</p>
+
+    <div class="code">
+      <div class="code-hd"><b>src/app.ts</b><i>composition root</i></div>
+      <pre><span class="c">// Order matters. Read the comments before reordering anything.</span>
+const app = express();
+app.set('trust proxy', 1);                <span class="c">// behind the platform load balancer</span>
+app.use(helmet());
+app.use(pinoHttp({ genReqId: () =&gt; randomUUID() }));
+
+<span class="c">// Razorpay signs the RAW request body. This route must be mounted</span>
+<span class="c">// before express.json(), or HMAC verification fails silently forever.</span>
+app.post('/webhooks/razorpay',
+  express.raw({ type: 'application/json' }),
+  razorpayWebhook);
+
+app.use(express.json({ limit: '256kb' }));
+
+<span class="c">// Pusher hands the client a socket_id; we decide what it may subscribe to.</span>
+app.post('/pusher/auth', requireAuth, pusherChannelAuth);
+
+app.get('/healthz', () =&gt; ok());          <span class="c">// process is alive</span>
+app.get('/readyz',  readiness);           <span class="c">// pg + redis reachable</span>
+
+await apollo.start();
+app.use('/graphql',
+  cors(corsPolicy),
+  expressMiddleware(apollo, { context: buildContext }));
+
+app.use(errorMiddleware);                 <span class="c">// last, always</span></pre>
+    </div>
+
+    <h3>Module contract</h3>
+    <p>Every module is a directory with the same four parts and three rules &mdash; enforced by an <code>eslint no-restricted-imports</code> rule, not by code review:</p>
+    <ol class="lst">
+      <li><strong>Resolvers never touch Prisma.</strong> They call a service and shape the result.</li>
+      <li><strong>Services never import GraphQL types.</strong> They take and return plain domain objects, which is what makes them callable from workers and webhooks too.</li>
+      <li><strong>Cross-module calls go through the other module&rsquo;s <code>index.ts</code></strong>, never its repository. <code>registration</code> may ask <code>payments</code> to create an order; it may not read the payments tables.</li>
+    </ol>
+
+    <div class="code">
+      <div class="code-hd"><b>src/</b><i>layout</i></div>
+      <pre>src/
+  app.ts                    <span class="c">// composition root, above</span>
+  worker.ts                 <span class="c">// same image, BullMQ entrypoint</span>
+  platform/                 <span class="c">// no domain logic lives here</span>
+    config.ts               <span class="c">// zod-parsed env; process exits at boot if invalid</span>
+    db.ts   redis.ts   queue.ts   outbox.ts
+    pusher.ts   razorpay.ts   email.ts   cloudinary.ts
+    auth/   errors/   logging/   loaders/
+  modules/
+    registration/
+      schema/               <span class="c">// Pothos object types, inputs, resolvers</span>
+      service/              <span class="c">// business rules — the part worth testing</span>
+      repo/                 <span class="c">// Prisma queries and raw SQL</span>
+      events.ts             <span class="c">// domain events this module emits</span>
+      index.ts              <span class="c">// the ONLY surface other modules may import</span>
+    ...twelve more
+  schema.ts                 <span class="c">// merges module schemas into one executable schema</span></pre>
+    </div>
+
+    <div class="note">
+      <b>Outbox, not an in-process event bus</b>
+      <p>Modules talk to each other synchronously through service calls. Side effects that can fail independently &mdash; sending a push, recomputing a ranking, publishing to Pusher &mdash; are written to an <code>outbox</code> table inside the same transaction as the state change, then drained into BullMQ by the worker. An in-process emitter looks decoupled and quietly loses work whenever the process dies mid-request.</p>
+    </div>
+  </section>
+
+  <section id="s3">
+    <span class="snum">&sect; 03</span>
+    <h2 class="sh">Module map</h2>
+    <p class="lead">Thirteen domain modules over a shared platform layer. Table ownership is exclusive: exactly one module writes to any given table.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Module</th><th>Owns</th><th>Public surface</th><th>Depends on</th><th>Phase</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">identity</td><td>users, otp_challenges, refresh_tokens, event_staff</td><td class="mono">issueOtp, verifyOtp, rotateSession, grantsFor</td><td class="mono">&mdash;</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">profile</td><td>player_profiles, player_sports, achievements, follows</td><td class="mono">byId, publicView, updateSports</td><td class="mono">identity, sport</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">sport</td><td>sports, formats, skill_bands, scoring_rules</td><td class="mono">list, formatFor, scoringRuleFor</td><td class="mono">&mdash;</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">events</td><td>events, event_categories, event_media</td><td class="mono">search, byId, publish, capacityOf</td><td class="mono">sport, venues</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">venues</td><td>venues, venue_courts</td><td class="mono">search, byId, courtsFor</td><td class="mono">&mdash;</td><td><span class="pill p-mute">P2</span></td></tr>
+          <tr><td class="mono">registration</td><td>registrations, teams, team_members, invites, seat_holds</td><td class="mono">begin, invitePartner, accept, confirm, cancel</td><td class="mono">events, payments, profile</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">payments</td><td>payment_orders, payments, refunds, webhook_events, ledger</td><td class="mono">createOrder, handleWebhook, refund, reconcile</td><td class="mono">&mdash;</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">tournament</td><td>tournaments, matches, court_assignments</td><td class="mono">generateDraw, schedule, advance</td><td class="mono">events, registration</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">scoring</td><td>match_score_events, match_results</td><td class="mono">start, recordPoint, submit, confirm</td><td class="mono">tournament, sport</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">rating</td><td>rating_events, rankings, rating_periods</td><td class="mono">applyMatch, ratingFor, leaderboard</td><td class="mono">scoring, profile</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">notifications</td><td>notifications, device_registrations, preferences</td><td class="mono">emit, feed, markRead</td><td class="mono">identity</td><td><span class="pill p-acc">P1</span></td></tr>
+          <tr><td class="mono">games</td><td>games, game_participants</td><td class="mono">search, create, join, leave</td><td class="mono">sport, venues, profile</td><td><span class="pill p-mute">P2</span></td></tr>
+          <tr><td class="mono">social</td><td>challenges, feed projections</td><td class="mono">challenge, respond, feedFor</td><td class="mono">profile</td><td><span class="pill p-mute">P2</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><code>follows</code> lives in <code>profile</code> rather than <code>social</code> on purpose: following is read on every profile screen in Phase&nbsp;1, while challenges are Phase&nbsp;2. Filing them together would make a Phase&nbsp;1 screen depend on a Phase&nbsp;2 module.</p>
+  </section>
+
+  <section id="s4">
+    <span class="snum">&sect; 04</span>
+    <h2 class="sh">Data model</h2>
+    <p class="lead">PostgreSQL 16, one schema, migrations through Prisma. The tables below are the ones with non-obvious shape; the rest follow directly from the entity list in the brief.</p>
+
+    <h3>Conventions</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Convention</th><th>Rule</th><th>Reason</th></tr></thead>
+        <tbody>
+          <tr><td class="mono nw">Primary keys</td><td class="mono">UUIDv7</td><td>Time-sortable, so index locality stays good without exposing a sequential count of your registrations to competitors.</td></tr>
+          <tr><td class="mono nw">Money</td><td class="mono">bigint <code>*_paise</code></td><td>Integer minor units. No float touches money anywhere in the system, including in GraphQL.</td></tr>
+          <tr><td class="mono nw">Time</td><td class="mono">timestamptz, UTC</td><td>Events also store <code>timezone</code> so &ldquo;Saturday 9am&rdquo; survives a DST-free but multi-zone future.</td></tr>
+          <tr><td class="mono nw">Sport</td><td class="mono">sport_id NOT NULL</td><td>On every competitive row. This is the single constraint that keeps multi-sport real rather than aspirational.</td></tr>
+          <tr><td class="mono nw">Status columns</td><td class="mono">text + CHECK</td><td>Postgres enums need a migration to extend; a CHECK constraint does not, and states will change.</td></tr>
+          <tr><td class="mono nw">Deletion</td><td class="mono">soft only where audited</td><td>Registrations, payments and matches are never hard-deleted. Games and follows are.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Identity and profile</h3>
+    <div class="code">
+      <div class="code-hd"><b>001_identity.sql</b><i>ddl</i></div>
+      <pre>CREATE TABLE users (
+  id              uuid PRIMARY KEY,
+  email           citext UNIQUE NOT NULL,      <span class="c">-- the identity</span>
+  phone_e164      text,                        <span class="c">-- optional contact, never auth</span>
+  display_name    text NOT NULL,
+  avatar_public_id text,                       <span class="c">-- Cloudinary public_id, not a URL</span>
+  status          text NOT NULL DEFAULT 'active'
+                  CHECK (status IN ('active','suspended','deleted')),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE otp_challenges (
+  id              uuid PRIMARY KEY,
+  email           citext NOT NULL,
+  code_hash       text NOT NULL,               <span class="c">-- argon2id; never store the code</span>
+  purpose         text NOT NULL CHECK (purpose IN ('signup','login','email_change')),
+  attempts        smallint NOT NULL DEFAULT 0,
+  consumed_at     timestamptz,
+  expires_at      timestamptz NOT NULL,        <span class="c">-- now() + 10 minutes</span>
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON otp_challenges (email, created_at DESC);
+
+CREATE TABLE refresh_tokens (
+  id              uuid PRIMARY KEY,
+  user_id         uuid NOT NULL REFERENCES users(id),
+  token_hash      text NOT NULL UNIQUE,
+  family_id       uuid NOT NULL,               <span class="c">-- rotation lineage</span>
+  device_label    text,
+  revoked_at      timestamptz,
+  replaced_by     uuid REFERENCES refresh_tokens(id),
+  expires_at      timestamptz NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+<span class="c">-- Organizer is a grant on an event, not a global role. This is what</span>
+<span class="c">-- stops one organizer from touching another organizer's tournament.</span>
+<span class="c">-- Shown here for context; the events FK lands in 002, after that table.</span>
+CREATE TABLE event_staff (
+  event_id        uuid NOT NULL REFERENCES events(id),
+  user_id         uuid NOT NULL REFERENCES users(id),
+  role            text NOT NULL CHECK (role IN ('owner','manager','scorer')),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, user_id)
+);
+
+CREATE TABLE player_sports (
+  player_id       uuid NOT NULL REFERENCES player_profiles(id),
+  sport_id        uuid NOT NULL REFERENCES sports(id),
+  skill_band      text NOT NULL,               <span class="c">-- self-declared at onboarding</span>
+  rating          numeric(7,2),                <span class="c">-- settled, from rating_events</span>
+  rating_dev      numeric(7,2),                <span class="c">-- Glicko-2 RD</span>
+  volatility      numeric(7,5),
+  matches_played  integer NOT NULL DEFAULT 0,
+  PRIMARY KEY (player_id, sport_id)
+);</pre>
+    </div>
+
+    <h3>Events, categories, capacity</h3>
+    <p>An <strong>event</strong> is the thing a player discovers; an <strong>event category</strong> is what they actually register for &mdash; Men&rsquo;s Doubles 3.5, Mixed Doubles Open. Capacity, fee and format live on the category, never the event, because a single tournament sells eight different draws at eight different prices.</p>
+
+    <div class="code">
+      <div class="code-hd"><b>002_events.sql</b><i>ddl</i></div>
+      <pre>CREATE TABLE events (
+  id              uuid PRIMARY KEY,
+  sport_id        uuid NOT NULL REFERENCES sports(id),
+  organizer_id    uuid NOT NULL REFERENCES users(id),
+  venue_id        uuid REFERENCES venues(id),
+  slug            text UNIQUE NOT NULL,        <span class="c">-- deep links: pl4y.app/e/{slug}</span>
+  title           text NOT NULL,
+  description     text,
+  city            text NOT NULL,
+  geo             geography(Point,4326),       <span class="c">-- PostGIS; map + radius search</span>
+  timezone        text NOT NULL DEFAULT 'Asia/Kolkata',
+  starts_at       timestamptz NOT NULL,
+  ends_at         timestamptz NOT NULL,
+  registration_closes_at timestamptz NOT NULL,
+  cancellation_cutoff_at timestamptz,          <span class="c">-- full refund before this</span>
+  status          text NOT NULL DEFAULT 'draft'
+                  CHECK (status IN ('draft','published','live','completed','cancelled')),
+  cover_public_id text,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+<span class="c">-- The Explore query. Partial index: unpublished events are never listed,</span>
+<span class="c">-- so they should not be in the index either.</span>
+CREATE INDEX events_discovery_idx
+  ON events (sport_id, city, starts_at)
+  WHERE status IN ('published','live');
+CREATE INDEX events_geo_idx ON events USING gist (geo)
+  WHERE status IN ('published','live');
+
+CREATE TABLE event_categories (
+  id              uuid PRIMARY KEY,
+  event_id        uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  sport_id        uuid NOT NULL REFERENCES sports(id),
+  name            text NOT NULL,               <span class="c">-- "Men's Doubles 3.5"</span>
+  format          text NOT NULL,               <span class="c">-- singles | doubles | mixed_doubles | team</span>
+  team_size       smallint NOT NULL DEFAULT 1,
+  draw_type       text NOT NULL DEFAULT 'single_elim_with_plate',
+  skill_min       numeric(4,2), skill_max numeric(4,2),
+  age_min         smallint,     age_max   smallint,
+  capacity        integer NOT NULL,            <span class="c">-- entries, not people</span>
+  entry_fee_paise bigint NOT NULL,
+  platform_fee_paise bigint NOT NULL DEFAULT 0,
+  tax_bps         integer NOT NULL DEFAULT 1800,  <span class="c">-- 18% GST, basis points</span>
+  status          text NOT NULL DEFAULT 'open'
+                  CHECK (status IN ('open','full','closed','drawn','completed'))
+);</pre>
+    </div>
+
+    <div class="note">
+      <b>Price breakdown lives on the server</b>
+      <p>The brief requires the fee breakdown be shown before payment. The client never computes it. A <code>priceQuote</code> field on the category returns <code>{ entryFee, platformFee, tax, total }</code> from the same function the order-creation path calls, so what the player agreed to and what Razorpay charges cannot drift.</p>
+    </div>
+
+    <h3>Registration, teams and holds</h3>
+    <p>Three tables carry the hard part of &sect;07: <code>registrations</code> (one row per entry, singles or doubles), <code>teams</code> plus <code>team_members</code>, and <code>seat_holds</code>, which is what stops a category from overselling while four people sit in Razorpay&rsquo;s checkout at once.</p>
+
+    <div class="code">
+      <div class="code-hd"><b>003_registration.sql</b><i>ddl</i></div>
+      <pre>CREATE TABLE registrations (
+  id              uuid PRIMARY KEY,
+  event_id        uuid NOT NULL REFERENCES events(id),
+  event_category_id uuid NOT NULL REFERENCES event_categories(id),
+  sport_id        uuid NOT NULL REFERENCES sports(id),
+  captain_user_id uuid NOT NULL REFERENCES users(id),   <span class="c">-- the payer</span>
+  team_id         uuid REFERENCES teams(id),            <span class="c">-- null for singles</span>
+  status          text NOT NULL DEFAULT 'draft' CHECK (status IN (
+                    'draft','awaiting_partner','payment_pending',
+                    'confirmed','checked_in','withdrawn',
+                    'expired','payment_failed','refunded')),
+  seed            integer,                              <span class="c">-- set at draw time</span>
+  amount_paise    bigint NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  confirmed_at    timestamptz
+);
+
+<span class="c">-- A player cannot hold two live entries in the same category.</span>
+CREATE UNIQUE INDEX reg_one_live_per_player
+  ON registrations (event_category_id, captain_user_id)
+  WHERE status IN ('awaiting_partner','payment_pending','confirmed','checked_in');
+
+CREATE TABLE registration_invites (
+  id              uuid PRIMARY KEY,
+  registration_id uuid NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
+  invited_email   citext NOT NULL,        <span class="c">-- partner may have no account yet</span>
+  invited_user_id uuid REFERENCES users(id),
+  token           text NOT NULL UNIQUE,   <span class="c">-- deep link payload</span>
+  status          text NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending','accepted','declined','expired')),
+  expires_at      timestamptz NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+<span class="c">-- Capacity reservation with a TTL. Correctness lives in Postgres,</span>
+<span class="c">-- not Redis: a lost Redis key here means an oversold tournament.</span>
+CREATE TABLE seat_holds (
+  id              uuid PRIMARY KEY,
+  event_category_id uuid NOT NULL REFERENCES event_categories(id),
+  registration_id uuid NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
+  seats           smallint NOT NULL DEFAULT 1,
+  expires_at      timestamptz NOT NULL,
+  released_at     timestamptz
+);
+CREATE INDEX seat_holds_active_idx
+  ON seat_holds (event_category_id)
+  WHERE released_at IS NULL;</pre>
+    </div>
+
+    <h3>Payments and the money trail</h3>
+    <div class="code">
+      <div class="code-hd"><b>004_payments.sql</b><i>ddl</i></div>
+      <pre>CREATE TABLE payment_orders (
+  id              uuid PRIMARY KEY,
+  registration_id uuid NOT NULL REFERENCES registrations(id),
+  razorpay_order_id text UNIQUE NOT NULL,
+  entry_fee_paise bigint NOT NULL,
+  platform_fee_paise bigint NOT NULL,
+  tax_paise       bigint NOT NULL,
+  amount_paise    bigint NOT NULL,          <span class="c">-- what Razorpay is told to charge</span>
+  currency        text NOT NULL DEFAULT 'INR',
+  status          text NOT NULL DEFAULT 'created'
+                  CHECK (status IN ('created','attempted','paid','failed','expired')),
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE payments (
+  id              uuid PRIMARY KEY,
+  payment_order_id uuid NOT NULL REFERENCES payment_orders(id),
+  razorpay_payment_id text UNIQUE NOT NULL,
+  method          text,                     <span class="c">-- upi | card | netbanking | wallet</span>
+  amount_paise    bigint NOT NULL,
+  status          text NOT NULL CHECK (status IN
+                    ('authorized','captured','failed','refunded','partially_refunded')),
+  failure_reason  text,
+  captured_at     timestamptz,
+  raw             jsonb NOT NULL            <span class="c">-- the payload, for disputes</span>
+);
+
+CREATE TABLE refunds (
+  id              uuid PRIMARY KEY,
+  payment_id      uuid NOT NULL REFERENCES payments(id),
+  razorpay_refund_id text UNIQUE,
+  amount_paise    bigint NOT NULL,
+  reason          text NOT NULL,            <span class="c">-- player_cancelled | event_cancelled | ...</span>
+  status          text NOT NULL CHECK (status IN ('pending','processed','failed')),
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  processed_at    timestamptz
+);
+
+<span class="c">-- Idempotency. Razorpay retries; this table is why that is harmless.</span>
+CREATE TABLE payment_webhook_events (
+  razorpay_event_id text PRIMARY KEY,
+  event_type      text NOT NULL,
+  payload         jsonb NOT NULL,
+  received_at     timestamptz NOT NULL DEFAULT now(),
+  processed_at    timestamptz
+);</pre>
+    </div>
+
+    <h3>Matches, results and the append-only score log</h3>
+    <div class="code">
+      <div class="code-hd"><b>005_tournament.sql</b><i>ddl</i></div>
+      <pre>CREATE TABLE matches (
+  id              uuid PRIMARY KEY,
+  tournament_id   uuid NOT NULL REFERENCES tournaments(id),
+  event_category_id uuid NOT NULL REFERENCES event_categories(id),
+  sport_id        uuid NOT NULL REFERENCES sports(id),
+  bracket         text NOT NULL CHECK (bracket IN ('championship','plate')),
+  round           smallint NOT NULL,        <span class="c">-- 1 = first round</span>
+  slot            smallint NOT NULL,        <span class="c">-- position within the round</span>
+  side_a_registration_id uuid REFERENCES registrations(id),
+  side_b_registration_id uuid REFERENCES registrations(id),
+  <span class="c">-- Wiring generated at draw time. Both directions, so a result</span>
+  <span class="c">-- advances the winner AND drops the loser into the plate in one write.</span>
+  winner_match_id uuid REFERENCES matches(id),
+  winner_slot     smallint CHECK (winner_slot IN (0,1)),
+  loser_match_id  uuid REFERENCES matches(id),
+  loser_slot      smallint CHECK (loser_slot IN (0,1)),
+  court_id        uuid REFERENCES venue_courts(id),
+  scheduled_at    timestamptz,
+  status          text NOT NULL DEFAULT 'scheduled' CHECK (status IN
+                    ('scheduled','ready','live','awaiting_confirm','completed','walkover','void')),
+  current_score   jsonb,                    <span class="c">-- denormalized; see §09</span>
+  score_seq       integer NOT NULL DEFAULT 0,
+  UNIQUE (tournament_id, bracket, round, slot)
+);
+CREATE INDEX matches_live_idx ON matches (event_category_id, status, scheduled_at);
+
+<span class="c">-- Append-only. Never updated, never deleted. This is what makes an</span>
+<span class="c">-- undo, a dispute, and a mid-match device failure all recoverable.</span>
+CREATE TABLE match_score_events (
+  id              bigserial PRIMARY KEY,
+  match_id        uuid NOT NULL REFERENCES matches(id),
+  seq             integer NOT NULL,
+  kind            text NOT NULL CHECK (kind IN
+                    ('point','undo','timeout','game_end','match_end','correction')),
+  scoring_side    text CHECK (scoring_side IN ('a','b')),
+  state_after     jsonb NOT NULL,           <span class="c">-- full score, not a delta</span>
+  recorded_by     uuid NOT NULL REFERENCES users(id),
+  recorded_at     timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (match_id, seq)
+);
+
+CREATE TABLE match_results (
+  match_id        uuid PRIMARY KEY REFERENCES matches(id),
+  winner_registration_id uuid NOT NULL REFERENCES registrations(id),
+  loser_registration_id  uuid REFERENCES registrations(id),
+  games           jsonb NOT NULL,           <span class="c">-- [{a:11,b:7},{a:9,b:11},{a:11,b:5}]</span>
+  outcome         text NOT NULL CHECK (outcome IN ('played','walkover','retired','forfeit')),
+  submitted_by    uuid NOT NULL REFERENCES users(id),
+  confirmed_by    uuid REFERENCES users(id),
+  confirmed_at    timestamptz,
+  rating_applied  boolean NOT NULL DEFAULT false
+);</pre>
+    </div>
+
+    <h3>Rating and rankings</h3>
+    <p>Per the brief&rsquo;s own design note: <code>rating_events</code> is the append-only log and <code>rankings</code> is a cache recomputed on write. The addition here is <code>algo_version</code> &mdash; it is what lets you replace Glicko&#8209;2 later and recompute every historical rating without a schema migration.</p>
+
+    <div class="code">
+      <div class="code-hd"><b>006_rating.sql</b><i>ddl</i></div>
+      <pre>CREATE TABLE rating_events (
+  id              bigserial PRIMARY KEY,
+  player_id       uuid NOT NULL REFERENCES player_profiles(id),
+  sport_id        uuid NOT NULL REFERENCES sports(id),
+  match_id        uuid REFERENCES matches(id),
+  rating_period_id uuid REFERENCES rating_periods(id),
+  algo_version    text NOT NULL,            <span class="c">-- 'glicko2-v1'</span>
+  rating_before   numeric(7,2) NOT NULL,
+  rating_after    numeric(7,2) NOT NULL,
+  rd_before       numeric(7,2) NOT NULL,
+  rd_after        numeric(7,2) NOT NULL,
+  volatility_after numeric(7,5) NOT NULL,
+  is_provisional  boolean NOT NULL DEFAULT false,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON rating_events (player_id, sport_id, created_at DESC);
+<span class="c">-- One settled rating row per player per match. Provisional rows are</span>
+<span class="c">-- superseded when the weekly period runs.</span>
+CREATE UNIQUE INDEX rating_events_settled_uniq
+  ON rating_events (player_id, match_id) WHERE is_provisional = false;
+
+CREATE TABLE rankings (
+  sport_id        uuid NOT NULL REFERENCES sports(id),
+  scope           text NOT NULL,            <span class="c">-- 'national' | 'city:Bengaluru' | 'age:35+'</span>
+  player_id       uuid NOT NULL REFERENCES player_profiles(id),
+  rank            integer NOT NULL,         <span class="c">-- dense</span>
+  rating          numeric(7,2) NOT NULL,
+  matches_played  integer NOT NULL,
+  movement        integer NOT NULL DEFAULT 0,  <span class="c">-- vs previous rebuild</span>
+  computed_at     timestamptz NOT NULL,
+  PRIMARY KEY (sport_id, scope, player_id)
+);
+CREATE INDEX rankings_board_idx ON rankings (sport_id, scope, rank);</pre>
+    </div>
+  </section>
+
+  <section id="s5">
+    <span class="snum">&sect; 05</span>
+    <h2 class="sh">GraphQL surface</h2>
+    <p class="lead">One schema, Relay connections for every list, and four types implementing <code>Node</code> &mdash; exactly the four deep-link targets the brief names.</p>
+
+    <h3>Rules</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Rule</th><th>Implementation</th><th>Why it is not optional</th></tr></thead>
+        <tbody>
+          <tr><td class="nw">Complexity limit</td><td class="mono">graphql-query-complexity, budget 1000</td><td>A public mobile graph without a cost limit is a denial-of-service endpoint you shipped on purpose.</td></tr>
+          <tr><td class="nw">Depth limit</td><td class="mono">max depth 10</td><td>Blocks recursive <code>player &rarr; follows &rarr; player</code> expansion.</td></tr>
+          <tr><td class="nw">Trusted documents</td><td class="mono">Hash allowlist from client codegen</td><td>In production the app sends a hash, not a query string. Arbitrary queries are rejected; the hash also cuts request size on 3G.</td></tr>
+          <tr><td class="nw">Introspection</td><td class="mono">off in production</td><td>The committed SDL is the contract; the endpoint need not publish it.</td></tr>
+          <tr><td class="nw">Pagination</td><td class="mono">Relay cursors, max <code>first: 50</code></td><td>Cursor pagination on <code>(starts_at, id)</code> stays correct while events are being published underneath the reader.</td></tr>
+          <tr><td class="nw">N+1</td><td class="mono">DataLoader per request</td><td>Loaders are built in <code>buildContext</code> and die with the request, so no cross-user cache leak is possible.</td></tr>
+          <tr><td class="nw">Mutations</td><td class="mono">verb-first, payload type</td><td><code>registerForEvent(input:) : RegisterForEventPayload</code> with a typed <code>userError</code> field &mdash; expected failures are data, not exceptions.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Core schema</h3>
+    <div class="code">
+      <div class="code-hd"><b>schema.graphql</b><i>generated from pothos, committed</i></div>
+      <pre>interface Node { id: ID! }
+
+<span class="c"># The four deep-link targets from the brief, and only these.</span>
+type Event implements Node { ... }
+type Match implements Node { ... }
+type PlayerProfile implements Node { ... }
+type Game implements Node { ... }
+
+type Query {
+  me: Viewer
+  node(id: ID!): Node
+
+  <span class="c"># One request fills the entire Home screen.</span>
+  home(city: String, sportId: ID): HomeFeed!
+
+  events(filter: EventFilter, first: Int = 20, after: String): EventConnection!
+  event(slug: String!): Event
+  rankings(sportId: ID!, scope: RankingScope!, first: Int = 50, after: String): RankingConnection!
+  players(query: String!, sportId: ID, first: Int = 20): PlayerConnection!
+  venues(near: GeoPointInput, radiusKm: Float = 10): VenueConnection!
+}
+
+type HomeFeed {
+  hero: Event
+  upcoming: [Registration!]!        <span class="c"># the player's own next events</span>
+  featured: Event
+  recommended: [Event!]!            <span class="c"># sport + city + skill band match</span>
+  stats: PlayerStatsSnapshot!
+  liveNow: [Match!]!                <span class="c"># drives the Live Mode switch</span>
+}
+
+type Event implements Node {
+  id: ID!
+  slug: String!
+  title: String!
+  sport: Sport!
+  venue: Venue
+  startsAt: DateTime!
+  status: EventStatus!              <span class="c"># LIVE flips the detail screen to Live Mode</span>
+  categories: [EventCategory!]!
+  organizer: OrganizerSummary!
+  viewerRegistration: Registration  <span class="c"># null unless the viewer registered</span>
+  tournament: Tournament            <span class="c"># bracket + standings, once drawn</span>
+}
+
+type EventCategory implements Node {
+  id: ID!
+  name: String!
+  format: MatchFormat!
+  capacity: Int!
+  <span class="c"># entriesRemaining subtracts live seat holds, so the badge on the</span>
+  <span class="c"># card matches what registration will actually allow.</span>
+  entriesRemaining: Int!
+  availability: Availability!       <span class="c"># OPEN | ALMOST_FULL | FULL | CLOSED</span>
+  priceQuote: PriceQuote!
+}
+
+type PriceQuote {
+  entryFeePaise: Int!
+  platformFeePaise: Int!
+  taxPaise: Int!
+  totalPaise: Int!
+  currency: String!
+}
+
+type Mutation {
+  requestOtp(email: String!): RequestOtpPayload!
+  verifyOtp(email: String!, code: String!): VerifyOtpPayload!
+
+  beginRegistration(input: BeginRegistrationInput!): BeginRegistrationPayload!
+  invitePartner(input: InvitePartnerInput!): InvitePartnerPayload!
+  acceptPartnerInvite(token: String!): AcceptPartnerInvitePayload!
+  createPaymentOrder(registrationId: ID!): CreatePaymentOrderPayload!
+  cancelRegistration(registrationId: ID!): CancelRegistrationPayload!
+
+  <span class="c"># organizer-only; authorized against event_staff, never a global role</span>
+  generateDraw(input: GenerateDrawInput!): GenerateDrawPayload!
+  startMatch(matchId: ID!): MatchPayload!
+  recordPoint(input: RecordPointInput!): MatchPayload!
+  submitMatchResult(input: SubmitResultInput!): MatchPayload!
+}</pre>
+    </div>
+
+    <div class="note">
+      <b>Why <code>entriesRemaining</code> subtracts holds</b>
+      <p>If the card says two spots left and two people are already in checkout, the third player pays and then gets told the draw is full. Counting active seat holds against capacity means the badge, the registration button and the database agree &mdash; and the worst case becomes &ldquo;shows full, briefly, then reopens&rdquo; instead of &ldquo;took money, then refunded.&rdquo;</p>
+    </div>
+
+    <h3>Error taxonomy</h3>
+    <p>Two channels. Anything the player can act on is a typed <code>userError</code> in the mutation payload; anything else is a GraphQL error with a machine-readable code. The client never parses an error message string.</p>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Code</th><th>Channel</th><th>Client behaviour</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">CATEGORY_FULL</td><td><span class="pill p-info">userError</span></td><td>Show the &ldquo;event full&rdquo; empty state; offer the waitlist.</td></tr>
+          <tr><td class="mono">HOLD_EXPIRED</td><td><span class="pill p-info">userError</span></td><td>Return to Step&nbsp;1 with the message that the slot was released.</td></tr>
+          <tr><td class="mono">PARTNER_ALREADY_ENTERED</td><td><span class="pill p-info">userError</span></td><td>Inline on the partner field.</td></tr>
+          <tr><td class="mono">OTP_INVALID / OTP_THROTTLED</td><td><span class="pill p-info">userError</span></td><td>Inline; throttled carries <code>retryAfterSeconds</code>.</td></tr>
+          <tr><td class="mono">PAYMENT_FAILED</td><td><span class="pill p-info">userError</span></td><td>Payment-failed screen with a retry that reuses the same hold if still alive.</td></tr>
+          <tr><td class="mono">UNAUTHENTICATED</td><td><span class="pill p-warn">graphql error</span></td><td>Refresh the token once, replay, then route to login.</td></tr>
+          <tr><td class="mono">FORBIDDEN</td><td><span class="pill p-warn">graphql error</span></td><td>Generic error state. Never leak whether the resource exists.</td></tr>
+          <tr><td class="mono">RATE_LIMITED</td><td><span class="pill p-warn">graphql error</span></td><td>Back off using <code>retryAfterSeconds</code>.</td></tr>
+          <tr><td class="mono">INTERNAL</td><td><span class="pill p-crit">graphql error</span></td><td>Generic error state plus the trace ID, which support can search.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="s6">
+    <span class="snum">&sect; 06</span>
+    <h2 class="sh">Identity &amp; authorization</h2>
+    <p class="lead">Email-first: a six-digit code delivered by Resend. There is no SMS provider, and <code>phone_e164</code> is optional, unverified contact information. Organizer is a grant on an event, not a role on a user.</p>
+
+    <h3>OTP</h3>
+    <ul>
+      <li>Six digits, ten-minute TTL, <strong>argon2id-hashed at rest</strong> &mdash; a leaked <code>otp_challenges</code> table must not be a login.</li>
+      <li>Five verification attempts per challenge, then the challenge burns.</li>
+      <li>Rate limits, sliding window in Redis: <strong>3 sends per email per 15&nbsp;min</strong>, <strong>20 per IP per hour</strong>, <strong>200 per IP per day</strong>.</li>
+      <li>Delivery through Resend from a dedicated auth subdomain, with SPF, DKIM and DMARC published before launch. A hard bounce marks the address unusable rather than letting a user retry into a void.</li>
+      <li><strong>The OTP funnel is a dashboard from day one</strong> &mdash; requested &rarr; delivered &rarr; verified. A drop in delivered-to-verified is a signup outage; without this instrumentation it presents as &ldquo;conversion is down.&rdquo;</li>
+      <li>Verification is constant-time and always takes the same path whether or not the email exists, so the endpoint cannot enumerate users.</li>
+    </ul>
+
+    <h3>Sessions</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Token</th><th>Form</th><th>Lifetime</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="nw">Access</td><td class="mono">JWT, RS256</td><td class="mono">15 min</td><td>Claims: <code>sub</code>, <code>sid</code>, <code>ver</code>. Deliberately no role claim &mdash; see below.</td></tr>
+          <tr><td class="nw">Refresh</td><td class="mono">opaque, 256-bit, hashed</td><td class="mono">60 days</td><td>Rotates on every use. Reuse of a spent token revokes the whole <code>family_id</code>.</td></tr>
+          <tr><td class="nw">Pusher auth</td><td class="mono">short-lived signature</td><td class="mono">per socket</td><td>Issued by <code>/pusher/auth</code> after re-checking entitlement.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <b>No roles in the JWT</b>
+      <p>An organizer&rsquo;s permission is per-event and revocable. Baked into a 15-minute token, a revoked grant stays live for up to 15 minutes &mdash; on a screen that can rewrite match results. Grants are read from <code>event_staff</code> per request and memoized in a request-scoped loader. The cost is one indexed lookup; the benefit is that revocation is immediate.</p>
+    </div>
+
+    <h3>Where authorization lives</h3>
+    <p>In the service layer, not the resolver. Every service method that touches an event takes the actor and calls a policy function; the resolver&rsquo;s Pothos <code>authScopes</code> is a cheap first gate, not the check that matters. This is what makes the same rule apply when a BullMQ job or the webhook handler calls the same service.</p>
+
+    <div class="code">
+      <div class="code-hd"><b>modules/tournament/service/policy.ts</b><i>authorization</i></div>
+      <pre>export async function assertCanScore(actor: Actor, matchId: string) {
+  const match = await repo.matchWithEvent(matchId);
+  <span class="c">// 'owner' and 'manager' can do anything on their event;</span>
+  <span class="c">// 'scorer' is a volunteer at a single event, scoped to scoring only.</span>
+  const grant = await identity.grantsFor(actor.userId, match.eventId);
+  if (!grant) throw forbidden();
+  if (!['owner', 'manager', 'scorer'].includes(grant.role)) throw forbidden();
+  if (match.status === 'completed' &amp;&amp; grant.role === 'scorer') {
+    <span class="c">// Corrections after the fact need a manager. A scorer can</span>
+    <span class="c">// mis-tap during a match; they should not rewrite a finished one.</span>
+    throw forbidden('CORRECTION_REQUIRES_MANAGER');
+  }
+  return match;
+}</pre>
+    </div>
+  </section>
+
+  <section id="s7">
+    <span class="snum">&sect; 07</span>
+    <h2 class="sh">Registration &amp; payment</h2>
+    <p class="lead">The five-step flow in the brief is one state machine with three failure modes that all cost real money if they are wrong: overselling, double-charging, and a partner who never accepts.</p>
+
+    <div class="flow">
+      <span class="st">draft</span><span class="ar">&rarr;</span>
+      <span class="st t-warn">awaiting_partner</span><span class="ar">&rarr;</span>
+      <span class="st t-warn">payment_pending</span><span class="ar">&rarr;</span>
+      <span class="st t-ok">confirmed</span><span class="ar">&rarr;</span>
+      <span class="st t-ok">checked_in</span>
+      <span class="ar">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+      <span class="st t-crit">expired</span>
+      <span class="st t-crit">payment_failed</span>
+      <span class="st t-crit">withdrawn</span>
+      <span class="st t-crit">refunded</span>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>From</th><th>Trigger</th><th>To</th><th>Side effects, in one transaction</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">&mdash;</td><td class="mono">beginRegistration</td><td class="mono">draft</td><td>Row created; price quote frozen onto <code>amount_paise</code>.</td></tr>
+          <tr><td class="mono">draft</td><td class="mono">(doubles)</td><td class="mono">awaiting_partner</td><td>Invite row + token; email and push to the partner; <strong>no hold yet</strong>.</td></tr>
+          <tr><td class="mono">awaiting_partner</td><td class="mono">acceptPartnerInvite</td><td class="mono">payment_pending</td><td>Team + members written; seat hold acquired; hold-expiry job scheduled.</td></tr>
+          <tr><td class="mono">draft</td><td class="mono">(singles)</td><td class="mono">payment_pending</td><td>Seat hold acquired; Razorpay order created; expiry job scheduled.</td></tr>
+          <tr><td class="mono">payment_pending</td><td class="mono">webhook payment.captured</td><td class="mono">confirmed</td><td>Payment + ledger rows; hold released as consumed; confirmation push; category recount.</td></tr>
+          <tr><td class="mono">payment_pending</td><td class="mono">webhook payment.failed</td><td class="mono">payment_failed</td><td>Hold left alive until its TTL, so retry does not lose the slot.</td></tr>
+          <tr><td class="mono">payment_pending</td><td class="mono">hold TTL elapsed</td><td class="mono">expired</td><td>Hold released; capacity returns; Razorpay order abandoned.</td></tr>
+          <tr><td class="mono">awaiting_partner</td><td class="mono">invite expires (48h)</td><td class="mono">expired</td><td>Captain notified with a one-tap re-invite.</td></tr>
+          <tr><td class="mono">confirmed</td><td class="mono">cancelRegistration</td><td class="mono">refunded</td><td>Refund per policy window; capacity returns; waitlist promoted.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The hold, and why it is in Postgres</h3>
+    <p>Capacity must be decided under a lock that also guarantees durability. A Redis counter is faster and will, on the one afternoon it drops a key, oversell a tournament that has physical courts. So: a row lock on the category, a count of confirmed entries plus live holds, and an insert that simply produces no row when the draw is full.</p>
+
+    <div class="code">
+      <div class="code-hd"><b>modules/registration/repo/hold.sql</b><i>capacity reservation</i></div>
+      <pre><span class="c">-- Zero rows returned means "full". The caller maps that to</span>
+<span class="c">-- CATEGORY_FULL; no exception, no retry loop.</span>
+WITH locked AS (
+  SELECT id, capacity FROM event_categories
+   WHERE id = $1 FOR UPDATE
+),
+used AS (
+  SELECT
+    (SELECT count(*) FROM registrations
+      WHERE event_category_id = $1
+        AND status IN ('confirmed','checked_in','payment_pending')) AS taken,
+    (SELECT coalesce(sum(seats),0) FROM seat_holds
+      WHERE event_category_id = $1
+        AND released_at IS NULL
+        AND expires_at &gt; now())                                    AS held
+)
+INSERT INTO seat_holds (id, event_category_id, registration_id, seats, expires_at)
+SELECT $2, locked.id, $3, 1, now() + interval '10 minutes'
+  FROM locked, used
+ WHERE used.taken + used.held + 1 &lt;= locked.capacity
+RETURNING id, expires_at;</pre>
+    </div>
+
+    <p>Two things release a hold: the delayed BullMQ job scheduled at creation, and the <code>expires_at &gt; now()</code> predicate above, which means an expired hold stops blocking capacity the instant it expires even if the job has not run yet. The job exists to flip <code>released_at</code> and move the registration to <code>expired</code>, not to make capacity correct.</p>
+
+    <h3>Doubles, and the partner who may not exist yet</h3>
+    <p>The partner is invited by email address, which may belong to nobody yet. The invite row carries the address; if it signs up later, the invite binds to the new user on their first authenticated request. Because players know each other&rsquo;s phone numbers rather than their email addresses, the invite field must also accept an existing PL4Y player chosen by in-app search &mdash; that is the mitigation for the friction this introduces, and the doubles funnel is the metric that says whether it worked. <strong>The captain pays for the team.</strong> Split payment is deferred &mdash; it adds a second payment state machine, a partial-refund policy, and a partner who can strand a confirmed entry by not paying.</p>
+    <p>No seat hold is taken while a registration waits for a partner. A 48-hour hold would let one player park a slot in a popular draw for two days. Capacity is reserved when the team becomes real.</p>
+
+    <h3>Webhook handling</h3>
+    <div class="code">
+      <div class="code-hd"><b>modules/payments/service/webhook.ts</b><i>idempotent ingest</i></div>
+      <pre>export async function razorpayWebhook(req: Request, res: Response) {
+  <span class="c">// req.body is a Buffer here — see the middleware order in §02.</span>
+  const signature = req.get('x-razorpay-signature') ?? '';
+  const expected = createHmac('sha256', config.RAZORPAY_WEBHOOK_SECRET)
+    .update(req.body).digest('hex');
+  if (!timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
+    return res.status(400).send('bad signature');
+  }
+
+  const event = JSON.parse(req.body.toString('utf8'));
+
+  <span class="c">// Claim the event id first. A duplicate delivery inserts nothing</span>
+  <span class="c">// and returns 200, so Razorpay stops retrying immediately.</span>
+  const claimed = await db.paymentWebhookEvent.createMany({
+    data: [{ razorpayEventId: event.id, eventType: event.event, payload: event }],
+    skipDuplicates: true,
+  });
+  if (claimed.count === 0) return res.status(200).send('duplicate');
+
+  <span class="c">// Ack fast; Razorpay times out at 5s and retries. The state change</span>
+  <span class="c">// happens in a job that can take as long as it needs.</span>
+  await queue.payments.add('apply-webhook', { eventId: event.id });
+  return res.status(200).send('ok');
+}</pre>
+    </div>
+
+    <div class="note w">
+      <b>Two invariants worth writing tests for first</b>
+      <p><strong>Confirmed entries never exceed capacity.</strong> Test: fire fifty concurrent registrations at a ten-entry category and assert exactly ten confirm.<br>
+      <strong>One captured payment produces exactly one confirmed registration.</strong> Test: deliver the same <code>payment.captured</code> webhook five times and assert one payment row, one ledger entry, one push.</p>
+    </div>
+
+    <h3>Reconciliation</h3>
+    <p>Webhooks get lost. A repeatable job sweeps every <code>payment_pending</code> registration older than 30 minutes, queries the Razorpay Orders API for the true status, and drives the state machine from the answer. This is the safety net that turns a missed webhook from a support ticket into a 30-minute delay, and it is Phase&nbsp;1 work, not a later hardening task.</p>
+
+    <h3>Refunds</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Situation</th><th>Refund</th><th>Path</th></tr></thead>
+        <tbody>
+          <tr><td>Player cancels before <code>cancellation_cutoff_at</code></td><td class="nw"><span class="pill p-ok">Entry fee, full</span></td><td>Platform fee retained; disclosed in the quote at checkout.</td></tr>
+          <tr><td>Player cancels after cutoff</td><td class="nw"><span class="pill p-crit">None</span></td><td>Slot returns to the waitlist regardless.</td></tr>
+          <tr><td>Organizer cancels the event</td><td class="nw"><span class="pill p-ok">Total, full</span></td><td>Bulk refund job across every confirmed registration; platform fee absorbed.</td></tr>
+          <tr><td>Category does not reach minimum entries</td><td class="nw"><span class="pill p-ok">Total, full</span></td><td>Automatic at <code>registration_closes_at</code>.</td></tr>
+          <tr><td>Player withdraws after the draw</td><td class="nw"><span class="pill p-warn">Organizer discretion</span></td><td>Manual partial refund; opponent gets a walkover; rating unaffected.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="s8">
+    <span class="snum">&sect; 08</span>
+    <h2 class="sh">Tournament engine</h2>
+    <p class="lead">Single elimination with a Plate, which is what the brief's bracket screen shows. Both brackets are generated in one pass, and every match knows where its winner and its loser go before a single point is played.</p>
+
+    <h3>Draw generation</h3>
+    <ol class="lst">
+      <li>Take confirmed registrations for the category, ordered by rating descending; unrated entries sort last with a deterministic tiebreak on registration time.</li>
+      <li>Bracket size is the next power of two. Byes go to the top seeds and are represented as real match rows with one side null and <code>status = 'walkover'</code> &mdash; a bye is a result, not a missing row, so advancement logic has no special case.</li>
+      <li>Seeds are placed by standard bracket positions (1 vs 16, 8 vs 9, ...), so the top two seeds can only meet in the final.</li>
+      <li>The Plate bracket is sized to the number of first-round losers. Championship round-1 matches get <code>loser_match_id</code> pointing into Plate round 1.</li>
+      <li>The whole draw &mdash; both brackets and all wiring &mdash; is written in one transaction. A partially generated draw is not a state the system can be in.</li>
+    </ol>
+
+    <h3>Advancement</h3>
+    <p>Because the wiring is precomputed, confirming a result is a single write with no traversal:</p>
+
+    <div class="code">
+      <div class="code-hd"><b>modules/tournament/service/advance.ts</b><i>result confirmation</i></div>
+      <pre>await db.$transaction(async (tx) =&gt; {
+  <span class="c">// Serialize advancement per tournament. Two courts finishing at the</span>
+  <span class="c">// same instant must not write the same next-match slot concurrently.</span>
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tournamentId}))`;
+
+  const m = await tx.match.findUniqueOrThrow({ where: { id: matchId } });
+  if (m.status === 'completed') return;          <span class="c">// idempotent by design</span>
+
+  await tx.matchResult.create({ data: result });
+  await tx.match.update({ where: { id: matchId }, data: { status: 'completed' } });
+
+  <span class="c">// Winner up the championship; loser across to the plate, if wired.</span>
+  if (m.winnerMatchId) await placeSide(tx, m.winnerMatchId, m.winnerSlot, winnerId);
+  if (m.loserMatchId)  await placeSide(tx, m.loserMatchId,  m.loserSlot,  loserId);
+
+  <span class="c">// Outbox, drained by the worker: rating, standings, push, Pusher.</span>
+  await tx.outbox.createMany({ data: [
+    { topic: 'match.completed', payload: { matchId, tournamentId } },
+  ]});
+});</pre>
+    </div>
+
+    <h3>Scheduling onto courts</h3>
+    <p>A greedy assigner, run whenever a match becomes ready, with two constraints that matter to players standing on a court:</p>
+    <ul>
+      <li><strong>Minimum rest</strong> &mdash; no player is assigned a match starting less than <code>min_rest_minutes</code> (default 20) after their previous one ends.</li>
+      <li><strong>Round ordering</strong> &mdash; every round-<em>n</em> match is scheduled before any round-<em>n+1</em> match on the same court, so the bracket cannot deadlock waiting on itself.</li>
+    </ul>
+    <p>The output is advisory: organizers reassign courts by hand constantly, and the API allows it. The scheduler removes typing, it does not own the schedule.</p>
+  </section>
+
+  <section id="s9">
+    <span class="snum">&sect; 09</span>
+    <h2 class="sh">Live scoring over Pusher</h2>
+    <p class="lead">One rule holds the whole design together: <strong>Pusher is a transport for cache invalidation, never a source of truth.</strong> Every payload is self-contained and carries a sequence number, so a dropped message costs a refetch and never leaves a stale score on screen.</p>
+
+    <h3>Channel topology</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Channel</th><th>Carries</th><th>Subscribers</th><th>Volume</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">presence-event-{id}</td><td>Match status transitions, standings, bracket advances</td><td>Everyone with the event open &mdash; hundreds</td><td class="nw"><span class="pill p-ok">Low</span> tens per event</td></tr>
+          <tr><td class="mono">private-match-{id}</td><td>Point-by-point score</td><td>Only viewers who opened that match &mdash; typically single digits</td><td class="nw"><span class="pill p-warn">High</span> ~50 per match</td></tr>
+          <tr><td class="mono">private-user-{id}</td><td>Registration confirmed, your match is on court 3, ranking moved</td><td>One device set</td><td class="nw"><span class="pill p-ok">Low</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note w">
+      <b>The split is a cost decision, and it is the one that will surprise you</b>
+      <p>A 32-entry draw is 31 championship matches plus 15 in the Plate. At roughly 50 rallies per best-of-three, that is about <strong>2,300 point events per event day</strong>. Delivery is metered per subscriber: broadcast every point to an event-wide channel with 200 people watching and you generate <strong>~460,000 delivered messages in one afternoon</strong>. Keeping point-level detail on <code>private-match-{id}</code>, where the audience is the handful of people actually watching that court, is what keeps the same day in the low tens of thousands. Confirm the current metering against your Channels plan before launch &mdash; but design for the split regardless.</p>
+    </div>
+
+    <h3>Write path</h3>
+    <div class="code">
+      <div class="code-hd"><b>modules/scoring/service/recordPoint.ts</b><i>point ingest</i></div>
+      <pre>export async function recordPoint(actor: Actor, input: RecordPointInput) {
+  const match = await assertCanScore(actor, input.matchId);
+
+  return db.$transaction(async (tx) =&gt; {
+    <span class="c">// Optimistic concurrency: two scorers on two devices cannot both</span>
+    <span class="c">// write seq 41. The loser retries against fresh state.</span>
+    const next = match.scoreSeq + 1;
+    if (input.expectedSeq !== match.scoreSeq) throw conflict('SCORE_STALE');
+
+    const state = applyPoint(match.currentScore, input.side,
+                             await sport.scoringRuleFor(match.sportId));
+
+    await tx.matchScoreEvent.create({ data: {                <span class="c">// append-only</span>
+      matchId: match.id, seq: next, kind: 'point',
+      scoringSide: input.side, stateAfter: state, recordedBy: actor.userId,
+    }});
+    await tx.match.update({ where: { id: match.id },
+      data: { currentScore: state, scoreSeq: next,
+              status: state.matchOver ? 'awaiting_confirm' : 'live' }});
+
+    <span class="c">// Fan-out never happens inline. It goes through the outbox so a</span>
+    <span class="c">// Pusher outage cannot fail the scorer's tap.</span>
+    await tx.outbox.create({ data: { topic: 'match.score', payload: {
+      matchId: match.id, seq: next, state, eventId: match.eventId,
+    }}});
+
+    return state;
+  });
+}</pre>
+    </div>
+
+    <h3>Fan-out, throttled</h3>
+    <p>The worker drains <code>outbox</code> and publishes with a per-match coalescing window of <strong>250&nbsp;ms</strong>. Within a window only the latest state is sent, because the payload is the whole score rather than a delta &mdash; two rapid points collapse into one message with no information lost. Match-status transitions bypass the window: &ldquo;this match is now live&rdquo; should not wait.</p>
+
+    <div class="code">
+      <div class="code-hd"><b>events published to clients</b><i>payload contract</i></div>
+      <pre>channel: private-match-9f2c...        event: "score"
+{ "seq": 41, "state": { "games": [{"a":11,"b":7}], "current": {"a":4,"b":6},
+                        "serving": "b", "matchOver": false },
+  "at": "2026-09-04T11:42:08.221Z" }
+
+channel: presence-event-3ab1...      event: "match.status"
+{ "matchId": "9f2c...", "status": "live", "court": "Court 3", "seq": 12 }
+
+channel: private-user-7c40...        event: "registration.confirmed"
+{ "registrationId": "...", "eventSlug": "pl4y-pckl-bengaluru-sep", "seq": 3 }</pre>
+    </div>
+
+    <h3>Correctness under a flaky network</h3>
+    <ul>
+      <li>Every payload carries <code>seq</code>. The client tracks the last seq per channel; on a <strong>gap or a reconnect it refetches <code>match(id)</code> over GraphQL</strong> and resumes. Pusher is never trusted to have delivered everything.</li>
+      <li>Because <code>state</code> is complete rather than a delta, a client that misses ten messages and receives the eleventh is fully correct.</li>
+      <li>If Pusher is unreachable, a feature flag drops clients to polling <code>match(id)</code> every five seconds. Degraded, not broken.</li>
+      <li>The scoring device works offline: points queue locally against <code>expectedSeq</code> and replay on reconnect. A conflict surfaces the server state and asks the scorer to confirm &mdash; the one place in the system where a human resolves a merge.</li>
+    </ul>
+  </section>
+
+  <section id="s10">
+    <span class="snum">&sect; 10</span>
+    <h2 class="sh">Rating &amp; rankings</h2>
+    <p class="lead">Glicko&#8209;2 per player per sport, written append-only, with rankings as a cache rebuilt on write. The algorithm is replaceable; the log is not.</p>
+
+    <h3>Why not Elo</h3>
+    <p>Amateur players do not play continuously &mdash; they play four matches on a Saturday and then nothing for six weeks. Elo has no memory of that gap and treats a rating from March as being exactly as reliable as one from yesterday. Glicko&#8209;2 carries a <strong>rating deviation</strong> that grows with inactivity, so a returning player&rsquo;s rating moves quickly to find its level again, and a regular&rsquo;s does not swing on one upset. That behaviour is the difference between a leaderboard players trust and one they dismiss.</p>
+
+    <h3>Two numbers, honestly labelled</h3>
+    <p>Glicko&#8209;2 is defined over rating <em>periods</em>, batching results. Players want their rating to move the moment they win. Both, then:</p>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Value</th><th>Computed</th><th>Shown as</th></tr></thead>
+        <tbody>
+          <tr><td class="mono nw">provisional</td><td>Immediately after each confirmed result, single-match update</td><td>The number that moves on the Match Detail screen, marked <span class="pill p-warn">provisional</span></td></tr>
+          <tr><td class="mono nw">settled</td><td>Weekly period job, Monday 03:00 IST, over all matches since the last period</td><td>The rating on the profile and the only input to <code>rankings</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Provisional rows are written with <code>is_provisional = true</code> and superseded when the period runs. Both are in the same log, so the history a player sees is continuous.</p>
+
+    <h3>Doubles</h3>
+    <p>The launch sport is mostly doubles, and Glicko&#8209;2 is a singles model. The documented rule:</p>
+    <ul>
+      <li>A team&rsquo;s rating is the mean of its members; its RD is the root-mean-square of theirs.</li>
+      <li>The team-level delta is computed once, then split between partners <strong>inversely to their RD</strong> &mdash; the less certain player absorbs more of the change, which is what RD means.</li>
+      <li>A match against a team more than 400 points below yours contributes at reduced weight, so stacking easy draws cannot inflate a ranking.</li>
+    </ul>
+    <p>This is a defensible v1, not a solved problem. It lives behind <code>algo_version = 'glicko2-v1'</code>, and replacing it means writing <code>glicko2-v2</code> and replaying the log &mdash; no migration, which is precisely what the brief asked the schema to preserve.</p>
+
+    <h3>Rankings cache</h3>
+    <div class="code">
+      <div class="code-hd"><b>modules/rating/service/rebuild.ts</b><i>leaderboard rebuild</i></div>
+      <pre><span class="c">// Rebuilt after each rating period and when an event completes.</span>
+<span class="c">// Scopes are enumerated, not arbitrary: national, per city, per age band.</span>
+INSERT INTO rankings (sport_id, scope, player_id, rank, rating, matches_played, movement, computed_at)
+SELECT $1, $2, ps.player_id,
+       dense_rank() OVER (ORDER BY ps.rating DESC NULLS LAST),
+       ps.rating, ps.matches_played,
+       coalesce(prev.rank, 0) - dense_rank() OVER (ORDER BY ps.rating DESC NULLS LAST),
+       now()
+  FROM player_sports ps
+  JOIN player_profiles pp ON pp.id = ps.player_id
+  LEFT JOIN rankings prev
+    ON prev.sport_id = $1 AND prev.scope = $2 AND prev.player_id = ps.player_id
+ WHERE ps.sport_id = $1
+   AND ps.matches_played &gt;= 5        <span class="c">-- unranked below this; shown as "unranked"</span>
+   AND pp.city = $3
+ON CONFLICT (sport_id, scope, player_id) DO UPDATE
+   SET rank = EXCLUDED.rank, rating = EXCLUDED.rating,
+       movement = EXCLUDED.movement, computed_at = EXCLUDED.computed_at;</pre>
+    </div>
+    <p>The Rankings screen reads a Redis copy of the top 200 per scope, refreshed by the same job, and falls through to the replica for deep pages. A five-match minimum keeps a single lucky win off the leaderboard, and <code>movement</code> gives the screen its up/down arrow without a second query.</p>
+  </section>
+
+  <section id="s11">
+    <span class="snum">&sect; 11</span>
+    <h2 class="sh">Jobs, cache, operations</h2>
+
+    <h3>Queues</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Queue</th><th>Job</th><th>Trigger</th><th>Retry</th><th>On final failure</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">registration</td><td class="mono">release-hold</td><td>Delayed, +10 min</td><td class="mono">3 &times; exp</td><td>Alert &mdash; capacity is stuck.</td></tr>
+          <tr><td class="mono">registration</td><td class="mono">expire-invite</td><td>Delayed, +48 h</td><td class="mono">3 &times; exp</td><td>Log; swept by a nightly job.</td></tr>
+          <tr><td class="mono">payments</td><td class="mono">apply-webhook</td><td>Webhook ingest</td><td class="mono">5 &times; exp</td><td><span class="pill p-crit">Page</span> money is unreconciled.</td></tr>
+          <tr><td class="mono">payments</td><td class="mono">reconcile-pending</td><td>Every 15 min</td><td class="mono">3 &times; exp</td><td>Alert.</td></tr>
+          <tr><td class="mono">payments</td><td class="mono">process-refund</td><td>Cancellation</td><td class="mono">5 &times; exp</td><td><span class="pill p-crit">Page</span> a player is owed money.</td></tr>
+          <tr><td class="mono">realtime</td><td class="mono">drain-outbox</td><td>Every 250 ms</td><td class="mono">3 &times; fixed</td><td>Drop &mdash; clients refetch on seq gap.</td></tr>
+          <tr><td class="mono">tournament</td><td class="mono">schedule-courts</td><td>Match becomes ready</td><td class="mono">3 &times; exp</td><td>Alert; organizer assigns manually.</td></tr>
+          <tr><td class="mono">rating</td><td class="mono">apply-provisional</td><td>Result confirmed</td><td class="mono">5 &times; exp</td><td>Alert; the period job corrects it.</td></tr>
+          <tr><td class="mono">rating</td><td class="mono">run-period</td><td>Weekly, Mon 03:00 IST</td><td class="mono">3 &times; exp</td><td><span class="pill p-crit">Page</span> ratings are frozen.</td></tr>
+          <tr><td class="mono">rating</td><td class="mono">rebuild-rankings</td><td>After period; event completion</td><td class="mono">3 &times; exp</td><td>Alert; cache serves stale.</td></tr>
+          <tr><td class="mono">notify</td><td class="mono">send-push</td><td>Outbox</td><td class="mono">3 &times; exp</td><td>Drop; the in-app feed row persists.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>What Redis holds &mdash; and what it must not</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Key</th><th>TTL</th><th>Invalidated by</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">rank:{sportId}:{scope}</td><td class="mono">1 h</td><td>rebuild-rankings</td></tr>
+          <tr><td class="mono">event:{slug}</td><td class="mono">5 min</td><td>Any event or category write</td></tr>
+          <tr><td class="mono">home:{userId}:{city}</td><td class="mono">60 s</td><td>TTL only &mdash; a stale home feed is harmless</td></tr>
+          <tr><td class="mono">rl:otp:{email}</td><td class="mono">15 min</td><td>Sliding window</td></tr>
+          <tr><td class="mono">apq:{sha256}</td><td class="mono">24 h</td><td>Deploy</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Never in Redis:</strong> seat holds, payment state, match scores, or anything a refund or a court assignment depends on. If losing a key can oversell a draw or lose a rally, it belongs in Postgres.</p>
+
+    <h3>Observability</h3>
+    <p>Structured logs carry <code>requestId</code>, <code>userId</code> and <code>eventId</code>, and the request ID rides into every job enqueued during the request, so a support ticket about one registration traces end to end. The dashboards that matter on a tournament Saturday:</p>
+    <ul>
+      <li><strong>Registration funnel</strong> &mdash; begun &rarr; hold acquired &rarr; order created &rarr; confirmed, with drop-off at each step. A spike between order and confirm means Razorpay, not you.</li>
+      <li><strong>Webhook lag</strong> &mdash; p95 from Razorpay&rsquo;s timestamp to <code>processed_at</code>. Alert above 60&nbsp;s.</li>
+      <li><strong>Unreconciled money</strong> &mdash; count of <code>payment_pending</code> older than 30 minutes. Steady state is zero.</li>
+      <li><strong>Score fan-out lag</strong> &mdash; outbox row written to Pusher acknowledged. Alert above 2&nbsp;s; spectators notice.</li>
+      <li><strong>GraphQL p95 by operation name</strong>, with <code>home</code> and <code>events</code> watched separately &mdash; they are the two the whole app waits on.</li>
+    </ul>
+
+    <h3>Environments</h3>
+    <div class="tw">
+      <table>
+        <thead><tr><th>Environment</th><th>Data</th><th>Razorpay</th><th>Pusher</th></tr></thead>
+        <tbody>
+          <tr><td class="nw">local</td><td>Docker Postgres + Redis; seed script builds a finished tournament</td><td class="mono">test keys</td><td class="mono">sandbox app</td></tr>
+          <tr><td class="nw">preview (per PR)</td><td>Ephemeral database from migrations + seed</td><td class="mono">test keys</td><td class="mono">sandbox app</td></tr>
+          <tr><td class="nw">staging</td><td>Anonymised production restore, weekly</td><td class="mono">test keys</td><td class="mono">staging app</td></tr>
+          <tr><td class="nw">production</td><td>Managed Postgres, PITR, daily snapshot</td><td class="mono">live keys</td><td class="mono">production app</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Secrets come from the platform&rsquo;s secret store and are validated by Zod at boot &mdash; a missing <code>RAZORPAY_WEBHOOK_SECRET</code> stops the process from starting rather than surfacing as a signature failure three hours into a tournament.</p>
+
+    <h3>Testing</h3>
+    <ul>
+      <li><strong>Service tests against real Postgres</strong> via Testcontainers. The two invariants in &sect;07 are written before the registration module exists.</li>
+      <li><strong>Contract tests</strong> for Razorpay and Pusher against recorded fixtures, including the failure payloads &mdash; <code>payment.failed</code>, a duplicate delivery, a webhook that arrives before the client callback.</li>
+      <li><strong>A seed script that produces a complete tournament</strong>: 32 registrations, a generated draw, every match scored, ratings applied, rankings rebuilt. It is the fixture for the bracket, live-scoring and rankings work, and it makes the whole Section&nbsp;3 journey demoable from an empty database in one command.</li>
+    </ul>
+  </section>
+
+  <section id="s12">
+    <span class="snum">&sect; 12</span>
+    <h2 class="sh">Build order</h2>
+    <p class="lead">Backend deliverables mapped onto the ten sprints in the brief. Each row is demoable on its own; &ldquo;done&rdquo; means the stated check passes against a real database.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Sprint</th><th>Backend deliverable</th><th>Done when</th></tr></thead>
+        <tbody>
+          <tr><td class="mono nw">1</td><td>Repo, CI, migrations, platform layer, Apollo mounted, <code>identity</code> module, email OTP through Resend</td><td>A real inbox receives a code and the client holds an access and refresh token.</td></tr>
+          <tr><td class="mono nw">2</td><td><code>sport</code>, <code>profile</code>, onboarding mutations, <code>home</code> query against seeded data</td><td>One <code>home</code> call fills every region of the Home screen.</td></tr>
+          <tr><td class="mono nw">3</td><td><code>events</code>, <code>venues</code>, discovery filters, PostGIS radius search, <code>event(slug:)</code> with categories and price quotes</td><td>Explore filters by sport, city, date, skill and price against real rows.</td></tr>
+          <tr><td class="mono nw">4</td><td><code>registration</code> and <code>payments</code>: holds, invites, Razorpay orders, webhook ingest, reconciliation</td><td>Both &sect;07 invariants pass under concurrency, and a test-mode UPI payment confirms an entry.</td></tr>
+          <tr><td class="mono nw">5</td><td>My PL4Y queries, public profile, refunds and the cancellation policy</td><td>A player registers, cancels inside the window, and the refund reaches <code>processed</code>.</td></tr>
+          <tr><td class="mono nw">6</td><td><code>rating</code>: Glicko&#8209;2 engine, rating events, period job, rankings rebuild</td><td>The seeded tournament produces a ranked leaderboard with correct movement.</td></tr>
+          <tr><td class="mono nw">7</td><td>Organizer surface: create and publish events, <code>event_staff</code> grants, registrations management</td><td>An organizer creates an event, publishes it, and can only manage their own.</td></tr>
+          <tr><td class="mono nw">8</td><td><code>tournament</code> and <code>scoring</code>: draw generation with Plate, court scheduling, live scoring, Pusher fan-out</td><td>A scored match advances both brackets and two devices see the point within 500&nbsp;ms.</td></tr>
+          <tr><td class="mono nw">9</td><td><code>notifications</code> with Beams, empty and error contracts for every list, load test on the discovery and live paths</td><td>All eight notification triggers from the brief fire end to end.</td></tr>
+          <tr><td class="mono nw">10</td><td>Phase 2: <code>games</code>, <code>social</code> challenges, venue discovery</td><td>A pickup game is created, joined and appears on the map query.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <b>Sequencing note</b>
+      <p>Sprints 4 and 8 carry the risk. Registration and payment is where money and capacity meet; the tournament engine is where concurrency does. Everything else is CRUD with good types. If the schedule slips, protect the time on those two &mdash; and start Sprint&nbsp;4 with the two invariant tests rather than the resolvers.</p>
+    </div>
+  </section>
+
+  <section id="s13">
+    <span class="snum">&sect; 13</span>
+    <h2 class="sh">Non-goals &amp; seams</h2>
+    <p class="lead">What Phase&nbsp;1 deliberately does not build, and the seam left behind so the later version is an addition rather than a rewrite.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Deferred</th><th>Why now is wrong</th><th>Seam already in place</th></tr></thead>
+        <tbody>
+          <tr><td class="nw">Court booking</td><td>Inventory, availability and cancellation are a second commerce domain, not a feature.</td><td><code>venue_courts</code> exists and is referenced by <code>court_assignments</code>; booking adds a table, not a rewrite.</td></tr>
+          <tr><td class="nw">Split payment for doubles</td><td>A second payment state machine plus a partner who can strand a confirmed entry.</td><td><code>payment_orders</code> is per registration, not per user. Adding a second order against one registration is additive.</td></tr>
+          <tr><td class="nw">Leagues &amp; seasons</td><td>Needs standings over time, promotion and relegation &mdash; a different competition model.</td><td><code>tournaments</code> already sits between event and match, which is where a season would attach.</td></tr>
+          <tr><td class="nw">Advanced rating</td><td>You need thousands of real matches before you can tell a better model from a worse one.</td><td><code>algo_version</code> on every rating event. A new model replays the log; no migration.</td></tr>
+          <tr><td class="nw">Sponsorship marketplace</td><td>Nothing to sell until events have consistent attendance.</td><td>Events already carry media keys and an organizer relationship.</td></tr>
+          <tr><td class="nw">PL4Y+ subscription</td><td>No entitlement to gate yet.</td><td>Payments is already a general order/ledger domain rather than a registration-only one.</td></tr>
+          <tr><td class="nw">GraphQL federation</td><td>One team, one schema. Federation solves an organisational problem you do not have.</td><td>Module boundaries with no cross-module table reads. A module becomes a subgraph when it must.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Known risks</h3>
+    <ul>
+      <li><strong>Pusher message volume</strong> is the cost line most likely to surprise the team. Instrument delivered messages per event day from Sprint&nbsp;8 and check it against the plan before the first public tournament.</li>
+      <li><strong>The doubles rating rule</strong> in &sect;10 is a defensible v1, not a settled answer. Expect to revise it once there is a season of real results &mdash; which is exactly what <code>algo_version</code> is for.</li>
+      <li><strong>The organizer web dashboard shares this schema</strong> but is out of scope here. Nothing in it should need a new module &mdash; if it does, that is a signal the boundaries in &sect;03 were drawn wrong.</li>
+    </ul>
+  </section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="foot-in">
+    <b>PL<em>4</em>Y</b>
+    <p>Backend architecture, Phase&nbsp;1. Companion to the App Flow &amp; Build Plan brief &mdash; &sect;12 here maps onto Section&nbsp;8 there, and the acceptance loop in Section&nbsp;3 of the brief is the integration test this design is built to pass.</p>
+  </div>
+</footer>

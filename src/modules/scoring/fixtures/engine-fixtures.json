@@ -1,0 +1,2886 @@
+[
+  {
+    "name": "pickleball deciding game to 15",
+    "sport": "pickleball",
+    "events": [
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      }
+    ],
+    "rule": {
+      "kind": "rally",
+      "pointsToWin": 11,
+      "winBy": 2,
+      "hardCap": 15,
+      "gamesToWin": 2,
+      "serveModel": "rally",
+      "decidingGame": {
+        "pointsToWin": 15,
+        "hardCap": 21
+      },
+      "switchEndsAt": 6
+    },
+    "final": {
+      "kind": "rally",
+      "games": [
+        {
+          "a": 11,
+          "b": 0
+        },
+        {
+          "a": 0,
+          "b": 11
+        },
+        {
+          "a": 15,
+          "b": 0
+        }
+      ],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": "a",
+      "matchOver": true,
+      "winner": "a"
+    }
+  },
+  {
+    "name": "badminton cap at 30",
+    "sport": "badminton",
+    "events": [
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      }
+    ],
+    "rule": {
+      "kind": "rally",
+      "pointsToWin": 21,
+      "winBy": 2,
+      "hardCap": 30,
+      "gamesToWin": 2,
+      "serveModel": "rally",
+      "switchEndsAt": 11
+    },
+    "final": {
+      "kind": "rally",
+      "games": [
+        {
+          "a": 29,
+          "b": 30
+        }
+      ],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": "b",
+      "matchOver": false,
+      "winner": null
+    }
+  },
+  {
+    "name": "tennis deuce and a set tiebreak",
+    "sport": "tennis",
+    "events": [
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      }
+    ],
+    "rule": {
+      "kind": "sets",
+      "gamePointsToWin": 4,
+      "setGamesToWin": 6,
+      "setWinBy": 2,
+      "setsToWin": 2,
+      "setTiebreakAt": 6,
+      "tiebreakPointsToWin": 7,
+      "tiebreakWinBy": 2,
+      "finalSetIsFullSet": false
+    },
+    "final": {
+      "kind": "sets",
+      "games": [
+        {
+          "a": 7,
+          "b": 6
+        }
+      ],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": {
+        "a": 0,
+        "b": 0
+      },
+      "tiebreak": false,
+      "serving": "a",
+      "matchOver": false,
+      "winner": null,
+      "matchTiebreak": false
+    }
+  },
+  {
+    "name": "padel golden point",
+    "sport": "padel",
+    "events": [
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      }
+    ],
+    "rule": {
+      "kind": "sets",
+      "gamePointsToWin": 4,
+      "gameWinBy": 1,
+      "setGamesToWin": 6,
+      "setWinBy": 2,
+      "setsToWin": 2,
+      "setTiebreakAt": 6,
+      "tiebreakPointsToWin": 7,
+      "tiebreakWinBy": 2,
+      "finalSetIsFullSet": false,
+      "finalSetMatchTiebreak": {
+        "pointsToWin": 10,
+        "winBy": 2
+      }
+    },
+    "final": {
+      "kind": "sets",
+      "games": [],
+      "current": {
+        "a": 0,
+        "b": 1
+      },
+      "points": {
+        "a": 0,
+        "b": 0
+      },
+      "tiebreak": false,
+      "serving": "b",
+      "matchOver": false,
+      "winner": null
+    }
+  },
+  {
+    "name": "volleyball five sets",
+    "sport": "volleyball",
+    "events": [
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      }
+    ],
+    "rule": {
+      "kind": "rally",
+      "pointsToWin": 25,
+      "winBy": 2,
+      "hardCap": null,
+      "gamesToWin": 3,
+      "serveModel": "rally",
+      "decidingGame": {
+        "pointsToWin": 15,
+        "hardCap": null
+      }
+    },
+    "final": {
+      "kind": "rally",
+      "games": [
+        {
+          "a": 25,
+          "b": 0
+        },
+        {
+          "a": 0,
+          "b": 25
+        },
+        {
+          "a": 25,
+          "b": 0
+        },
+        {
+          "a": 0,
+          "b": 25
+        },
+        {
+          "a": 15,
+          "b": 0
+        }
+      ],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": "a",
+      "matchOver": true,
+      "winner": "a"
+    }
+  },
+  {
+    "name": "basketball overtime",
+    "sport": "basketball",
+    "events": [
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "score",
+        "side": "b",
+        "action": "three"
+      },
+      {
+        "type": "period_end"
+      }
+    ],
+    "rule": {
+      "kind": "goals",
+      "periods": 4,
+      "periodMinutes": 10,
+      "tiebreaker": "extra_period",
+      "extraPeriodMinutes": 5,
+      "extraPeriods": 1,
+      "repeatExtraPeriods": true,
+      "actions": [
+        {
+          "key": "free_throw",
+          "label": "Free throw",
+          "value": 1
+        },
+        {
+          "key": "two",
+          "label": "2 points",
+          "value": 2
+        },
+        {
+          "key": "three",
+          "label": "3 points",
+          "value": 3
+        }
+      ]
+    },
+    "final": {
+      "kind": "goals",
+      "games": [],
+      "current": {
+        "a": 0,
+        "b": 3
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": true,
+      "winner": "b",
+      "period": 5,
+      "shootout": null
+    }
+  },
+  {
+    "name": "football extra time then penalties",
+    "sport": "football",
+    "events": [
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": false
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": false
+      }
+    ],
+    "rule": {
+      "kind": "goals",
+      "periods": 2,
+      "periodMinutes": 45,
+      "tiebreaker": "extra_period_then_shootout",
+      "extraPeriodMinutes": 15,
+      "extraPeriods": 2,
+      "actions": [
+        {
+          "key": "goal",
+          "label": "Goal",
+          "value": 1
+        }
+      ]
+    },
+    "final": {
+      "kind": "goals",
+      "games": [],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": true,
+      "winner": "a",
+      "period": 4,
+      "shootout": {
+        "a": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "b": [
+          true,
+          false,
+          true,
+          false
+        ],
+        "first": "a"
+      }
+    }
+  },
+  {
+    "name": "football shootout with B kicking first",
+    "sport": "football",
+    "events": [
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": false
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": false
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": false
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": false
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": true
+      }
+    ],
+    "rule": {
+      "kind": "goals",
+      "periods": 2,
+      "periodMinutes": 45,
+      "tiebreaker": "extra_period_then_shootout",
+      "extraPeriodMinutes": 15,
+      "extraPeriods": 2,
+      "actions": [
+        {
+          "key": "goal",
+          "label": "Goal",
+          "value": 1
+        }
+      ]
+    },
+    "final": {
+      "kind": "goals",
+      "games": [],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": true,
+      "winner": "b",
+      "period": 4,
+      "shootout": {
+        "a": [
+          false,
+          false,
+          false
+        ],
+        "b": [
+          true,
+          true,
+          false,
+          true
+        ],
+        "first": "b"
+      }
+    }
+  },
+  {
+    "name": "kabaddi level goes to a shootout",
+    "sport": "kabaddi",
+    "events": [
+      {
+        "type": "score",
+        "side": "a",
+        "action": "raid_2"
+      },
+      {
+        "type": "score",
+        "side": "b",
+        "action": "all_out"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": false
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": false
+      },
+      {
+        "type": "shootout_kick",
+        "side": "a",
+        "scored": true
+      },
+      {
+        "type": "shootout_kick",
+        "side": "b",
+        "scored": false
+      }
+    ],
+    "rule": {
+      "kind": "goals",
+      "periods": 2,
+      "periodMinutes": 20,
+      "tiebreaker": "shootout",
+      "extraPeriodMinutes": null,
+      "actions": [
+        {
+          "key": "raid_1",
+          "label": "Raid +1",
+          "value": 1
+        },
+        {
+          "key": "raid_2",
+          "label": "Raid +2",
+          "value": 2
+        },
+        {
+          "key": "raid_3",
+          "label": "Raid +3",
+          "value": 3
+        },
+        {
+          "key": "bonus",
+          "label": "Bonus +1",
+          "value": 1
+        },
+        {
+          "key": "tackle",
+          "label": "Tackle +1",
+          "value": 1
+        },
+        {
+          "key": "super_tackle",
+          "label": "Super tackle +2",
+          "value": 2
+        },
+        {
+          "key": "all_out",
+          "label": "All out +2",
+          "value": 2
+        }
+      ]
+    },
+    "final": {
+      "kind": "goals",
+      "games": [],
+      "current": {
+        "a": 2,
+        "b": 2
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": true,
+      "winner": "a",
+      "period": 2,
+      "shootout": {
+        "a": [
+          true,
+          true,
+          true
+        ],
+        "b": [
+          false,
+          false,
+          false
+        ],
+        "first": "a"
+      }
+    }
+  },
+  {
+    "name": "cricket chase won by wickets",
+    "sport": "cricket",
+    "events": [
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": "wide",
+        "wicket": null
+      },
+      {
+        "type": "ball",
+        "runs": 1,
+        "extra": "bye",
+        "wicket": null
+      },
+      {
+        "type": "ball",
+        "runs": 1,
+        "extra": null,
+        "wicket": null
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": "no_ball",
+        "wicket": null
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "run_out"
+      },
+      {
+        "type": "ball",
+        "runs": 6,
+        "extra": null,
+        "wicket": null
+      }
+    ],
+    "rule": {
+      "kind": "innings",
+      "oversPerInnings": 20,
+      "ballsPerOver": 6,
+      "wicketsPerInnings": 10,
+      "maxOversPerBowler": 4,
+      "extras": {
+        "wideRuns": 1,
+        "noBallRuns": 1,
+        "freeHit": true
+      },
+      "tiebreaker": "super_over"
+    },
+    "final": {
+      "kind": "innings",
+      "games": [],
+      "current": {
+        "a": 4,
+        "b": 6
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": "b",
+      "matchOver": true,
+      "winner": "b",
+      "innings": {
+        "list": [
+          {
+            "batting": "a",
+            "runs": 4,
+            "wickets": 10,
+            "balls": 12,
+            "extras": 3,
+            "target": null,
+            "maxBalls": 120,
+            "maxWickets": 10
+          },
+          {
+            "batting": "b",
+            "runs": 6,
+            "wickets": 0,
+            "balls": 1,
+            "extras": 0,
+            "target": 5,
+            "maxBalls": 120,
+            "maxWickets": 10
+          }
+        ],
+        "phase": "main",
+        "freeHit": false
+      }
+    }
+  },
+  {
+    "name": "snooker frame closed on points",
+    "sport": "snooker",
+    "events": [
+      {
+        "type": "score",
+        "side": "a",
+        "action": "red"
+      },
+      {
+        "type": "score",
+        "side": "a",
+        "action": "black"
+      },
+      {
+        "type": "points",
+        "side": "b",
+        "value": 4
+      },
+      {
+        "type": "unit_end"
+      },
+      {
+        "type": "score",
+        "side": "b",
+        "action": "pink"
+      },
+      {
+        "type": "unit_end"
+      }
+    ],
+    "rule": {
+      "kind": "series",
+      "maxUnits": null,
+      "allowDraws": false,
+      "unitScore": null,
+      "unitPointTarget": null,
+      "maxEventsPerUnit": null,
+      "unitName": "frame",
+      "unitsToWin": 3,
+      "unitScoring": "points",
+      "actions": [
+        {
+          "key": "red",
+          "label": "Red",
+          "value": 1
+        },
+        {
+          "key": "yellow",
+          "label": "Yellow",
+          "value": 2
+        },
+        {
+          "key": "green",
+          "label": "Green",
+          "value": 3
+        },
+        {
+          "key": "brown",
+          "label": "Brown",
+          "value": 4
+        },
+        {
+          "key": "blue",
+          "label": "Blue",
+          "value": 5
+        },
+        {
+          "key": "pink",
+          "label": "Pink",
+          "value": 6
+        },
+        {
+          "key": "black",
+          "label": "Black",
+          "value": 7
+        }
+      ]
+    },
+    "final": {
+      "kind": "series",
+      "games": [
+        {
+          "a": 8,
+          "b": 4
+        },
+        {
+          "a": 0,
+          "b": 6
+        }
+      ],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": false,
+      "winner": null,
+      "unitEvents": 0
+    }
+  },
+  {
+    "name": "chess game drawn",
+    "sport": "chess",
+    "events": [
+      {
+        "type": "unit_drawn"
+      }
+    ],
+    "rule": {
+      "kind": "series",
+      "maxUnits": 1,
+      "allowDraws": true,
+      "unitScore": null,
+      "unitPointTarget": null,
+      "maxEventsPerUnit": null,
+      "unitName": "game",
+      "unitsToWin": 1,
+      "unitScoring": "win_only"
+    },
+    "final": {
+      "kind": "series",
+      "games": [
+        {
+          "a": 0.5,
+          "b": 0.5
+        }
+      ],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": true,
+      "winner": null,
+      "unitEvents": 0
+    }
+  },
+  {
+    "name": "esports best of three maps",
+    "sport": "esports",
+    "events": [
+      {
+        "type": "unit_won",
+        "side": "b",
+        "score": {
+          "a": 7,
+          "b": 13
+        }
+      },
+      {
+        "type": "unit_won",
+        "side": "a",
+        "score": {
+          "a": 14,
+          "b": 12
+        }
+      },
+      {
+        "type": "unit_won",
+        "side": "a",
+        "score": {
+          "a": 13,
+          "b": 11
+        }
+      }
+    ],
+    "rule": {
+      "kind": "series",
+      "maxUnits": null,
+      "allowDraws": false,
+      "unitScore": {
+        "pointsToWin": 13,
+        "winBy": 2
+      },
+      "unitPointTarget": null,
+      "maxEventsPerUnit": null,
+      "unitName": "map",
+      "unitsToWin": 2,
+      "unitScoring": "win_only"
+    },
+    "final": {
+      "kind": "series",
+      "games": [
+        {
+          "a": 7,
+          "b": 13
+        },
+        {
+          "a": 14,
+          "b": 12
+        },
+        {
+          "a": 13,
+          "b": 11
+        }
+      ],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": true,
+      "winner": "a",
+      "unitEvents": 0
+    }
+  },
+  {
+    "name": "boxing split decision",
+    "sport": "boxing",
+    "events": [
+      {
+        "type": "round_cards",
+        "cards": [
+          {
+            "a": 10,
+            "b": 9
+          },
+          {
+            "a": 10,
+            "b": 9
+          },
+          {
+            "a": 9,
+            "b": 10
+          }
+        ]
+      },
+      {
+        "type": "round_cards",
+        "cards": [
+          {
+            "a": 10,
+            "b": 9
+          },
+          {
+            "a": 9,
+            "b": 10
+          },
+          {
+            "a": 9,
+            "b": 10
+          }
+        ]
+      },
+      {
+        "type": "round_cards",
+        "cards": [
+          {
+            "a": 9,
+            "b": 10
+          },
+          {
+            "a": 10,
+            "b": 9
+          },
+          {
+            "a": 10,
+            "b": 9
+          }
+        ]
+      }
+    ],
+    "rule": {
+      "kind": "bouts",
+      "decision": "judges",
+      "judges": 3,
+      "actions": [],
+      "pointGap": null,
+      "roundsToWin": null,
+      "firstPointAdvantage": false,
+      "penaltyToOpponent": 0,
+      "maxPenalties": null,
+      "rounds": 3,
+      "roundSeconds": 180,
+      "finishes": [
+        "ko",
+        "tko",
+        "rsc",
+        "dq"
+      ]
+    },
+    "final": {
+      "kind": "bouts",
+      "games": [],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": true,
+      "winner": "a",
+      "bout": {
+        "round": 4,
+        "cards": [
+          [
+            {
+              "a": 10,
+              "b": 9
+            },
+            {
+              "a": 10,
+              "b": 9
+            },
+            {
+              "a": 9,
+              "b": 10
+            }
+          ],
+          [
+            {
+              "a": 10,
+              "b": 9
+            },
+            {
+              "a": 9,
+              "b": 10
+            },
+            {
+              "a": 9,
+              "b": 10
+            }
+          ],
+          [
+            {
+              "a": 9,
+              "b": 10
+            },
+            {
+              "a": 10,
+              "b": 9
+            },
+            {
+              "a": 10,
+              "b": 9
+            }
+          ]
+        ],
+        "roundsWon": {
+          "a": 0,
+          "b": 0
+        },
+        "penalties": {
+          "a": 0,
+          "b": 0
+        },
+        "senshu": null,
+        "lastScorer": null,
+        "method": "split_decision",
+        "margin": "29–28, 29–28, 28–29"
+      }
+    }
+  },
+  {
+    "name": "taekwondo rounds and a gap",
+    "sport": "taekwondo",
+    "events": [
+      {
+        "type": "score",
+        "side": "b",
+        "action": "head"
+      },
+      {
+        "type": "penalty",
+        "side": "b"
+      },
+      {
+        "type": "round_end"
+      },
+      {
+        "type": "score",
+        "side": "b",
+        "action": "spin_head"
+      },
+      {
+        "type": "score",
+        "side": "b",
+        "action": "spin_head"
+      },
+      {
+        "type": "score",
+        "side": "b",
+        "action": "body"
+      },
+      {
+        "type": "score",
+        "side": "b",
+        "action": "punch"
+      }
+    ],
+    "rule": {
+      "kind": "bouts",
+      "decision": "points",
+      "judges": null,
+      "rounds": 3,
+      "roundSeconds": 120,
+      "actions": [
+        {
+          "key": "punch",
+          "label": "Punch +1",
+          "value": 1
+        },
+        {
+          "key": "body",
+          "label": "Body +2",
+          "value": 2
+        },
+        {
+          "key": "head",
+          "label": "Head +3",
+          "value": 3
+        },
+        {
+          "key": "spin_body",
+          "label": "Spin body +4",
+          "value": 4
+        },
+        {
+          "key": "spin_head",
+          "label": "Spin head +6",
+          "value": 6
+        }
+      ],
+      "pointGap": 15,
+      "roundsToWin": 2,
+      "firstPointAdvantage": false,
+      "penaltyToOpponent": 1,
+      "maxPenalties": null,
+      "finishes": [
+        "ko",
+        "dq",
+        "injury"
+      ]
+    },
+    "final": {
+      "kind": "bouts",
+      "games": [
+        {
+          "a": 1,
+          "b": 3
+        },
+        {
+          "a": 0,
+          "b": 15
+        }
+      ],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": true,
+      "winner": "b",
+      "bout": {
+        "round": 3,
+        "cards": [],
+        "roundsWon": {
+          "a": 0,
+          "b": 2
+        },
+        "penalties": {
+          "a": 0,
+          "b": 1
+        },
+        "senshu": null,
+        "lastScorer": null,
+        "method": "rounds",
+        "margin": "0–2"
+      }
+    }
+  },
+  {
+    "name": "football league match drawn",
+    "sport": "football",
+    "league": true,
+    "events": [
+      {
+        "type": "score",
+        "side": "a",
+        "action": "goal"
+      },
+      {
+        "type": "score",
+        "side": "b",
+        "action": "goal"
+      },
+      {
+        "type": "period_end"
+      },
+      {
+        "type": "period_end"
+      }
+    ],
+    "rule": {
+      "kind": "goals",
+      "periods": 2,
+      "periodMinutes": 45,
+      "tiebreaker": "none",
+      "extraPeriodMinutes": 15,
+      "extraPeriods": 2,
+      "actions": [
+        {
+          "key": "goal",
+          "label": "Goal",
+          "value": 1
+        }
+      ]
+    },
+    "final": {
+      "kind": "goals",
+      "games": [],
+      "current": {
+        "a": 1,
+        "b": 1
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": null,
+      "matchOver": true,
+      "winner": null,
+      "period": 2,
+      "shootout": null
+    }
+  },
+  {
+    "name": "cricket league match tied",
+    "sport": "cricket",
+    "league": true,
+    "events": [
+      {
+        "type": "ball",
+        "runs": 1,
+        "extra": null,
+        "wicket": null
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 1,
+        "extra": null,
+        "wicket": null
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      },
+      {
+        "type": "ball",
+        "runs": 0,
+        "extra": null,
+        "wicket": "bowled"
+      }
+    ],
+    "rule": {
+      "kind": "innings",
+      "oversPerInnings": 20,
+      "ballsPerOver": 6,
+      "wicketsPerInnings": 10,
+      "maxOversPerBowler": 4,
+      "extras": {
+        "wideRuns": 1,
+        "noBallRuns": 1,
+        "freeHit": true
+      },
+      "tiebreaker": "none"
+    },
+    "final": {
+      "kind": "innings",
+      "games": [],
+      "current": {
+        "a": 1,
+        "b": 1
+      },
+      "points": null,
+      "tiebreak": false,
+      "serving": "b",
+      "matchOver": true,
+      "winner": null,
+      "innings": {
+        "list": [
+          {
+            "batting": "a",
+            "runs": 1,
+            "wickets": 10,
+            "balls": 11,
+            "extras": 0,
+            "target": null,
+            "maxBalls": 120,
+            "maxWickets": 10
+          },
+          {
+            "batting": "b",
+            "runs": 1,
+            "wickets": 10,
+            "balls": 11,
+            "extras": 0,
+            "target": 2,
+            "maxBalls": 120,
+            "maxWickets": 10
+          }
+        ],
+        "phase": "main",
+        "freeHit": false
+      }
+    }
+  },
+  {
+    "name": "padel super tiebreak to 10",
+    "sport": "padel",
+    "events": [
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "b"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      },
+      {
+        "type": "point",
+        "side": "a"
+      }
+    ],
+    "rule": {
+      "kind": "sets",
+      "gamePointsToWin": 4,
+      "gameWinBy": 1,
+      "setGamesToWin": 6,
+      "setWinBy": 2,
+      "setsToWin": 2,
+      "setTiebreakAt": 6,
+      "tiebreakPointsToWin": 7,
+      "tiebreakWinBy": 2,
+      "finalSetIsFullSet": false,
+      "finalSetMatchTiebreak": {
+        "pointsToWin": 10,
+        "winBy": 2
+      }
+    },
+    "final": {
+      "kind": "sets",
+      "games": [
+        {
+          "a": 6,
+          "b": 0
+        },
+        {
+          "a": 0,
+          "b": 6
+        },
+        {
+          "a": 11,
+          "b": 9
+        }
+      ],
+      "current": {
+        "a": 0,
+        "b": 0
+      },
+      "points": {
+        "a": 0,
+        "b": 0
+      },
+      "tiebreak": false,
+      "serving": "b",
+      "matchOver": true,
+      "winner": "a",
+      "matchTiebreak": false
+    }
+  }
+]

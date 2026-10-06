@@ -1,0 +1,1408 @@
+<title>PL4Y Module Specs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+:root{
+  --ground:#191817; --surface:#201F1D; --surface-2:#262523; --surface-3:#2E2C29;
+  --border:#37342F; --border-strong:#4A453D;
+  --text:#F2F0ED; --muted:#9C968D; --dim:#6E6862;
+  --accent:#FF641C; --accent-ink:#FF7C3E; --accent-soft:rgba(255,100,28,.13);
+  --ok:#4FB07A; --ok-soft:rgba(79,176,122,.14);
+  --warn:#D2A03A; --warn-soft:rgba(210,160,58,.14);
+  --crit:#E0575C; --crit-soft:rgba(224,87,92,.14);
+  --info:#7A9BEA; --info-soft:rgba(122,155,234,.14);
+  --shadow:0 1px 0 rgba(255,255,255,.03), 0 12px 32px -18px rgba(0,0,0,.8);
+  --display:"Archivo",system-ui,sans-serif;
+  --body:"Instrument Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --ground:#F7F5F2; --surface:#FFFFFF; --surface-2:#F1EEEA; --surface-3:#E9E5DF;
+    --border:#DED9D1; --border-strong:#C3BCB2;
+    --text:#1A1917; --muted:#6A645C; --dim:#8C857C;
+    --accent:#E24F0B; --accent-ink:#B83E06; --accent-soft:rgba(226,79,11,.09);
+    --ok:#1F7A4A; --ok-soft:rgba(31,122,74,.10);
+    --warn:#8A6414; --warn-soft:rgba(138,100,20,.10);
+    --crit:#BE3239; --crit-soft:rgba(190,50,57,.09);
+    --info:#33549E; --info-soft:rgba(51,84,158,.09);
+    --shadow:0 1px 2px rgba(26,25,23,.05), 0 10px 28px -20px rgba(26,25,23,.35);
+    color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --ground:#F7F5F2; --surface:#FFFFFF; --surface-2:#F1EEEA; --surface-3:#E9E5DF;
+  --border:#DED9D1; --border-strong:#C3BCB2;
+  --text:#1A1917; --muted:#6A645C; --dim:#8C857C;
+  --accent:#E24F0B; --accent-ink:#B83E06; --accent-soft:rgba(226,79,11,.09);
+  --ok:#1F7A4A; --ok-soft:rgba(31,122,74,.10);
+  --warn:#8A6414; --warn-soft:rgba(138,100,20,.10);
+  --crit:#BE3239; --crit-soft:rgba(190,50,57,.09);
+  --info:#33549E; --info-soft:rgba(51,84,158,.09);
+  --shadow:0 1px 2px rgba(26,25,23,.05), 0 10px 28px -20px rgba(26,25,23,.35);
+  color-scheme:light;
+}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--text);font-family:var(--body);font-size:15.5px;line-height:1.62;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-ink);text-decoration:none;border-bottom:1px solid var(--border-strong)}
+a:hover{border-bottom-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.mast{border-bottom:1px solid var(--border);background:var(--surface)}
+.mast-in{max-width:1180px;margin:0 auto;padding:34px 28px 26px}
+.wordmark{font-family:var(--display);font-weight:800;font-stretch:118%;font-size:clamp(30px,5.2vw,48px);line-height:.96;letter-spacing:-.035em;margin:0;text-wrap:balance}
+.wordmark em{font-style:normal;color:var(--accent)}
+.mast h2{font-family:var(--display);font-weight:600;font-stretch:105%;font-size:clamp(15px,2vw,18px);letter-spacing:-.01em;color:var(--muted);margin:12px 0 0;max-width:66ch;line-height:1.45}
+.metabar{display:flex;flex-wrap:wrap;margin:24px 0 0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface-2)}
+.metabar div{flex:1 1 150px;padding:11px 15px;border-right:1px solid var(--border)}
+.metabar div:last-child{border-right:0}
+.metabar dt{font-family:var(--display);font-size:9.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:0}
+.metabar dd{margin:3px 0 0;font-size:13px;font-weight:500;font-family:var(--mono)}
+
+.wrap{max-width:1180px;margin:0 auto;padding:36px 28px 70px}
+.intro p{margin:0 0 14px;max-width:70ch}
+.lead{font-size:17px;line-height:1.55;color:var(--muted);max-width:66ch;margin:0 0 18px}
+h3{font-family:var(--display);font-weight:700;font-stretch:104%;font-size:17px;letter-spacing:-.012em;margin:38px 0 12px}
+strong{font-weight:600;color:var(--text)}
+code{font-family:var(--mono);font-size:.875em;background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+td code,h3 code,.rule code,.dw code{background:transparent;border:0;padding:0}
+
+.dwrap{overflow-x:auto;border:1px solid var(--border);border-radius:9px;background:var(--surface);margin:0 0 10px;box-shadow:var(--shadow)}
+.dwrap svg{display:block;min-width:800px;width:100%;height:auto}
+.dg .bx{fill:var(--surface-2);stroke:var(--border-strong);stroke-width:1}
+.dg .bxa{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.2}
+.dg .grp{fill:none;stroke:var(--border-strong);stroke-width:1;stroke-dasharray:4 4}
+.dg .ln{stroke:var(--border-strong);stroke-width:1.3;fill:none}
+.dg .tl{font-family:var(--mono);font-size:12.5px;font-weight:600;fill:var(--text)}
+.dg .ts{font-family:var(--body);font-size:10px;fill:var(--muted)}
+.dg .eb{font-family:var(--display);font-size:9px;font-weight:700;letter-spacing:.15em;fill:var(--dim)}
+.dg .sp{font-family:var(--mono);font-size:10px;fill:var(--accent-ink)}
+.cap{font-size:12.5px;color:var(--dim);margin:0 0 26px;max-width:72ch}
+
+.tw{overflow-x:auto;margin:0 0 22px;border:1px solid var(--border);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;min-width:580px;font-size:13.3px}
+thead th{font-family:var(--display);font-size:9.5px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2);white-space:nowrap}
+td{padding:9px 14px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.5}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--surface-2)}
+td.mono{font-family:var(--mono);font-size:12.2px}
+td.nw{white-space:nowrap}
+
+.pill{display:inline-block;font-family:var(--display);font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2.5px 7px;border-radius:4px;white-space:nowrap;line-height:1.5}
+.p-ok{background:var(--ok-soft);color:var(--ok)}
+.p-warn{background:var(--warn-soft);color:var(--warn)}
+.p-crit{background:var(--crit-soft);color:var(--crit)}
+.p-info{background:var(--info-soft);color:var(--info)}
+.p-acc{background:var(--accent-soft);color:var(--accent-ink)}
+.p-mute{background:var(--surface-3);color:var(--muted)}
+
+.note{border-left:2px solid var(--accent);background:var(--accent-soft);padding:13px 16px;border-radius:0 7px 7px 0;margin:0 0 22px;max-width:72ch}
+.note p:last-child{margin-bottom:0}
+.note p{margin:0 0 10px;max-width:none}
+.note b{font-family:var(--display);font-weight:700;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--accent-ink);display:block;margin-bottom:5px}
+
+/* ---------- module blocks ---------- */
+.mod{border:1px solid var(--border);border-radius:11px;background:var(--surface);overflow:hidden;margin:0 0 26px;box-shadow:var(--shadow);scroll-margin-top:14px}
+.mod-hd{padding:18px 22px 16px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.mod-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.mod-n{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent)}
+.mod-hd h2{font-family:var(--mono);font-weight:600;font-size:24px;letter-spacing:-.02em;margin:0;color:var(--text)}
+.mod-hd .purpose{margin:8px 0 0;font-size:14.5px;color:var(--muted);max-width:74ch;line-height:1.5}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.chip{font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:5px;background:var(--surface-3);color:var(--muted);border:1px solid var(--border)}
+.chip b{color:var(--text);font-weight:600}
+.mod-body{padding:20px 22px 22px}
+.mod-body>*:last-child{margin-bottom:0}
+h4{font-family:var(--display);font-weight:700;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin:24px 0 9px;padding-bottom:5px;border-bottom:1px solid var(--border)}
+.mod-body>h4:first-child{margin-top:0}
+.mod-body p{margin:0 0 12px;max-width:74ch;font-size:14.5px}
+
+.code{margin:0 0 16px;border:1px solid var(--border);border-radius:8px;background:var(--ground);overflow:hidden}
+.code pre{margin:0;padding:13px 15px;overflow-x:auto;font-family:var(--mono);font-size:12.4px;line-height:1.66;color:var(--text);tab-size:2}
+.code .c{color:var(--dim)}
+.code .k{color:var(--accent-ink)}
+
+ol.rules{list-style:none;counter-reset:r;margin:0 0 16px;padding:0;display:flex;flex-direction:column;gap:7px}
+ol.rules li{counter-increment:r;display:grid;grid-template-columns:34px 1fr;gap:10px;font-size:14.3px;line-height:1.5;max-width:78ch}
+ol.rules li::before{content:"R" counter(r);font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);padding-top:3px}
+
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 30px}
+ul.tight{margin:0 0 14px;padding-left:19px;font-size:14.3px}
+ul.tight li{margin-bottom:5px}
+ul.tight li::marker{color:var(--dim)}
+ul.tight code{font-size:.86em}
+
+.dw{border-left:2px solid var(--ok);background:var(--ok-soft);padding:12px 15px;border-radius:0 7px 7px 0;margin:6px 0 0;max-width:76ch}
+.dw b{font-family:var(--display);font-weight:700;font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ok);display:block;margin-bottom:4px}
+.dw p{margin:0;font-size:14.3px;line-height:1.5;max-width:none}
+
+.phase-hd{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:46px 0 6px;padding-top:26px;border-top:1px solid var(--border)}
+.phase-hd h2{font-family:var(--display);font-weight:700;font-stretch:112%;font-size:clamp(22px,3.2vw,30px);letter-spacing:-.028em;margin:0}
+.phase-hd p{margin:0;color:var(--muted);font-size:14px;max-width:56ch}
+.phase-sub{color:var(--muted);font-size:14.5px;margin:0 0 24px;max-width:74ch}
+
+footer{border-top:1px solid var(--border);background:var(--surface)}
+.foot-in{max-width:1180px;margin:0 auto;padding:26px 28px 34px;display:flex;gap:20px;flex-wrap:wrap;align-items:baseline;justify-content:space-between}
+.foot-in p{margin:0;font-size:12.5px;color:var(--dim);max-width:62ch}
+.foot-in b{font-family:var(--display);font-weight:800;font-stretch:115%;letter-spacing:-.02em;font-size:15px;color:var(--text)}
+.foot-in b em{font-style:normal;color:var(--accent)}
+</style>
+
+<header class="mast">
+  <div class="mast-in">
+    <h1 class="wordmark">PL<em>4</em>Y &mdash; Module Specs</h1>
+    <h2>Twenty backend modules, one template each: what it owns, the service interface other modules may call, its GraphQL surface, numbered rules, the errors it raises, and the check that says it is done.</h2>
+    <dl class="metabar">
+      <div><dt>Modules</dt><dd>20</dd></div>
+      <div><dt>Phase 1</dt><dd>13 modules</dd></div>
+      <div><dt>Phase 2</dt><dd>4 modules</dd></div>
+      <div><dt>Phase 3</dt><dd>3 modules</dd></div>
+      <div><dt>Companion to</dt><dd>Backend Architecture</dd></div>
+      <div><dt>Rule IDs</dt><dd>stable, cite in tests</dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="intro">
+    <p class="lead">Each spec below is a ticket-ready contract. Rules are numbered <code>R1</code>, <code>R2</code>&hellip; per module so a test, a PR and a bug report can all point at the same line &mdash; <code>registration R4</code> means one thing and only one thing.</p>
+    <p>Three conventions hold across every module. <strong>The service interface is the module&rsquo;s only public surface</strong> &mdash; everything else in the directory is private, including its repository. <strong>Errors listed as</strong> <span class="pill p-info">user</span> <strong>are typed fields in a mutation payload</strong>; errors listed as <span class="pill p-warn">system</span> are GraphQL errors with a code. And <strong>every module owns its tables exclusively</strong>: where a module needs to change another&rsquo;s data, it calls a named service method, which is why <code>rating</code> writes a player&rsquo;s rating through <code>profile.applyRating()</code> rather than through an UPDATE.</p>
+  </div>
+
+  <h3>Dependency layers &amp; build order</h3>
+  <div class="dwrap">
+    <svg viewBox="0 0 960 760" class="dg" role="img" aria-label="Seven dependency layers of backend modules from foundation through organizers and admin, with cross-cutting notifications, a Phase 2 group and a Phase 3 group.">
+      <defs>
+        <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <text class="eb" x="36" y="28">L0 &mdash; FOUNDATION &middot; NO DOMAIN DEPENDENCIES</text>
+      <rect class="bx" x="36" y="36" width="216" height="46" rx="7"/>
+      <text class="tl" x="52" y="58">sport</text><text class="sp" x="216" y="58">S2</text>
+      <text class="ts" x="52" y="73">registry, formats, scoring rules</text>
+      <rect class="bx" x="268" y="36" width="216" height="46" rx="7"/>
+      <text class="tl" x="284" y="58">identity</text><text class="sp" x="448" y="58">S1</text>
+      <text class="ts" x="284" y="73">OTP, sessions, grants</text>
+
+      <text class="eb" x="36" y="112">L1</text>
+      <rect class="bx" x="36" y="120" width="216" height="46" rx="7"/>
+      <text class="tl" x="52" y="142">profile</text><text class="sp" x="216" y="142">S2</text>
+      <text class="ts" x="52" y="157">player, sports, follows</text>
+      <rect class="bx" x="268" y="120" width="216" height="46" rx="7"/>
+      <text class="tl" x="284" y="142">venues</text><text class="sp" x="448" y="142">S3</text>
+      <text class="ts" x="284" y="157">venues, courts</text>
+
+      <text class="eb" x="36" y="196">L2</text>
+      <rect class="bx" x="36" y="204" width="448" height="46" rx="7"/>
+      <text class="tl" x="52" y="226">events</text><text class="sp" x="448" y="226">S3</text>
+      <text class="ts" x="52" y="241">events, categories, capacity, price quotes</text>
+
+      <text class="eb" x="36" y="280">L3 &mdash; MONEY AND CAPACITY MEET HERE</text>
+      <rect class="bxa" x="36" y="288" width="216" height="46" rx="7"/>
+      <text class="tl" x="52" y="310">registration</text><text class="sp" x="216" y="310">S4</text>
+      <text class="ts" x="52" y="325">entries, teams, holds</text>
+      <rect class="bxa" x="268" y="288" width="216" height="46" rx="7"/>
+      <text class="tl" x="284" y="310">payments</text><text class="sp" x="448" y="310">S4</text>
+      <text class="ts" x="284" y="325">orders, webhooks, refunds</text>
+
+      <text class="eb" x="36" y="364">L4 &mdash; CONCURRENCY LIVES HERE</text>
+      <rect class="bxa" x="36" y="372" width="216" height="46" rx="7"/>
+      <text class="tl" x="52" y="394">tournament</text><text class="sp" x="216" y="394">S8</text>
+      <text class="ts" x="52" y="409">draws, brackets, courts</text>
+      <rect class="bxa" x="268" y="372" width="216" height="46" rx="7"/>
+      <text class="tl" x="284" y="394">scoring</text><text class="sp" x="448" y="394">S8</text>
+      <text class="ts" x="284" y="409">live score, results</text>
+
+      <text class="eb" x="36" y="448">L5 &mdash; DERIVED FROM EVERYTHING ABOVE</text>
+      <rect class="bx" x="36" y="456" width="448" height="46" rx="7"/>
+      <text class="tl" x="52" y="478">rating</text><text class="sp" x="448" y="478">S6</text>
+      <text class="ts" x="52" y="493">Glicko-2 events, rating periods, rankings cache</text>
+
+      <text class="eb" x="36" y="532">L6 &mdash; OPERATING THE PLATFORM</text>
+      <rect class="bx" x="36" y="540" width="216" height="46" rx="7"/>
+      <text class="tl" x="52" y="562">organizers</text><text class="sp" x="216" y="562">S7</text>
+      <text class="ts" x="52" y="577">profiles, broadcasts, analytics</text>
+      <rect class="bx" x="268" y="540" width="216" height="46" rx="7"/>
+      <text class="tl" x="284" y="562">admin</text><text class="sp" x="448" y="562">S7</text>
+      <text class="ts" x="284" y="577">audit, moderation, support, fraud</text>
+
+      <rect class="grp" x="36" y="616" width="448" height="128" rx="9"/>
+      <text class="eb" x="52" y="640">PHASE 3 &mdash; SPECIFIED, NOT SCHEDULED FOR LAUNCH</text>
+      <rect class="bx" x="52" y="650" width="132" height="52" rx="7"/>
+      <text class="tl" x="64" y="672">leagues</text><text class="sp" x="152" y="672">S13</text>
+      <text class="ts" x="64" y="688">seasons, divisions</text>
+      <rect class="bxa" x="196" y="650" width="132" height="52" rx="7"/>
+      <text class="tl" x="208" y="672">bookings</text><text class="sp" x="296" y="672">S14</text>
+      <text class="ts" x="208" y="688">courts, holds, desk</text>
+      <rect class="bxa" x="340" y="650" width="132" height="52" rx="7"/>
+      <text class="tl" x="352" y="672">ticketing</text><text class="sp" x="440" y="672">S15</text>
+      <text class="ts" x="352" y="688">QR tickets, scans</text>
+      <text class="ts" x="52" y="728">reuse events, registration, payments &mdash; no second commerce stack</text>
+
+      <g style="color:var(--border-strong)">
+        <path class="ln" d="M260 82 L260 116" marker-end="url(#a2)"/>
+        <path class="ln" d="M260 166 L260 200" marker-end="url(#a2)"/>
+        <path class="ln" d="M260 250 L260 284" marker-end="url(#a2)"/>
+        <path class="ln" d="M260 334 L260 368" marker-end="url(#a2)"/>
+        <path class="ln" d="M260 418 L260 452" marker-end="url(#a2)"/>
+        <path class="ln" d="M260 502 L260 536" marker-end="url(#a2)"/>
+        <path class="ln" d="M504 143 L534 143" marker-end="url(#a2)"/>
+      </g>
+
+      <rect class="grp" x="534" y="36" width="390" height="212" rx="9"/>
+      <text class="eb" x="550" y="60">CROSS-CUTTING</text>
+      <rect class="bx" x="550" y="70" width="358" height="72" rx="7"/>
+      <text class="tl" x="566" y="92">notifications</text><text class="sp" x="872" y="92">S9</text>
+      <text class="ts" x="566" y="108">in-app feed always written; push is best-effort</text>
+      <text class="ts" x="566" y="124">consumes events from every module above</text>
+      <rect class="bx" x="550" y="152" width="358" height="80" rx="7"/>
+      <text class="tl" x="566" y="174">platform/</text><text class="sp" x="872" y="174">S1</text>
+      <text class="ts" x="566" y="190">config, db, redis, queue, outbox, auth, errors</text>
+      <text class="ts" x="566" y="206">razorpay, pusher, resend, cloudinary adapters</text>
+      <text class="ts" x="566" y="222">no domain logic &mdash; enforced by lint</text>
+
+      <rect class="grp" x="534" y="288" width="390" height="338" rx="9"/>
+      <text class="eb" x="550" y="312">PHASE 2 &mdash; RETENTION &amp; COMMUNITY</text>
+      <rect class="bx" x="550" y="322" width="358" height="52" rx="7"/>
+      <text class="tl" x="566" y="344">games</text><text class="sp" x="872" y="344">S10</text>
+      <text class="ts" x="566" y="360">pickup games, participants &mdash; no payment</text>
+      <rect class="bx" x="550" y="384" width="358" height="52" rx="7"/>
+      <text class="tl" x="566" y="406">social</text><text class="sp" x="872" y="406">S10</text>
+      <text class="ts" x="566" y="422">challenges, follow feed projections</text>
+      <rect class="bx" x="550" y="446" width="358" height="44" rx="7"/>
+      <text class="tl" x="566" y="468">venues &mdash; discovery UI</text><text class="sp" x="872" y="468">S10</text>
+      <text class="ts" x="566" y="483">the module ships in S3; the screens land here</text>
+      <rect class="bx" x="550" y="500" width="358" height="52" rx="7"/>
+      <text class="tl" x="566" y="522">communities</text><text class="sp" x="872" y="522">S11</text>
+      <text class="ts" x="566" y="538">clubs, groups, teams, announcements</text>
+      <rect class="bx" x="550" y="562" width="358" height="52" rx="7"/>
+      <text class="tl" x="566" y="584">discovery</text><text class="sp" x="872" y="584">S11</text>
+      <text class="ts" x="566" y="600">unified search, recommendations, player matching</text>
+    </svg>
+  </div>
+  <p class="cap">Arrows are dependency direction, which is also build order &mdash; a layer cannot be finished before the one above it. <code>S<em>n</em></code> is the sprint from the brief&rsquo;s Section 8. Orange marks the modules carrying real risk: money, capacity and concurrency.</p>
+
+  <h3>Index</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>#</th><th>Module</th><th>Owns</th><th>Depends on</th><th>Sprint</th><th>Phase</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">01</td><td class="mono"><a href="#m-identity">identity</a></td><td>4 tables</td><td class="mono">&mdash;</td><td class="mono">1</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">02</td><td class="mono"><a href="#m-sport">sport</a></td><td>4 tables</td><td class="mono">&mdash;</td><td class="mono">2</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">03</td><td class="mono"><a href="#m-profile">profile</a></td><td>4 tables</td><td class="mono">identity, sport</td><td class="mono">2</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">04</td><td class="mono"><a href="#m-venues">venues</a></td><td>2 tables</td><td class="mono">&mdash;</td><td class="mono">3</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">05</td><td class="mono"><a href="#m-events">events</a></td><td>3 tables</td><td class="mono">sport, venues, identity</td><td class="mono">3</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">06</td><td class="mono"><a href="#m-registration">registration</a></td><td>5 tables</td><td class="mono">events, payments, profile</td><td class="mono">4</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">07</td><td class="mono"><a href="#m-payments">payments</a></td><td>5 tables</td><td class="mono">&mdash;</td><td class="mono">4</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">08</td><td class="mono"><a href="#m-rating">rating</a></td><td>3 tables</td><td class="mono">scoring, profile</td><td class="mono">6</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">09</td><td class="mono"><a href="#m-tournament">tournament</a></td><td>3 tables</td><td class="mono">events, registration</td><td class="mono">8</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">10</td><td class="mono"><a href="#m-scoring">scoring</a></td><td>2 tables</td><td class="mono">tournament, sport</td><td class="mono">8</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">11</td><td class="mono"><a href="#m-notifications">notifications</a></td><td>3 tables</td><td class="mono">identity</td><td class="mono">9</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">12</td><td class="mono"><a href="#m-games">games</a></td><td>2 tables</td><td class="mono">sport, venues, profile</td><td class="mono">10</td><td><span class="pill p-mute">P2</span></td></tr>
+        <tr><td class="mono">13</td><td class="mono"><a href="#m-social">social</a></td><td>2 tables</td><td class="mono">profile</td><td class="mono">10</td><td><span class="pill p-mute">P2</span></td></tr>
+        <tr><td class="mono">14</td><td class="mono"><a href="#m-organizers">organizers</a></td><td>4 tables</td><td class="mono">identity, events, registration, payments</td><td class="mono">7</td><td><span class="pill p-acc">P1</span></td></tr>
+        <tr><td class="mono">15</td><td class="mono"><a href="#m-admin">admin</a></td><td>6 tables</td><td class="mono">identity, organizers, events, venues, payments</td><td class="mono">7 &middot; 12</td><td><span class="pill p-acc">P1</span> <span class="pill p-mute">P2</span></td></tr>
+        <tr><td class="mono">16</td><td class="mono"><a href="#m-discovery">discovery</a></td><td>2 tables</td><td class="mono">reads all, via projections</td><td class="mono">11</td><td><span class="pill p-mute">P2</span></td></tr>
+        <tr><td class="mono">17</td><td class="mono"><a href="#m-communities">communities</a></td><td>4 tables</td><td class="mono">identity, profile, notifications</td><td class="mono">11</td><td><span class="pill p-mute">P2</span></td></tr>
+        <tr><td class="mono">18</td><td class="mono"><a href="#m-leagues">leagues</a></td><td>6 tables</td><td class="mono">organizers, events, registration, tournament</td><td class="mono">13</td><td><span class="pill p-info">P3</span></td></tr>
+        <tr><td class="mono">19</td><td class="mono"><a href="#m-bookings">bookings</a></td><td>4 tables</td><td class="mono">identity, venues, payments</td><td class="mono">14</td><td><span class="pill p-info">P3</span></td></tr>
+        <tr><td class="mono">20</td><td class="mono"><a href="#m-ticketing">ticketing</a></td><td>5 tables</td><td class="mono">events, payments, identity</td><td class="mono">15</td><td><span class="pill p-info">P3</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="cap">Every item in the product feature list maps to a module and rule in <code>docs/feature-coverage.md</code>. Rule IDs below follow the markdown module specs, which are the source of truth.</p>
+
+  <div class="phase-hd">
+    <h2>Phase 1 &mdash; the core loop</h2>
+    <p>Eleven modules make the acceptance script in Section 3 of the brief work end to end; organizers and admin (Sprint 7) let real organizers and an operations team run it.</p>
+  </div>
+
+  <!-- 01 IDENTITY -->
+  <article class="mod" id="m-identity">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">01</span><h2>identity</h2><span class="pill p-acc">Sprint 1</span></div>
+      <p class="purpose">Who a user is, how they prove it, and what they are allowed to do. Email-first, verified by a six-digit code through Resend; there is no SMS provider. Organizer permission is a grant on an event, never a role on a person.</p>
+      <div class="chips"><span class="chip"><b>4</b> tables</span><span class="chip">depends on <b>nothing</b></span><span class="chip">blocks <b>everything</b></span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>users</code> &middot; <code>otp_challenges</code> &middot; <code>refresh_tokens</code> &middot; <code>event_staff</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">requestOtp</span>(email: string, purpose: OtpPurpose)    =&gt; { challengeId, retryAfterSeconds }
+<span class="k">verifyOtp</span>(email: string, code: string, device?)   =&gt; { access, refresh, isNewUser }
+<span class="k">rotateSession</span>(refreshToken: string)              =&gt; { access, refresh }
+<span class="k">revokeSession</span>(actor: Actor, sessionId: string)    =&gt; void
+<span class="k">revokeAllSessions</span>(userId: string)                 =&gt; void
+<span class="k">grantsFor</span>(userId: string, eventId: string)        =&gt; Grant | null
+<span class="k">grantsForUser</span>(userId: string)                     =&gt; Grant[]
+<span class="k">addStaff</span>(actor, eventId, userId, role)            =&gt; Grant
+<span class="k">suspend</span>(actor: AdminActor, userId, reason)        =&gt; void</pre></div>
+
+      <h4>GraphQL</h4>
+      <div class="code"><pre>Query.me: Viewer
+Mutation.requestOtp(email: String!): RequestOtpPayload!
+Mutation.verifyOtp(email: String!, code: String!): VerifyOtpPayload!
+Mutation.refreshSession(refreshToken: String!): RefreshSessionPayload!
+Mutation.logout(allDevices: Boolean = false): LogoutPayload!
+Mutation.addEventStaff(input: AddEventStaffInput!): AddEventStaffPayload!</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>OTP is six digits, argon2id-hashed at rest, ten-minute TTL. The plaintext code is never stored or logged.</li>
+        <li>Five verification attempts per challenge, then the challenge is burned regardless of remaining TTL.</li>
+        <li>Send limits, sliding window in Redis: 3 per email per 15 minutes, 20 per IP per hour, 200 per IP per day. Exceeding any returns <code>OTP_THROTTLED</code> with <code>retryAfterSeconds</code>.</li>
+        <li>Verification takes the same code path and the same time whether or not the email exists. Addresses are normalised and stored as <code>citext</code>, so one inbox is one account. The endpoint must not be a user-enumeration oracle.</li>
+        <li>Access tokens are RS256 JWTs valid 15 minutes, carrying <code>sub</code>, <code>sid</code>, <code>ver</code> and <strong>no role or grant claim</strong>.</li>
+        <li>Refresh tokens are opaque 256-bit values stored hashed, valid 60 days, and rotate on every use.</li>
+        <li>Presenting a refresh token that has already been spent revokes the entire <code>family_id</code>. Every device in that lineage must log in again.</li>
+        <li>A user with <code>status != 'active'</code> cannot be issued tokens; existing sessions are revoked on suspension.</li>
+        <li>The first successful <code>verifyOtp</code> for an email creates the <code>users</code> row and the <code>player_profiles</code> row in one transaction. A user without a profile is not a state the system can be in.</li>
+        <li>Grants are read from <code>event_staff</code> per request and memoised in a request-scoped loader. Never cached across requests &mdash; revocation must be immediate.</li>
+      </ol>
+
+      <div class="split">
+        <div>
+          <h4>Emits</h4>
+          <ul class="tight">
+            <li><code>user.created</code> &rarr; profile, notifications</li>
+            <li><code>user.suspended</code> &rarr; registration</li>
+            <li><code>staff.granted</code> &rarr; notifications</li>
+          </ul>
+          <h4>Jobs</h4>
+          <ul class="tight">
+            <li><code>purge-expired-otp</code> &mdash; hourly</li>
+            <li><code>purge-revoked-tokens</code> &mdash; daily, 90-day retention</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Errors</h4>
+          <ul class="tight">
+            <li><code>OTP_INVALID</code> <span class="pill p-info">user</span></li>
+            <li><code>OTP_EXPIRED</code> <span class="pill p-info">user</span></li>
+            <li><code>OTP_THROTTLED</code> <span class="pill p-info">user</span> &mdash; carries retry seconds</li>
+            <li><code>SESSION_REUSE_DETECTED</code> <span class="pill p-warn">system</span></li>
+            <li><code>ACCOUNT_SUSPENDED</code> <span class="pill p-warn">system</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="dw"><b>Done when</b><p>A real inbox receives a code and exchanges it for a token pair; replaying a spent refresh token forces re-login on <em>both</em> devices in the family; and an organizer whose <code>event_staff</code> row is deleted loses access on their very next request, not up to fifteen minutes later.</p></div>
+    </div>
+  </article>
+
+  <!-- 02 SPORT -->
+  <article class="mod" id="m-sport">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">02</span><h2>sport</h2><span class="pill p-acc">Sprint 2</span></div>
+      <p class="purpose">The registry that makes multi-sport real rather than aspirational. Scoring rules live here as data, which is what keeps <code>if (sport === 'pickleball')</code> out of the scoring module.</p>
+      <div class="chips"><span class="chip"><b>4</b> tables</span><span class="chip">read-mostly</span><span class="chip">seeded, not user-generated</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>sports</code> &middot; <code>formats</code> &middot; <code>skill_bands</code> &middot; <code>scoring_rules</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">list</span>()                                        =&gt; Sport[]
+<span class="k">bySlug</span>(slug: string)                           =&gt; Sport
+<span class="k">formatsFor</span>(sportId: string)                    =&gt; Format[]
+<span class="k">skillBandsFor</span>(sportId: string)                 =&gt; SkillBand[]
+<span class="k">scoringRuleFor</span>(sportId: string, formatId?)     =&gt; ScoringRule</pre></div>
+
+      <h4>The shape that matters</h4>
+      <p><code>ScoringRule</code> is the contract between this module and <code>scoring</code>. Get it right and a second sport is a row; get it wrong and it is a refactor.</p>
+      <div class="code"><pre>type ScoringRule = {
+  pointsToWin: number;             <span class="c">// pickleball: 11</span>
+  winBy: number;                   <span class="c">// 2</span>
+  hardCap: number | null;          <span class="c">// 15 — or null for unlimited deuce</span>
+  gamesToWin: number;              <span class="c">// 2, i.e. best of 3</span>
+  serveModel: 'rally' | 'side_out';
+  decidingGame?: {                 <span class="c">// third game is often shorter</span>
+    pointsToWin: number;           <span class="c">// 15</span>
+    hardCap: number | null;        <span class="c">// 21</span>
+  };
+  switchEndsAt?: number;           <span class="c">// 6, in the deciding game</span>
+};
+
+<span class="c">// Seed row for launch. A second sport is INSERT, not a code change.</span>
+{ slug: 'pickleball', name: 'Pickleball',
+  formats: ['singles','doubles','mixed_doubles'],
+  skillBands: ['2.5','3.0','3.5','4.0','4.5','5.0+'],
+  scoringRule: { pointsToWin: 11, winBy: 2, hardCap: 15, gamesToWin: 2,
+                 serveModel: 'rally',
+                 decidingGame: { pointsToWin: 15, hardCap: 21 },
+                 switchEndsAt: 6 } }</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>Every sport, format, skill band and scoring rule is seed data under version control. No runtime writes in Phase 1.</li>
+        <li>Skill bands are per sport. Pickleball uses the DUPR-style 2.5&ndash;5.0+ ladder; another sport will not, and nothing may assume that scale.</li>
+        <li>Sports are soft-disabled with an <code>active</code> flag, never deleted &mdash; historical matches must keep resolving.</li>
+        <li>Results are cached in-process for the process lifetime. This table changes on deploy, not at runtime.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>Inserting a second sport row with its formats, bands and scoring rule makes that sport appear in Explore filters, ranking tabs, profile sport selection and event creation &mdash; <strong>with zero code changes</strong>. That is the multi-sport acceptance test, and it should be run once in Sprint 2 with a throwaway sport rather than discovered in year two.</p></div>
+    </div>
+  </article>
+
+  <!-- 03 PROFILE -->
+  <article class="mod" id="m-profile">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">03</span><h2>profile</h2><span class="pill p-acc">Sprint 2</span></div>
+      <p class="purpose">The player as other players see them: sports, skill, location, results, achievements, follows. Also the read model behind the Home screen&rsquo;s stats snapshot.</p>
+      <div class="chips"><span class="chip"><b>4</b> tables</span><span class="chip">depends on <b>identity, sport</b></span><span class="chip">read-heavy</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>player_profiles</code> &middot; <code>player_sports</code> &middot; <code>achievements</code> &middot; <code>follows</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">byUserId</span>(userId: string)                          =&gt; PlayerProfile
+<span class="k">publicView</span>(viewerId: string | null, playerId)     =&gt; PublicProfile
+<span class="k">updateSports</span>(actor, [{ sportId, skillBand }])      =&gt; PlayerProfile
+<span class="k">updateLocation</span>(actor, { city, geo })              =&gt; PlayerProfile
+<span class="k">avatarUploadUrl</span>(actor, contentType)               =&gt; { url, key, expiresAt }
+<span class="k">setAvatar</span>(actor, key: string)                     =&gt; PlayerProfile
+<span class="k">follow</span>(actor, playerId) / <span class="k">unfollow</span>(actor, playerId) =&gt; FollowState
+<span class="k">statsSnapshot</span>(playerId, sportId)                  =&gt; StatsSnapshot
+<span class="c">// Called by the rating module. The ONLY way rating columns change.</span>
+<span class="k">applyRating</span>(playerId, sportId, { rating, rd, volatility, matches })</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>A profile is created in the same transaction as its user, by <code>identity</code>. This module never creates one.</li>
+        <li>At least one sport must be selected before a player can register for an event. Onboarding enforces it; the API enforces it again.</li>
+        <li><code>skill_band</code> is self-declared at onboarding and stays editable; <code>rating</code> is derived and read-only to the player. Never conflate them in the UI or the schema.</li>
+        <li>Visibility is one of <code>public</code>, <code>players_only</code>, <code>private</code>. <code>publicView</code> returns null for hidden fields rather than erroring &mdash; a private profile must not be distinguishable from a missing one.</li>
+        <li>Results are always visible on a profile that appears in a public draw. You cannot enter a public tournament and hide the outcome.</li>
+        <li>Avatars upload directly to Cloudinary under a server-issued signature; only the <code>public_id</code> is stored, and the server checks that the returned id matches the one it signed. Display URLs come from named transformations and are never persisted.</li>
+        <li>Following is one-directional and requires no approval. Self-follow is rejected.</li>
+        <li><code>statsSnapshot</code> is materialised on match completion, not computed per request. The Home screen must not run six aggregates.</li>
+      </ol>
+
+      <div class="split">
+        <div>
+          <h4>Emits</h4>
+          <ul class="tight">
+            <li><code>profile.sports_changed</code> &rarr; rating</li>
+            <li><code>follow.created</code> &rarr; notifications</li>
+            <li><code>achievement.earned</code> &rarr; notifications</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Errors</h4>
+          <ul class="tight">
+            <li><code>PROFILE_NOT_FOUND</code> <span class="pill p-info">user</span></li>
+            <li><code>NO_SPORT_SELECTED</code> <span class="pill p-info">user</span></li>
+            <li><code>CANNOT_FOLLOW_SELF</code> <span class="pill p-info">user</span></li>
+            <li><code>INVALID_SKILL_BAND</code> <span class="pill p-info">user</span> &mdash; band not valid for that sport</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="dw"><b>Done when</b><p>The same <code>playerProfile(id:)</code> query returns full fields to the owner and null-filled fields to a stranger on a private profile, and one <code>home</code> query fills every region of the Home screen without a second round trip.</p></div>
+    </div>
+  </article>
+
+  <!-- 04 VENUES -->
+  <article class="mod" id="m-venues">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">04</span><h2>venues</h2><span class="pill p-acc">Sprint 3</span></div>
+      <p class="purpose">Where play happens. Deliberately thin: courts exist so a tournament can be scheduled onto them, and so a player can find a place to play. No booking, no inventory, no availability calendar.</p>
+      <div class="chips"><span class="chip"><b>2</b> tables</span><span class="chip">no dependencies</span><span class="chip">booking is <b>Phase 3</b></span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>venues</code> &middot; <code>venue_courts</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">search</span>({ near?: GeoPoint, radiusKm?, city?, sportId? }, page)  =&gt; Page&lt;Venue&gt;
+<span class="k">byId</span>(venueId: string)                                       =&gt; Venue
+<span class="k">courtsFor</span>(venueId: string)                                  =&gt; Court[]
+<span class="k">create</span>(actor: OrganizerActor, input)                         =&gt; Venue</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>Radius search uses the PostGIS <code>gist</code> index on <code>geo</code>, capped at 50&nbsp;km. An uncapped radius query is a table scan wearing a filter.</li>
+        <li>A court belongs to exactly one venue and carries <code>surface</code>, <code>indoor</code> and <code>sport_ids[]</code> &mdash; one court often serves several sports.</li>
+        <li>Venues are created by organizers and are visible to everyone. Moderation is manual in Phase 1, which is acceptable at this volume and should be revisited before it is not.</li>
+        <li>Court <em>availability</em> in Phase 1 means only &ldquo;is this court already assigned to another match in this tournament&rdquo;. It is a scheduling concept, not a booking one.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>A venue with four courts can be created, found by a 10&nbsp;km radius query from a map centre, and its courts assigned to matches by the tournament scheduler without double-booking a court inside one event.</p></div>
+    </div>
+  </article>
+
+  <!-- 05 EVENTS -->
+  <article class="mod" id="m-events">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">05</span><h2>events</h2><span class="pill p-acc">Sprint 3</span></div>
+      <p class="purpose">The thing a player discovers, and the categories they actually register for. Owns capacity and the single price-quote function that both registration and payments call &mdash; so what the player agreed to and what Razorpay charges cannot drift.</p>
+      <div class="chips"><span class="chip"><b>3</b> tables</span><span class="chip">depends on <b>sport, venues, identity</b></span><span class="chip">highest read volume</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>events</code> &middot; <code>event_categories</code> &middot; <code>event_media</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">search</span>(filter: EventFilter, page: CursorPage)      =&gt; Page&lt;Event&gt;
+<span class="k">bySlug</span>(slug: string)                              =&gt; Event
+<span class="k">create</span>(actor: OrganizerActor, input)               =&gt; Event
+<span class="k">update</span>(actor, eventId, patch)                     =&gt; Event
+<span class="k">publish</span>(actor, eventId)                           =&gt; Event
+<span class="k">cancel</span>(actor, eventId, reason)                    =&gt; Event
+<span class="k">capacityOf</span>(categoryId)                            =&gt; { capacity, taken, held, remaining }
+<span class="k">priceQuote</span>(categoryId)                            =&gt; PriceQuote
+<span class="k">markLive</span>(eventId) / <span class="k">markCompleted</span>(eventId)        =&gt; Event</pre></div>
+
+      <h4>Lifecycle</h4>
+      <div class="code"><pre>draft ──publish──▶ published ──first match starts──▶ live ──▶ completed
+  │                   │
+  └──────────────── cancelled ◀───────────────────────────────┘
+                        │
+                        └─▶ triggers payments.bulkRefund() for every
+                            confirmed registration on the event</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>Publishing requires at least one category, a city or venue, and <code>registration_closes_at &lt; starts_at</code>. Publish is the validation gate; drafts may be incomplete.</li>
+        <li>Once published, <code>starts_at</code>, fees and capacity may only be changed while a category has zero confirmed registrations. After that they are frozen &mdash; players agreed to specific terms.</li>
+        <li><code>priceQuote</code> is the only place money is computed: <code>entry + platform fee + tax(bps)</code>. The client never calculates a total, and <code>payments</code> calls this same function when creating an order.</li>
+        <li>Availability is derived, never stored: <code>remaining &le; 0</code> &rarr; <code>FULL</code>, <code>remaining &le; 10% of capacity</code> &rarr; <code>ALMOST_FULL</code>, past <code>registration_closes_at</code> &rarr; <code>CLOSED</code>.</li>
+        <li><code>capacityOf</code> subtracts live seat holds as well as confirmed entries, so the badge on a card and the outcome of pressing Register agree.</li>
+        <li>Discovery reads only touch the partial index on <code>status IN ('published','live')</code>. Draft and cancelled events are not in the index and are never listed.</li>
+        <li>Cancelling an event is irreversible and enqueues a full refund for every confirmed registration, platform fee included.</li>
+        <li>The <code>slug</code> is permanent once published &mdash; it is a deep link that will exist in someone&rsquo;s WhatsApp forever.</li>
+      </ol>
+
+      <div class="split">
+        <div>
+          <h4>Emits</h4>
+          <ul class="tight">
+            <li><code>event.published</code> &rarr; notifications</li>
+            <li><code>event.cancelled</code> &rarr; payments, notifications</li>
+            <li><code>event.live</code> &rarr; notifications</li>
+            <li><code>category.full</code> &rarr; notifications (waitlist)</li>
+          </ul>
+          <h4>Jobs</h4>
+          <ul class="tight">
+            <li><code>close-registration</code> &mdash; delayed to <code>registration_closes_at</code></li>
+            <li><code>refund-under-minimum</code> &mdash; at close, if entries &lt; minimum</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Errors</h4>
+          <ul class="tight">
+            <li><code>EVENT_NOT_FOUND</code> <span class="pill p-info">user</span></li>
+            <li><code>REGISTRATION_CLOSED</code> <span class="pill p-info">user</span></li>
+            <li><code>INVALID_EVENT_WINDOW</code> <span class="pill p-info">user</span></li>
+            <li><code>EVENT_HAS_ENTRIES</code> <span class="pill p-info">user</span> &mdash; on a frozen-field edit</li>
+            <li><code>FORBIDDEN</code> <span class="pill p-warn">system</span> &mdash; not staff on this event</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="dw"><b>Done when</b><p>Explore returns correct results for a filter combining sport, city, date range, skill band and price, at p95 under 200&nbsp;ms against 10,000 seeded events &mdash; and the price shown on the confirm screen is byte-identical to the amount Razorpay is asked to charge.</p></div>
+    </div>
+  </article>
+
+  <!-- 06 REGISTRATION -->
+  <article class="mod" id="m-registration">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">06</span><h2>registration</h2><span class="pill p-acc">Sprint 4</span><span class="pill p-crit">Highest risk</span></div>
+      <p class="purpose">The five-step flow from the brief, as one state machine. Three failure modes here cost real money: overselling a draw with physical courts, double-charging a player, and a partner who never accepts.</p>
+      <div class="chips"><span class="chip"><b>5</b> tables</span><span class="chip">depends on <b>events, payments, profile</b></span><span class="chip">write TDD first</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>registrations</code> &middot; <code>teams</code> &middot; <code>team_members</code> &middot; <code>registration_invites</code> &middot; <code>seat_holds</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">begin</span>(actor, { eventCategoryId })              =&gt; Registration
+<span class="k">invitePartner</span>(actor, { registrationId, email }) =&gt; Invite
+<span class="k">acceptInvite</span>(actor, token: string)             =&gt; Registration  <span class="c">// takes the hold</span>
+<span class="k">declineInvite</span>(actor, token: string)            =&gt; void
+<span class="k">confirmFromPayment</span>(paymentId: string)          =&gt; Registration  <span class="c">// payments calls this</span>
+<span class="k">failFromPayment</span>(paymentId, reason)             =&gt; Registration
+<span class="k">expireHold</span>(holdId: string)                     =&gt; void          <span class="c">// job calls this</span>
+<span class="k">cancel</span>(actor, registrationId)                  =&gt; Registration
+<span class="k">checkIn</span>(actor, registrationId)                 =&gt; Registration
+<span class="k">listForEvent</span>(actor, eventId, filter, page)     =&gt; Page&lt;Registration&gt;
+<span class="k">confirmedForCategory</span>(categoryId)               =&gt; Registration[] <span class="c">// tournament calls this</span></pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>A player may hold at most one live entry per category. Enforced by a unique partial index, not by a read-then-write check.</li>
+        <li><strong>No seat hold is taken while a registration awaits a partner.</strong> A 48-hour hold would let one player park a slot in a popular draw for two days.</li>
+        <li>The hold TTL is 10 minutes; the partner invite TTL is 48 hours. Both are config, not literals.</li>
+        <li>Capacity is decided inside a transaction that takes <code>FOR UPDATE</code> on the category row and counts confirmed entries plus unexpired holds. An insert that would exceed capacity returns zero rows, which maps to <code>CATEGORY_FULL</code>.</li>
+        <li>An expired hold stops blocking capacity the instant it expires, because the count predicate is <code>expires_at &gt; now()</code>. The release job flips <code>released_at</code> and moves the registration to <code>expired</code>; it is not what makes capacity correct.</li>
+        <li>The captain pays for the whole team. Split payment is deferred &mdash; it needs a second payment state machine and lets a partner strand a confirmed entry.</li>
+        <li>A partner must satisfy the category&rsquo;s skill and age constraints. Validated <em>at accept</em>, not at invite, because the partner may not have had an account at invite time.</li>
+        <li>Payment failure leaves the hold alive until its TTL so a retry does not lose the slot. Only expiry releases it.</li>
+        <li>Cancelling after <code>cancellation_cutoff_at</code> refunds nothing but still returns the slot to the pool and promotes the waitlist. Punishing the player should not punish the draw.</li>
+        <li>Check-in is allowed only within two hours either side of the event start, and only for <code>confirmed</code> entries.</li>
+        <li>Every transition goes through one guard function that consults the transition table. There is no other way to write <code>registrations.status</code>, and a disallowed transition throws rather than silently no-ops.</li>
+      </ol>
+
+      <h4>State transitions</h4>
+      <div class="tw">
+        <table>
+          <thead><tr><th>From</th><th>Trigger</th><th>To</th><th>In the same transaction</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">&mdash;</td><td class="mono">begin</td><td class="mono">draft</td><td>Price quote frozen onto <code>amount_paise</code>.</td></tr>
+            <tr><td class="mono">draft</td><td class="mono">invitePartner</td><td class="mono">awaiting_partner</td><td>Invite + token; email and push. No hold.</td></tr>
+            <tr><td class="mono">awaiting_partner</td><td class="mono">acceptInvite</td><td class="mono">payment_pending</td><td>Team written; hold acquired; expiry job scheduled.</td></tr>
+            <tr><td class="mono">draft</td><td class="mono">begin (singles)</td><td class="mono">payment_pending</td><td>Hold acquired; order created; expiry job scheduled.</td></tr>
+            <tr><td class="mono">payment_pending</td><td class="mono">confirmFromPayment</td><td class="mono">confirmed</td><td>Hold consumed; confirmation push; capacity recount.</td></tr>
+            <tr><td class="mono">payment_pending</td><td class="mono">failFromPayment</td><td class="mono">payment_failed</td><td>Hold left alive until TTL.</td></tr>
+            <tr><td class="mono">payment_pending</td><td class="mono">expireHold</td><td class="mono">expired</td><td>Hold released; capacity returns; waitlist promoted.</td></tr>
+            <tr><td class="mono">awaiting_partner</td><td class="mono">invite expiry</td><td class="mono">expired</td><td>Captain notified with a one-tap re-invite.</td></tr>
+            <tr><td class="mono">confirmed</td><td class="mono">cancel</td><td class="mono">refunded</td><td>Refund per policy; slot returns; waitlist promoted.</td></tr>
+            <tr><td class="mono">confirmed</td><td class="mono">checkIn</td><td class="mono">checked_in</td><td>Organizer dashboard count updates.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="split">
+        <div>
+          <h4>Emits</h4>
+          <ul class="tight">
+            <li><code>registration.confirmed</code> &rarr; notifications</li>
+            <li><code>registration.expired</code> &rarr; notifications</li>
+            <li><code>invite.created</code> &rarr; notifications</li>
+            <li><code>capacity.changed</code> &rarr; events cache bust</li>
+          </ul>
+          <h4>Jobs</h4>
+          <ul class="tight">
+            <li><code>release-hold</code> &mdash; delayed +10 min</li>
+            <li><code>expire-invite</code> &mdash; delayed +48 h</li>
+            <li><code>sweep-stale-holds</code> &mdash; every 5 min, belt and braces</li>
+            <li><code>promote-waitlist</code> &mdash; on capacity release</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Errors</h4>
+          <ul class="tight">
+            <li><code>CATEGORY_FULL</code> <span class="pill p-info">user</span></li>
+            <li><code>HOLD_EXPIRED</code> <span class="pill p-info">user</span></li>
+            <li><code>ALREADY_REGISTERED</code> <span class="pill p-info">user</span></li>
+            <li><code>PARTNER_ALREADY_ENTERED</code> <span class="pill p-info">user</span></li>
+            <li><code>PARTNER_INELIGIBLE</code> <span class="pill p-info">user</span> &mdash; skill or age</li>
+            <li><code>INVITE_EXPIRED</code> <span class="pill p-info">user</span></li>
+            <li><code>CHECKIN_WINDOW_CLOSED</code> <span class="pill p-info">user</span></li>
+            <li><code>ILLEGAL_TRANSITION</code> <span class="pill p-warn">system</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="dw"><b>Done when</b><p>Two tests pass, and they are written <em>before</em> any resolver in this module exists. <strong>(1)</strong> Fifty concurrent registrations against a ten-entry category confirm exactly ten &mdash; never eleven, never nine. <strong>(2)</strong> The same <code>payment.captured</code> webhook delivered five times produces one confirmed registration, one payment row, one ledger entry and one push.</p></div>
+    </div>
+  </article>
+
+  <!-- 07 PAYMENTS -->
+  <article class="mod" id="m-payments">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">07</span><h2>payments</h2><span class="pill p-acc">Sprint 4</span><span class="pill p-crit">Highest risk</span></div>
+      <p class="purpose">Razorpay orders, webhook ingest, refunds and a ledger. Knows nothing about tournaments &mdash; it moves money against a registration id and tells the registration module what happened.</p>
+      <div class="chips"><span class="chip"><b>5</b> tables</span><span class="chip">depends on <b>nothing</b></span><span class="chip">the webhook is the truth</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>payment_orders</code> &middot; <code>payments</code> &middot; <code>refunds</code> &middot; <code>payment_webhook_events</code> &middot; <code>ledger_entries</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">createOrder</span>(actor, registrationId)                 =&gt; { orderId, amountPaise, key }
+<span class="k">ingestWebhook</span>(rawBody: Buffer, signature: string)  =&gt; { accepted: boolean }
+<span class="k">applyWebhook</span>(razorpayEventId: string)              =&gt; void   <span class="c">// job, not request</span>
+<span class="k">refund</span>(actor, paymentId, amountPaise, reason)      =&gt; Refund
+<span class="k">bulkRefund</span>(eventId, reason)                       =&gt; { queued: number }
+<span class="k">reconcilePending</span>()                                =&gt; { resolved: number }
+<span class="k">ledgerFor</span>(registrationId)                          =&gt; LedgerEntry[]
+<span class="k">receipt</span>(actor, paymentId)                          =&gt; Receipt  <span class="c">// rendered, not stored</span></pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>The order amount is recomputed server-side from <code>events.priceQuote()</code> at order creation. An amount arriving from a client is ignored, not validated.</li>
+        <li>The webhook route receives the raw body. HMAC-SHA256 with a timing-safe comparison; a bad signature is a 400 and nothing is written.</li>
+        <li>Ingest claims <code>razorpay_event_id</code> as a primary key <em>before</em> doing anything. A duplicate delivery inserts nothing and returns 200 immediately, so Razorpay stops retrying.</li>
+        <li>Ingest acknowledges in under one second and does the state change in a job. Razorpay times out at five seconds and will retry a slow success.</li>
+        <li>A registration confirms only on a verified <code>payment.captured</code>, or on reconciliation against the Orders API. The client-side checkout callback is a UI hint and confirms nothing.</li>
+        <li>Every money movement writes a <code>ledger_entries</code> row &mdash; charge, platform fee, tax, refund, reversal. The ledger, not the payments table, is what reconciles against a Razorpay settlement report.</li>
+        <li>Refunds are idempotent on <code>(payment_id, reason, amount_paise)</code> unless an explicit idempotency key is supplied. Retrying a refund must never send money twice.</li>
+        <li>A refund may never exceed <code>captured − already_refunded</code>. Enforced by a check against the sum, inside the transaction.</li>
+        <li>Reconciliation runs every 15 minutes over every <code>payment_pending</code> registration older than 30 minutes, queries Razorpay for truth, and drives the state machine from the answer. This is Phase 1 work, not later hardening.</li>
+        <li>Raw gateway payloads are stored on the payment row. When a player disputes a charge in four months, that payload is the evidence.</li>
+        <li><strong>Receipts are rendered on demand, never stored as files.</strong> <code>receipt()</code> builds the document from <code>ledger_entries</code>; the app renders it and the confirmation email embeds it inline. No PDF, no bucket, no signed file URL &mdash; Cloudinary is for images, and the ledger is already the source of truth, so a stored file would only be a second copy that can disagree with it.</li>
+        <li>Payment emails &mdash; confirmation, failure, refund processed &mdash; are sent through the Resend adapter by <em>this</em> module. <code>notifications</code> owns the in-app feed and push; transactional email belongs to the module that owns the action. Each payment email is still paired with a <code>notifications.emit()</code> so the feed stays complete.</li>
+      </ol>
+
+      <div class="note">
+        <b>When receipts become invoices</b>
+        <p>If GST rules require a numbered tax invoice retained as a document, that is the point to add object storage for non-image artefacts &mdash; not to reach for Cloudinary. Add an <code>invoices</code> table with a sequential number at the same time: a receipt you can re-render is not the same thing as an invoice you must reproduce byte-for-byte.</p>
+      </div>
+
+      <div class="note">
+        <b>Refund policy, as data</b>
+        <p>Cancel before <code>cancellation_cutoff_at</code>: entry fee refunded, platform fee retained &mdash; and disclosed in the quote at checkout. Cancel after: nothing refunded, slot still returns. Organizer cancels the event, or a category misses its minimum: full refund including the platform fee. Withdrawal after the draw is at organizer discretion, and the opponent receives a walkover that does not affect either rating.</p>
+      </div>
+
+      <div class="split">
+        <div>
+          <h4>Emits</h4>
+          <ul class="tight">
+            <li><code>payment.captured</code> &rarr; registration, notifications</li>
+            <li><code>payment.failed</code> &rarr; registration, notifications</li>
+            <li><code>refund.processed</code> &rarr; notifications</li>
+          </ul>
+          <h4>Jobs</h4>
+          <ul class="tight">
+            <li><code>apply-webhook</code> &mdash; 5 retries, then page</li>
+            <li><code>reconcile-pending</code> &mdash; every 15 min</li>
+            <li><code>process-refund</code> &mdash; 5 retries, then page</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Errors</h4>
+          <ul class="tight">
+            <li><code>PAYMENT_FAILED</code> <span class="pill p-info">user</span></li>
+            <li><code>ORDER_ALREADY_PAID</code> <span class="pill p-info">user</span></li>
+            <li><code>REFUND_WINDOW_CLOSED</code> <span class="pill p-info">user</span></li>
+            <li><code>REFUND_EXCEEDS_CAPTURED</code> <span class="pill p-warn">system</span></li>
+            <li><code>BAD_SIGNATURE</code> <span class="pill p-warn">system</span> &mdash; 400, never 500</li>
+            <li><code>GATEWAY_UNAVAILABLE</code> <span class="pill p-warn">system</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="dw"><b>Done when</b><p>A test-mode UPI payment confirms an entry end to end; five duplicate webhook deliveries produce exactly one payment, one ledger entry and one push; a deliberately dropped webhook is resolved by reconciliation within 30 minutes with no human involved; and the count of <code>payment_pending</code> older than 30 minutes sits at zero on the operations dashboard.</p></div>
+    </div>
+  </article>
+
+  <!-- 08 RATING -->
+  <article class="mod" id="m-rating">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">08</span><h2>rating</h2><span class="pill p-acc">Sprint 6</span></div>
+      <p class="purpose">Glicko-2 per player per sport, written append-only, with rankings as a cache rebuilt on write. The algorithm is replaceable; the log is not.</p>
+      <div class="chips"><span class="chip"><b>3</b> tables</span><span class="chip">depends on <b>scoring, profile</b></span><span class="chip">append-only</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>rating_events</code> &middot; <code>rating_periods</code> &middot; <code>rankings</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">applyMatch</span>(matchId: string)                        =&gt; RatingEvent[]  <span class="c">// provisional</span>
+<span class="k">runPeriod</span>(periodId: string)                        =&gt; { playersUpdated: number }
+<span class="k">rebuildRankings</span>(sportId, scope: RankingScope)      =&gt; { ranked: number }
+<span class="k">ratingFor</span>(playerId, sportId)                       =&gt; { rating, rd, provisional }
+<span class="k">historyFor</span>(playerId, sportId, page)                =&gt; Page&lt;RatingEvent&gt;
+<span class="k">leaderboard</span>(sportId, scope, page)                  =&gt; Page&lt;RankingRow&gt;
+<span class="k">replay</span>(sportId, fromDate, algoVersion)             =&gt; void  <span class="c">// backfill only</span></pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>Ratings are Glicko-2, not Elo. Rating deviation grows with inactivity, which is the only honest way to rate players who compete in bursts around tournaments.</li>
+        <li>Two numbers exist and are labelled differently in the UI. <strong>Provisional</strong> is a single-match update applied the moment a result is confirmed. <strong>Settled</strong> comes from the weekly period job and is the only input to <code>rankings</code>.</li>
+        <li>Provisional rows carry <code>is_provisional = true</code> and are superseded when the period runs. Both live in the same log so a player&rsquo;s history reads continuously.</li>
+        <li>The rating period runs weekly, Monday 03:00 IST, over every match confirmed since the previous period.</li>
+        <li>For doubles, a team&rsquo;s rating is the mean of its members and its RD the root-mean-square of theirs. The team-level delta is split between partners <strong>inversely to their RD</strong> &mdash; the less certain player absorbs more of the change.</li>
+        <li>A win against a team rated more than 400 points below yours contributes at reduced weight, so stacking soft draws cannot inflate a ranking.</li>
+        <li>Walkovers, retirements and forfeits do not affect either player&rsquo;s rating. Only <code>outcome = 'played'</code> reaches the engine.</li>
+        <li>Every row carries <code>algo_version</code>. Replacing the model means writing <code>glicko2-v2</code> and replaying the log &mdash; no migration, which is the whole point of the append-only design.</li>
+        <li>A player needs five settled matches in a sport before appearing in <code>rankings</code>; below that the profile shows <em>unranked</em> rather than a misleading number.</li>
+        <li>Ranking scopes are enumerated, not arbitrary: <code>national</code>, <code>city:&lt;name&gt;</code>, <code>age:&lt;band&gt;</code>. An open-ended scope string is an unbounded table.</li>
+        <li><code>movement</code> is computed against the previous rebuild and stored, so the leaderboard&rsquo;s up/down arrow costs no second query.</li>
+        <li>Ratings are written to <code>player_sports</code> only through <code>profile.applyRating()</code>. This module never issues an UPDATE against another module&rsquo;s table.</li>
+      </ol>
+
+      <div class="split">
+        <div>
+          <h4>Emits</h4>
+          <ul class="tight">
+            <li><code>rating.changed</code> &rarr; notifications</li>
+            <li><code>ranking.moved</code> &rarr; notifications (threshold: 5 places)</li>
+          </ul>
+          <h4>Jobs</h4>
+          <ul class="tight">
+            <li><code>apply-provisional</code> &mdash; on result confirmed</li>
+            <li><code>run-period</code> &mdash; weekly, Mon 03:00 IST</li>
+            <li><code>rebuild-rankings</code> &mdash; after period, and on event completion</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Errors</h4>
+          <ul class="tight">
+            <li><code>RATING_UNAVAILABLE</code> <span class="pill p-info">user</span> &mdash; fewer than 5 matches</li>
+            <li><code>PERIOD_ALREADY_RUN</code> <span class="pill p-warn">system</span></li>
+            <li><code>UNKNOWN_ALGO_VERSION</code> <span class="pill p-warn">system</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="dw"><b>Done when</b><p>The seeded 32-entry tournament produces a ranked leaderboard with correct movement arrows &mdash; and a determinism test passes: replaying the entire <code>rating_events</code> log under the same <code>algo_version</code> reproduces every current rating to the last decimal. Without that test, &ldquo;swappable algorithm&rdquo; is a claim rather than a property.</p></div>
+    </div>
+  </article>
+
+  <!-- 09 TOURNAMENT -->
+  <article class="mod" id="m-tournament">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">09</span><h2>tournament</h2><span class="pill p-acc">Sprint 8</span><span class="pill p-crit">Concurrency</span></div>
+      <p class="purpose">Draw generation with Championship and Plate, court scheduling, and advancement. Every match knows where its winner and its loser go before a single point is played.</p>
+      <div class="chips"><span class="chip"><b>3</b> tables</span><span class="chip">depends on <b>events, registration</b></span><span class="chip">advisory-locked</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>tournaments</code> &middot; <code>matches</code> &middot; <code>court_assignments</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">generateDraw</span>(actor, { eventCategoryId })         =&gt; Tournament
+<span class="k">regenerateDraw</span>(actor, tournamentId)             =&gt; Tournament  <span class="c">// pre-first-match only</span>
+<span class="k">schedule</span>(tournamentId)                          =&gt; CourtAssignment[]
+<span class="k">assignCourt</span>(actor, matchId, courtId, startsAt)  =&gt; Match       <span class="c">// manual override</span>
+<span class="k">advance</span>(matchId, result: MatchResult)           =&gt; void        <span class="c">// scoring calls this</span>
+<span class="k">bracketFor</span>(eventCategoryId)                     =&gt; Bracket
+<span class="k">standingsFor</span>(eventCategoryId)                   =&gt; StandingRow[]
+<span class="k">liveMatches</span>(eventId)                            =&gt; Match[]</pre></div>
+
+      <h4>Draw generation</h4>
+      <ol class="rules">
+        <li>Only <code>confirmed</code> and <code>checked_in</code> registrations enter a draw. A payment still pending at draw time is not in the tournament.</li>
+        <li>Seeding is by settled rating descending; unrated entries sort last, tie-broken deterministically by confirmation time so a regenerated draw is reproducible.</li>
+        <li>Bracket size is the next power of two. Byes go to the top seeds and are written as real match rows with one side null and <code>status = 'walkover'</code> &mdash; a bye is a result, so advancement has no special case.</li>
+        <li>Seeds are placed by standard bracket positions (1&nbsp;v&nbsp;16, 8&nbsp;v&nbsp;9, &hellip;), so the top two seeds can only meet in the final.</li>
+        <li>The Plate is sized to the number of first-round losers, and Championship round-1 matches carry <code>loser_match_id</code> pointing into Plate round 1. Both brackets and all wiring are generated in one pass.</li>
+        <li>The whole draw is written in one transaction. A partially generated draw is not a state the system can be in.</li>
+        <li>A draw requires at least four entries. Below that, the category is refunded rather than played.</li>
+        <li>Once any match has left <code>scheduled</code>, the draw is immutable. <code>regenerateDraw</code> throws <code>DRAW_LOCKED</code>.</li>
+      </ol>
+
+      <h4>Advancement &amp; scheduling</h4>
+      <ol class="rules">
+        <li>Advancement takes a per-tournament <code>pg_advisory_xact_lock</code>. Two courts finishing simultaneously must not write the same next-match slot concurrently.</li>
+        <li>Advancing an already-completed match is a no-op, not an error. The operation is idempotent because it is reachable from a retried job.</li>
+        <li>The scheduler is greedy, re-run whenever a match becomes ready, and respects a minimum rest of 20 minutes between a player&rsquo;s matches.</li>
+        <li>Every round-<em>n</em> match is scheduled before any round-<em>n+1</em> match on the same court, so a bracket cannot deadlock waiting on itself.</li>
+        <li>The schedule is advisory. Organizers reassign courts by hand constantly and the API allows it &mdash; the scheduler removes typing, it does not own the schedule.</li>
+      </ol>
+
+      <div class="split">
+        <div>
+          <h4>Emits</h4>
+          <ul class="tight">
+            <li><code>draw.generated</code> &rarr; notifications</li>
+            <li><code>match.ready</code> &rarr; notifications, realtime</li>
+            <li><code>match.completed</code> &rarr; rating, realtime</li>
+            <li><code>tournament.completed</code> &rarr; rating, events</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Errors</h4>
+          <ul class="tight">
+            <li><code>INSUFFICIENT_ENTRIES</code> <span class="pill p-info">user</span></li>
+            <li><code>DRAW_ALREADY_GENERATED</code> <span class="pill p-info">user</span></li>
+            <li><code>DRAW_LOCKED</code> <span class="pill p-info">user</span></li>
+            <li><code>COURT_DOUBLE_BOOKED</code> <span class="pill p-info">user</span></li>
+            <li><code>MATCH_NOT_READY</code> <span class="pill p-warn">system</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="dw"><b>Done when</b><p>A 32-entry draw generates 31 Championship matches and 15 Plate matches with complete winner and loser wiring; scoring every match to completion leaves exactly one Championship winner, one Plate winner, and zero unfilled slots; and two matches confirmed in the same millisecond both advance correctly.</p></div>
+    </div>
+  </article>
+
+  <!-- 10 SCORING -->
+  <article class="mod" id="m-scoring">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">10</span><h2>scoring</h2><span class="pill p-acc">Sprint 8</span><span class="pill p-crit">Concurrency</span></div>
+      <p class="purpose">Live score capture on a court-side device, an append-only event log, and result confirmation. The scoring rules come from the <code>sport</code> module &mdash; this module knows how to count, not what counting means.</p>
+      <div class="chips"><span class="chip"><b>2</b> tables</span><span class="chip">depends on <b>tournament, sport</b></span><span class="chip">offline-tolerant</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>match_score_events</code> &middot; <code>match_results</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">start</span>(actor, matchId)                              =&gt; MatchState
+<span class="k">recordPoint</span>(actor, { matchId, side, expectedSeq }) =&gt; MatchState
+<span class="k">undo</span>(actor, { matchId, expectedSeq })              =&gt; MatchState
+<span class="k">correct</span>(actor, { matchId, games, note })           =&gt; MatchState  <span class="c">// manager only</span>
+<span class="k">submitResult</span>(actor, { matchId, games, outcome })   =&gt; MatchResult
+<span class="k">confirmResult</span>(actor, matchId)                     =&gt; MatchResult
+<span class="k">disputeResult</span>(actor, matchId, reason)             =&gt; MatchResult
+<span class="k">timeline</span>(matchId)                                 =&gt; ScoreEvent[]
+<span class="k">stateOf</span>(matchId)                                  =&gt; MatchState</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>Every write carries <code>expectedSeq</code>. If it does not match <code>matches.score_seq</code>, the write is rejected with <code>SCORE_STALE</code> and the caller re-reads. Two scorers on two devices cannot both write sequence 41.</li>
+        <li><code>match_score_events</code> is append-only. An undo is a new event of kind <code>undo</code>, never a delete &mdash; the timeline is evidence.</li>
+        <li>Each event stores <code>state_after</code> as the complete score, not a delta. A client that missed ten messages is correct on receiving the eleventh.</li>
+        <li>Point validity &mdash; when a game ends, whether a hard cap applies, who serves &mdash; is decided entirely by the <code>ScoringRule</code> fetched from <code>sport</code>. No sport-specific branch exists in this module.</li>
+        <li>Fan-out is never inline. The transaction writes an <code>outbox</code> row; a Pusher outage cannot fail a scorer&rsquo;s tap.</li>
+        <li>A completed match moves to <code>awaiting_confirm</code>, not <code>completed</code>. Confirmation comes from the opposing captain, or from an organizer override after 15 minutes.</li>
+        <li>Correcting an already-confirmed result requires an <code>owner</code> or <code>manager</code> grant. A volunteer <code>scorer</code> can mis-tap during a match; they must not be able to rewrite a finished one.</li>
+        <li>A correction that changes the winner reverses the advancement and the rating events before applying the new result. Both are in one transaction under the tournament advisory lock.</li>
+        <li>The scoring device works offline: points queue locally against <code>expectedSeq</code> and replay on reconnect. A conflict surfaces the server state and asks the scorer to confirm &mdash; the one place in this system where a human resolves a merge.</li>
+        <li>Walkovers, retirements and forfeits are submitted as outcomes without a point log, and are excluded from rating by <code>rating&nbsp;R7</code>.</li>
+      </ol>
+
+      <div class="split">
+        <div>
+          <h4>Emits</h4>
+          <ul class="tight">
+            <li><code>match.score</code> &rarr; realtime (throttled 250&nbsp;ms)</li>
+            <li><code>match.live</code> &rarr; realtime (immediate)</li>
+            <li><code>result.submitted</code> &rarr; notifications</li>
+            <li><code>result.confirmed</code> &rarr; tournament, rating</li>
+          </ul>
+        </div>
+        <div>
+          <h4>Errors</h4>
+          <ul class="tight">
+            <li><code>SCORE_STALE</code> <span class="pill p-info">user</span> &mdash; carries server state</li>
+            <li><code>MATCH_NOT_LIVE</code> <span class="pill p-info">user</span></li>
+            <li><code>RESULT_ALREADY_CONFIRMED</code> <span class="pill p-info">user</span></li>
+            <li><code>CORRECTION_REQUIRES_MANAGER</code> <span class="pill p-warn">system</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="dw"><b>Done when</b><p>Two devices score the same match and the second is rejected with the server state rather than overwriting it; a device scores five points offline and replays them cleanly on reconnect; and a spectator on another network sees a point land within 500&nbsp;ms.</p></div>
+    </div>
+  </article>
+
+  <!-- 11 NOTIFICATIONS -->
+  <article class="mod" id="m-notifications">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">11</span><h2>notifications</h2><span class="pill p-acc">Sprint 9</span></div>
+      <p class="purpose">One emit call, two destinations: a durable in-app feed row and a best-effort push through Pusher Beams. Consumes domain events from every module above it and depends on none of them.</p>
+      <div class="chips"><span class="chip"><b>3</b> tables</span><span class="chip">depends on <b>identity</b></span><span class="chip">feed is durable, push is not</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>notifications</code> &middot; <code>device_registrations</code> &middot; <code>notification_preferences</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">emit</span>(userId, template: TemplateKey, payload)   =&gt; Notification
+<span class="k">emitBulk</span>(userIds[], template, payload)         =&gt; { queued: number }
+<span class="k">feed</span>(actor, page)                              =&gt; Page&lt;Notification&gt;
+<span class="k">unreadCount</span>(actor)                             =&gt; number
+<span class="k">markRead</span>(actor, ids[]) / <span class="k">markAllRead</span>(actor)     =&gt; void
+<span class="k">registerDevice</span>(actor, { token, platform })      =&gt; void
+<span class="k">preferences</span>(actor) / <span class="k">setPreferences</span>(actor, prefs)</pre></div>
+
+      <h4>Templates</h4>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Key</th><th>Fired by</th><th>Deep link</th><th>Quiet hours</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">registration.confirmed</td><td class="mono">payments</td><td>Event Detail</td><td class="nw"><span class="pill p-mute">Respected</span></td></tr>
+            <tr><td class="mono">partner.invite</td><td class="mono">registration</td><td>Registration Step 2b</td><td class="nw"><span class="pill p-mute">Respected</span></td></tr>
+            <tr><td class="mono">match.starting_soon</td><td class="mono">tournament</td><td>Match Detail</td><td class="nw"><span class="pill p-warn">Overrides</span></td></tr>
+            <tr><td class="mono">match.result</td><td class="mono">scoring</td><td>Match Detail</td><td class="nw"><span class="pill p-mute">Respected</span></td></tr>
+            <tr><td class="mono">ranking.changed</td><td class="mono">rating</td><td>Rankings</td><td class="nw"><span class="pill p-mute">Respected</span></td></tr>
+            <tr><td class="mono">payment.updated</td><td class="mono">payments</td><td>Payments history</td><td class="nw"><span class="pill p-mute">Respected</span></td></tr>
+            <tr><td class="mono">game.invite</td><td class="mono">games</td><td>Game Detail</td><td class="nw"><span class="pill p-mute">Respected</span></td></tr>
+            <tr><td class="mono">organizer.message</td><td class="mono">events</td><td>Event Detail</td><td class="nw"><span class="pill p-mute">Respected</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>The in-app row is always written, inside the emitting module&rsquo;s transaction via the outbox. Push delivery is a separate, failable job.</li>
+        <li>Preferences gate <em>push</em>, never the feed. A player who muted push still sees their registration confirmation in the app.</li>
+        <li>Quiet hours are 22:00&ndash;07:00 IST. Only <code>match.starting_soon</code> overrides them &mdash; someone is standing on a court waiting.</li>
+        <li>Copy lives in versioned templates with typed payloads. No message string is assembled at a call site.</li>
+        <li>Every notification carries a deep link resolving to one of the four <code>Node</code> types &mdash; Event, Match, PlayerProfile, Game.</li>
+        <li>A device token that Beams reports invalid is deleted on the spot, not retried.</li>
+        <li><code>emitBulk</code> to an entire event chunks at 500 recipients per job so one large tournament cannot stall the queue.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>All eight templates fire end to end from their real triggers, arrive on a physical device, open the right screen, and appear in the in-app feed even with push disabled at the OS level.</p></div>
+    </div>
+  </article>
+
+  <!-- 14 ORGANIZERS -->
+  <article class="mod" id="m-organizers">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">14</span><h2>organizers</h2><span class="pill p-acc">Sprint 7</span></div>
+      <p class="purpose">The organizer as a business rather than a person: a public profile, a team of members, a verification state, broadcasts to entrants, and the event dashboard. Money is not here &mdash; payouts belong to <code>payments</code>.</p>
+      <div class="chips"><span class="chip"><b>4</b> tables</span><span class="chip">depends on <b>identity, events, registration, payments</b></span><span class="chip">analytics are read models</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>organizer_profiles</code> &middot; <code>organizer_members</code> &middot; <code>organizer_broadcasts</code> &middot; <code>event_stats_daily</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">create</span>(actor, input) / <span class="k">update</span>(actor, id, patch)            =&gt; OrganizerProfile
+<span class="k">addMember</span>(actor, id, { userId, role }) / <span class="k">removeMember</span>    =&gt; Membership
+<span class="k">setVerification</span>(admin, id, status, reason)             =&gt; OrganizerProfile
+<span class="k">canPublishPaid</span>(organizerId)                            =&gt; { ok, missing[] }
+<span class="k">broadcast</span>(actor, eventId, { audience, subject, body })   =&gt; Broadcast
+<span class="k">eventAnalytics</span>(actor, eventId)                          =&gt; EventAnalytics</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>An organizer profile is an entity, not a user. A user may belong to several; every event belongs to exactly one organizer profile.</li>
+        <li>Roles are owner, admin and member. Owners and admins manage events; the last owner cannot be removed.</li>
+        <li>Membership becomes event access by materialising <code>event_staff</code> rows with <code>source = 'organizer'</code> in the same transaction &mdash; identity stays at L0, and revocation still lands on the next request.</li>
+        <li>The organizer slug is permanent once any of its events has been published.</li>
+        <li>Publishing a paid category requires a verified organizer with an active payout account; <code>canPublishPaid</code> returns a checklist, not an error.</li>
+        <li>Broadcasts reach confirmed, checked-in, waitlisted or one category&rsquo;s entrants through <code>emitBulk</code>, optionally by email through Resend. Plain text, up to 1,000 characters.</li>
+        <li>At most 5 broadcasts per event per 24 hours, stored permanently as evidence.</li>
+        <li>Analytics are read models projected from outbox topics. Money figures come from <code>payments.ledgerSummary</code> and carry <code>asOf</code>.</li>
+        <li>Page views are a Redis HyperLogLog rolled up nightly &mdash; approximate, and labelled that way.</li>
+        <li>Analytics are visible to owner and manager grants only; a scorer never sees revenue.</li>
+        <li>Staff see an entrant&rsquo;s phone number only for confirmed entries in their own event, and every reveal is logged.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>A verified organizer with an active payout account publishes a paid event; an admin member manages it without a direct <code>event_staff</code> row and loses access on the next request after removal; a broadcast reaches every confirmed entrant; and dashboard net revenue matches the ledger to the paisa.</p></div>
+    </div>
+  </article>
+
+  <!-- 15 ADMIN -->
+  <article class="mod" id="m-admin">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">15</span><h2>admin</h2><span class="pill p-acc">Sprint 7</span><span class="pill p-mute">Sprint 12</span></div>
+      <p class="purpose">The operations surface behind the admin dashboard: user, organizer and venue management, event moderation, payments management, reports, fraud review and support. Every action is a named service method on the owning module; admin owns the audit trail and the queues.</p>
+      <div class="chips"><span class="chip"><b>6</b> tables</span><span class="chip">core <b>S7</b> &middot; queues <b>S12</b></span><span class="chip">every action audited</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>audit_log</code> &middot; <code>moderation_reports</code> &middot; <code>support_tickets</code> &middot; <code>support_messages</code> &middot; <code>fraud_signals</code> &middot; <code>platform_metrics_daily</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">lookupUser</span>(admin, { email?, userId? }) / <span class="k">revealPii</span>      =&gt; AdminUserView
+<span class="k">suspendUser</span> / <span class="k">reinstateUser</span>(admin, userId, reason)       =&gt; void
+<span class="k">verifyOrganizer</span>(admin, organizerId, status, reason)     =&gt; void
+<span class="k">hideEvent</span> / <span class="k">cancelEvent</span>(admin, eventId, reason)         =&gt; void
+<span class="k">refundOverride</span> / <span class="k">holdPayout</span> / <span class="k">releasePayout</span>          =&gt; Refund | void
+<span class="k">report</span>(actor, target) / <span class="k">resolveReport</span>(admin, id, action) =&gt; ModerationReport
+<span class="k">openTicket</span>(actor, input) / <span class="k">replyTicket</span>(staff, id, body)  =&gt; SupportTicket
+<span class="k">fraudQueue</span>(admin) / <span class="k">platformReport</span>(admin, range)         =&gt; &hellip;</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>Roles (admin, support, finance) live in <code>identity.platform_staff</code>, read per request and never a JWT claim. Admin fields also need a session issued within 12 hours.</li>
+        <li>Every admin mutation writes <code>audit_log</code> in the same transaction, with a required reason. The table is append-only for the app role.</li>
+        <li>Admin never writes another module&rsquo;s tables &mdash; it calls the owning service with its transaction client.</li>
+        <li>Lookups return masked PII. <code>revealPii</code> needs a reason, is audited, and requires a linked ticket for support staff.</li>
+        <li>Hiding removes an event from discovery and moves no money; cancelling refunds, so it needs finance or admin.</li>
+        <li>Any user can report content. User-generated content auto-hides at 5 distinct reporters until reviewed; events jump the queue instead.</li>
+        <li>Support tickets carry the client&rsquo;s last <code>requestId</code>; internal notes are never returned to the user.</li>
+        <li>Fraud signals are recorded, not punished. The only automatic action is a reversible payout hold.</li>
+        <li>Platform reports read a nightly read model built on the read replica.</li>
+        <li>There is no path into a user&rsquo;s feed or session, and no &ldquo;act as user&rdquo;.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>Every dashboard action appears in <code>audit_log</code> with its reason, and a failed action leaves neither row nor change; support cannot refund; five reports hide a venue review; a chargeback holds a payout without suspending anyone.</p></div>
+    </div>
+  </article>
+
+  <div class="phase-hd">
+    <h2>Phase 2 &mdash; retention &amp; community</h2>
+    <p>Four modules: games and social in Sprint 10, communities and discovery in Sprint 11. Specified now so the Phase 1 boundaries hold.</p>
+  </div>
+  <p class="phase-sub">These are deliberately thinner. They are additive, carry no money and no concurrency, and exist to give a player something to do in the six weeks between tournaments &mdash; which is the retention problem the core loop does not solve on its own.</p>
+
+  <!-- 12 GAMES -->
+  <article class="mod" id="m-games">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">12</span><h2>games</h2><span class="pill p-mute">Sprint 10</span><span class="pill p-mute">Phase 2</span></div>
+      <p class="purpose">Informal pickup games: someone needs a fourth on Saturday morning. No payment, no bracket, no rating impact &mdash; which is exactly why it can ship in a single sprint.</p>
+      <div class="chips"><span class="chip"><b>2</b> tables</span><span class="chip">depends on <b>sport, venues, profile</b></span><span class="chip">no money</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>games</code> &middot; <code>game_participants</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">search</span>({ near, radiusKm, sportId, date, skillBand }, page) =&gt; Page&lt;Game&gt;
+<span class="k">byId</span>(gameId) / <span class="k">create</span>(actor, input)                      =&gt; Game
+<span class="k">join</span>(actor, gameId) / <span class="k">leave</span>(actor, gameId)              =&gt; Game
+<span class="k">cancel</span>(actor, gameId, reason)                            =&gt; Game
+<span class="k">invite</span>(actor, gameId, playerIds[])                       =&gt; Invite[]</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>The creator is a participant automatically. A game with zero participants cannot exist.</li>
+        <li>Capacity is a plain count with no holds and no TTL &mdash; nothing is being paid for, so a simple unique constraint on <code>(game_id, user_id)</code> plus a capacity check is enough.</li>
+        <li>A game is public, or visible only to people the creator follows. There is no third option in Phase 2.</li>
+        <li>Games never affect rating. If informal results should count later, that is a new <code>algo_version</code> conversation, not a schema change.</li>
+        <li>Cancelling notifies every participant. A game whose start time has passed is archived by a nightly job, never deleted.</li>
+        <li>Map search reuses the same PostGIS index pattern as <code>events</code>, capped at the same 50&nbsp;km.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>A game is created, appears on the map query within its radius, fills to capacity, rejects the next joiner cleanly, and notifies everyone when the creator cancels.</p></div>
+    </div>
+  </article>
+
+  <!-- 13 SOCIAL -->
+  <article class="mod" id="m-social">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">13</span><h2>social</h2><span class="pill p-mute">Sprint 10</span><span class="pill p-mute">Phase 2</span></div>
+      <p class="purpose">Challenges between players, and the activity feed that follows generate. Following itself lives in <code>profile</code>, because it is read on every profile screen in Phase 1 and this module does not exist yet.</p>
+      <div class="chips"><span class="chip"><b>2</b> tables</span><span class="chip">depends on <b>profile</b></span><span class="chip">follows live in <b>profile</b></span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>challenges</code> &middot; <code>feed_entries</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">challenge</span>(actor, { opponentId, sportId, proposedAt, venueId? }) =&gt; Challenge
+<span class="k">respond</span>(actor, challengeId, 'accept' | 'decline')             =&gt; Challenge
+<span class="k">withdraw</span>(actor, challengeId)                                 =&gt; Challenge
+<span class="k">feedFor</span>(actor, page)                                         =&gt; Page&lt;FeedEntry&gt;</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>A challenge expires after 72 hours without a response and cannot be re-sent to the same opponent for 24 hours after that. Challenge spam is the obvious failure mode of this feature.</li>
+        <li>Accepting a challenge creates a <code>game</code> with both players joined. Challenges do not carry their own match machinery.</li>
+        <li>Feed entries are projections written on domain events, never computed by querying every followed player at read time.</li>
+        <li>The feed shows only what the actor is permitted to see. A private profile&rsquo;s activity never appears, including to people who followed them before the profile went private.</li>
+        <li>Challenge results follow whatever the resulting game does &mdash; which in Phase 2 is nothing. Rated challenges are a Phase 3 conversation.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>A challenge is sent, accepted, and produces a joined game; an unanswered challenge expires at 72 hours; and a player who switches their profile to private disappears from the feeds of people already following them.</p></div>
+    </div>
+  </article>
+
+  <!-- 16 DISCOVERY -->
+  <article class="mod" id="m-discovery">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">16</span><h2>discovery</h2><span class="pill p-mute">Sprint 11</span><span class="pill p-mute">Phase 2</span></div>
+      <p class="purpose">One search box across everything, personalised recommendations with reasons, and player and partner matching. It sits at the top of the graph: it reads every module, and nothing depends on it.</p>
+      <div class="chips"><span class="chip"><b>2</b> tables</span><span class="chip">projections only</span><span class="chip">matching is opt-in</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>search_documents</code> &middot; <code>recommendation_dismissals</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">search</span>(viewer, { query, kinds[], near?, sportId? }, page)  =&gt; Page&lt;SearchHit&gt;
+<span class="k">recommendations</span>(viewer, { sportId, kinds[] })            =&gt; Recommendation[]
+<span class="k">suggestPlayers</span>(viewer, { sportId, near?, startsAt? })     =&gt; Page&lt;PlayerSuggestion&gt;
+<span class="k">suggestPartners</span>(viewer, eventCategoryId)                 =&gt; Page&lt;PlayerSuggestion&gt;
+<span class="k">dismiss</span>(viewer, { subjectType, subjectId })               =&gt; void</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>Unified search reads only <code>search_documents</code>, a projection upserted from the owning modules&rsquo; outbox topics.</li>
+        <li>Players appear only if they opted in and are not private; visibility is re-checked at read time.</li>
+        <li>Radius is capped at 50&nbsp;km; without a location, the profile city is used.</li>
+        <li>Every recommendation carries at least one reason code. No reason, not shown.</li>
+        <li>Ranking is a pure function with versioned weights. Skill fit uses the settled rating or the band &mdash; never a blend.</li>
+        <li>Cold start is never empty: popular in your city, and your skill band.</li>
+        <li><code>suggestPlayers</code> ranks by skill proximity, both players&rsquo; travel radius and availability overlap; at most 50 results and 30 calls an hour.</li>
+        <li><code>suggestPartners</code> pre-filters on category eligibility, then ranks open partner requests, friends, and other opted-in players.</li>
+        <li>Dismissals hide a subject from recommendations for 90 days, never from search.</li>
+        <li>Recommendation lists are cached in Redis for 15 minutes; losing the cache costs a recompute.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>A search near a map point returns every kind correctly filtered; a player who goes private disappears on the next query; every recommendation shows a reason; and partner suggestions contain only eligible players.</p></div>
+    </div>
+  </article>
+
+  <!-- 17 COMMUNITIES -->
+  <article class="mod" id="m-communities">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">17</span><h2>communities</h2><span class="pill p-mute">Sprint 11</span><span class="pill p-mute">Phase 2</span></div>
+      <p class="purpose">Clubs, groups and teams &mdash; the durable social unit that outlives any single game or tournament, and the source of league team rosters.</p>
+      <div class="chips"><span class="chip"><b>4</b> tables</span><span class="chip">depends on <b>identity, profile, notifications</b></span><span class="chip">no money</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>communities</code> &middot; <code>community_members</code> &middot; <code>community_join_requests</code> &middot; <code>community_announcements</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">create</span>(actor, input) / <span class="k">update</span>(actor, id, patch)          =&gt; Community
+<span class="k">join</span>(actor, id) / <span class="k">respondToRequest</span>(actor, requestId, decision) =&gt; Membership | JoinRequest
+<span class="k">leave</span> / <span class="k">removeMember</span> / <span class="k">setRole</span> / <span class="k">transferOwnership</span>      =&gt; Community
+<span class="k">announce</span>(actor, id, { title, body })                     =&gt; Announcement
+<span class="k">isMember</span>(communityId, userId) / <span class="k">roster</span>(teamId)            =&gt; boolean | Membership[]</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>Three kinds, fixed at creation: club, group, and team (a roster with a captain and a sport).</li>
+        <li>The join policy is open, approval or invite-only; one pending request per user, expiring after 30 days.</li>
+        <li>Exactly one owner, who must transfer ownership before leaving &mdash; a community outlives its creator.</li>
+        <li>Public communities are listed; to a non-member, a private one is indistinguishable from a missing one.</li>
+        <li>A team&rsquo;s roster runs from the format&rsquo;s team size to three times that size.</li>
+        <li>Announcements only &mdash; no chat, no comments &mdash; and at most 3 per community per day.</li>
+        <li>At most 5,000 members per community, and 10 owned communities per user.</li>
+        <li>Communities and announcements are reportable; auto-hidden content disappears until reviewed.</li>
+        <li>No money in Phase 2; paid memberships would be a new payment subject.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>An approval-policy club admits a member, who can then see private announcements; an owner cannot leave without transferring; and the fourth announcement of the day is refused.</p></div>
+    </div>
+  </article>
+
+  <div class="phase-hd">
+    <h2>Phase 3 &mdash; leagues, bookings &amp; ticketing</h2>
+    <p>Specified now, not scheduled for launch. Each reuses the core loop instead of building a second one.</p>
+  </div>
+  <p class="phase-sub">Leagues ride on events, categories and matches. Bookings and ticketing are new inventories, so they inherit registration&rsquo;s discipline: Postgres decides capacity, money confirms only on a verified webhook, and each module opens with its concurrency test.</p>
+
+  <!-- 18 LEAGUES -->
+  <article class="mod" id="m-leagues">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">18</span><h2>leagues</h2><span class="pill p-info">Sprint 13</span><span class="pill p-info">Phase 3</span></div>
+      <p class="purpose">Recurring competition over weeks. A season is an event, a division is a category, and fixtures are ordinary matches &mdash; so registration, payments, scoring and rating work unchanged.</p>
+      <div class="chips"><span class="chip"><b>6</b> tables</span><span class="chip">depends on <b>organizers, events, registration, tournament, communities</b></span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>leagues</code> &middot; <code>league_seasons</code> &middot; <code>league_divisions</code> &middot; <code>league_movements</code> &middot; <code>league_final_standings</code> &middot; <code>fixture_reschedule_requests</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">createLeague</span>(actor, organizerId, input)                  =&gt; League
+<span class="k">createSeason</span>(actor, leagueId, SeasonInput)               =&gt; Season   <span class="c">// writes the event + categories</span>
+<span class="k">generateFixtures</span>(actor, seasonId)                       =&gt; Fixture[]
+<span class="k">proposeReschedule</span> / <span class="k">respondReschedule</span>                   =&gt; RescheduleRequest
+<span class="k">closeSeason</span>(actor, seasonId)                            =&gt; SeasonClose</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>A season is an event and a division is a category; this module never duplicates registration, payment, match, scoring or rating machinery.</li>
+        <li>Season configuration is frozen once the first fixture is played.</li>
+        <li>At close, the top entries promote and the bottom entries relegate across each adjacent division boundary.</li>
+        <li>Movement grants a priority registration window (default 72 hours), not a place; entrants still register and pay each season.</li>
+        <li>A single round robin per division on a weekly matchday; fixtures reschedule by mutual agreement before the deadline.</li>
+        <li>Unplayed fixtures resolve by the forfeit policy and never touch rating.</li>
+        <li>Team leagues take entries from community teams; at most two roster additions once the season is live.</li>
+        <li>A division under its minimum entries merges into its neighbour or is refunded.</li>
+        <li>Final standings are snapshotted at close; a later correction needs admin and an explicit re-close.</li>
+        <li>Standings and fixtures for a published season are public competitive record.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>Three divisions of 8 generate 28 fixtures each; standings apply tiebreakers in order; closing the season promotes 2 and relegates 2, and those players get the priority window next season.</p></div>
+    </div>
+  </article>
+
+  <!-- 19 BOOKINGS -->
+  <article class="mod" id="m-bookings">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">19</span><h2>bookings</h2><span class="pill p-info">Sprint 14</span><span class="pill p-info">Phase 3</span><span class="pill p-crit">Money + courts</span></div>
+      <p class="purpose">Court availability, bookings and the venue management dashboard &mdash; the second commerce domain that architecture &sect;9 deferred, built on registration&rsquo;s hold-then-pay pattern, with Postgres deciding availability.</p>
+      <div class="chips"><span class="chip"><b>4</b> tables</span><span class="chip">depends on <b>identity, venues, payments</b></span><span class="chip">exclusion constraint</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>venue_booking_policies</code> &middot; <code>court_availability_rules</code> &middot; <code>court_blackouts</code> &middot; <code>court_bookings</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">availability</span>(venueId, date, { sportId? })                =&gt; CourtSlot[]
+<span class="k">hold</span>(actor, { courtId, startsAt, endsAt })               =&gt; { booking, order }
+<span class="k">confirmFromPayment</span>(paymentId) / <span class="k">expireHold</span>(bookingId)   =&gt; Booking | void
+<span class="k">cancel</span>(actor, id) / <span class="k">venueCancel</span>(staff, id, reason)        =&gt; Booking
+<span class="k">createWalkIn</span> / <span class="k">checkIn</span> / <span class="k">markNoShow</span>(staff, &hellip;)          =&gt; Booking
+<span class="k">schedule</span>(staff, venueId, date) / <span class="k">dashboard</span>(staff, range) =&gt; CourtSchedule | VenueDashboard</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>No double-booking, enforced by a partial exclusion constraint on court and time range.</li>
+        <li>A booking is held for 10 minutes against a payment order, and confirms only on a verified capture.</li>
+        <li>The insert expires stale overlapping holds in the same transaction, so an expired hold stops blocking instantly.</li>
+        <li>Availability is derived: opening rules, minus blackouts, minus live bookings. Events reserve their courts as blackouts.</li>
+        <li><code>quote()</code> is the only place booking money is computed, frozen at hold time.</li>
+        <li>Full refund 24&nbsp;h or more before start, 50% at 6&nbsp;h or more, nothing after; a venue cancellation refunds everything.</li>
+        <li>Venue staff grants: desk runs the day, manager edits rules and prices, owner manages staff and payouts.</li>
+        <li>Walk-ins pass the same exclusion constraint; the desk has no bypass.</li>
+        <li>Venue payouts settle weekly through Razorpay Route.</li>
+        <li>Bookable 14 days ahead; at most 3 hours per user per venue per day, and 2 concurrent holds.</li>
+        <li>Open play reserves its courts as bookings created by venue staff.</li>
+        <li>Three no-shows in 60 days records a fraud signal &mdash; there is no automatic ban.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>Fifty concurrent holds on one slot produce exactly one booking; an expired hold frees the slot for the next insert without waiting for the sweep; and a court reserved for a tournament shows as unavailable.</p></div>
+    </div>
+  </article>
+
+  <!-- 20 TICKETING -->
+  <article class="mod" id="m-ticketing">
+    <div class="mod-hd">
+      <div class="mod-top"><span class="mod-n">20</span><h2>ticketing</h2><span class="pill p-info">Sprint 15</span><span class="pill p-info">Phase 3</span><span class="pill p-crit">Money + capacity</span></div>
+      <p class="purpose">Spectator and attendee tickets with QR codes. A player&rsquo;s entry is not a ticket &mdash; entrants check in with their registration QR from Phase 1.</p>
+      <div class="chips"><span class="chip"><b>5</b> tables</span><span class="chip">depends on <b>events, payments, identity</b></span><span class="chip">general admission</span></div>
+    </div>
+    <div class="mod-body">
+      <h4>Owns</h4>
+      <p><code>ticket_types</code> &middot; <code>ticket_orders</code> &middot; <code>ticket_holds</code> &middot; <code>tickets</code> &middot; <code>ticket_scans</code></p>
+
+      <h4>Service interface</h4>
+      <div class="code"><pre><span class="k">createType</span>(actor, eventId, input) / <span class="k">quote</span>(typeId, qty) =&gt; TicketType | PriceQuote
+<span class="k">beginOrder</span>(actor, { typeId, quantity, names[] })         =&gt; { order, paymentOrder }
+<span class="k">confirmFromPayment</span>(paymentId)                           =&gt; TicketOrder
+<span class="k">transfer</span>(actor, ticketId, email)                         =&gt; Ticket
+<span class="k">scan</span>(staff, code) / <span class="k">manifest</span> / <span class="k">uploadScans</span>                =&gt; ScanResult</pre></div>
+
+      <h4>Rules</h4>
+      <ol class="rules">
+        <li>Tickets are distinct from entries; nothing in registration, tournament or scoring reads a ticket.</li>
+        <li>Inventory is decided under <code>FOR UPDATE</code>, counting sold tickets plus live holds; an oversell returns zero rows.</li>
+        <li>Tickets are issued only on a verified capture, or immediately when free.</li>
+        <li>Each ticket has a hashed 128-bit code. The first valid scan wins, and later scans show when and where the ticket was used; offline manifests are supported.</li>
+        <li>One transfer per ticket, before the event; transferring rotates the code.</li>
+        <li>An event cancellation refunds every ticket; buyers may cancel refundable types before sales close.</li>
+        <li>General admission only: a name per ticket, plus the buyer&rsquo;s email.</li>
+        <li>At most 10 tickets per order and 20 per user per event.</li>
+      </ol>
+
+      <div class="dw"><b>Done when</b><p>200 buyers for 100 tickets are issued exactly 100; a transferred ticket&rsquo;s old QR is rejected; and two offline scans of one ticket resolve to one admission and one flagged duplicate.</p></div>
+    </div>
+  </article>
+
+  <div class="phase-hd">
+    <h2>Additions to existing modules</h2>
+    <p>New rules appended to modules above. Numbering continues from each module&rsquo;s last rule; nothing was renumbered.</p>
+  </div>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Module</th><th>New rules</th><th>Sprint</th><th>Adds</th></tr></thead>
+      <tbody>
+        <tr><td class="mono"><a href="#m-identity">identity</a></td><td class="mono nw">R15&ndash;R18</td><td class="mono nw">7 &middot; 11</td><td>Platform roles read per request; organizer-derived event grants; venue grants; reinstatement and account deletion with a 30-day scrub</td></tr>
+        <tr><td class="mono"><a href="#m-profile">profile</a></td><td class="mono nw">R10&ndash;R14</td><td class="mono nw">7&ndash;11</td><td>Friends as mutual follows; private preferences and matching opt-in; permanent match history; achievement catalog; unique-award fix</td></tr>
+        <tr><td class="mono"><a href="#m-venues">venues</a></td><td class="mono nw">R6&ndash;R10</td><td class="mono nw">11</td><td>Reviews gated on &ldquo;played here&rdquo;; rating from 3 reviews; staff replies; ownership claims; playing-area kinds</td></tr>
+        <tr><td class="mono"><a href="#m-events">events</a></td><td class="mono nw">R10&ndash;R14</td><td class="mono nw">7 &middot; 13</td><td>Paid-publish gate; tournament vs league-season kind; moderation hide; organizer profile; priority allow-lists</td></tr>
+        <tr><td class="mono"><a href="#m-registration">registration</a></td><td class="mono nw">R13&ndash;R20</td><td class="mono nw">4&ndash;13</td><td>QR check-in with offline roster; manual and complimentary entries; substitution; organizer withdrawal; explicit waitlist; free categories; team rosters; partner requests</td></tr>
+        <tr><td class="mono"><a href="#m-payments">payments</a></td><td class="mono nw">R13&ndash;R20</td><td class="mono nw">7 &middot; 14</td><td>Razorpay Route payouts; settlement from the ledger; payout holds; refund-after-payout reversal; disputes; order subjects for bookings and tickets</td></tr>
+        <tr><td class="mono"><a href="#m-tournament">tournament</a></td><td class="mono nw">R14&ndash;R18</td><td class="mono nw">7 &middot; 8 &middot; 13</td><td>Round-robin draws and standings; unplayed fixtures; full <code>match.completed</code> payload; walkovers on withdrawal</td></tr>
+        <tr><td class="mono"><a href="#m-notifications">notifications</a></td><td class="mono nw">R9&ndash;R11</td><td class="mono nw">7&ndash;15</td><td>23 new templates; Venue and Community deep links; route deep links; escaped user text</td></tr>
+        <tr><td class="mono"><a href="#m-games">games</a></td><td class="mono nw">R8&ndash;R12</td><td class="mono nw">11</td><td>Open play; waitlist; recurring series with regulars; community games</td></tr>
+        <tr><td class="mono"><a href="#m-social">social</a></td><td class="mono nw">R8&ndash;R9</td><td class="mono nw">11</td><td>24-month activity history (R7 superseded); new feed kinds</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Cross-module acceptance</h3>
+  <p>Individually green modules do not make a working product. One integration test walks the acceptance script from Section 3 of the brief, against a real database, in CI:</p>
+  <div class="code"><pre>sign up (OTP) → select sport + skill + city → discover a published event
+  → begin registration → invite partner → partner accepts → seat held
+  → create order → deliver payment.captured webhook → CONFIRMED
+  → organizer generates draw → match scheduled onto a court
+  → scorer records points → result submitted → opponent confirms
+  → winner advances, loser drops to Plate → rating event written
+  → weekly period runs → rankings rebuilt → profile shows the new rating
+  → notification feed contains: registration.confirmed, match.starting_soon,
+    match.result, ranking.changed</pre></div>
+  <p>The seed script from &sect;11 of the architecture doc produces this scenario from an empty database in one command. It is the fixture for the bracket, live-scoring and rankings work, and it is the test that fails loudly when a module boundary is quietly violated.</p>
+
+</div>
+
+<footer>
+  <div class="foot-in">
+    <b>PL<em>4</em>Y</b>
+    <p>Module specifications, Phases 1, 2 and 3. Companion to <em>PL4Y Backend Architecture</em> &mdash; rule IDs here (<code>registration R4</code>, <code>rating R8</code>) are stable and safe to cite in tickets, tests and PR descriptions.</p>
+  </div>
+</footer>

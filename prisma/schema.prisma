@@ -1,0 +1,1749 @@
+// PL4Y — Prisma schema
+//
+// Migrations are the source of truth for the database; docs/reference/schema.sql
+// is the human-readable mirror. Keep them in step.
+//
+// Conventions (docs/conventions.md §2):
+//   · UUIDv7 primary keys, generated in the application
+//   · money as BigInt in paise, column suffix _paise
+//   · timestamptz, stored UTC
+//   · status as text + CHECK, never a Postgres enum
+//
+// ADR 0001 §C2 — url is Neon's POOLED endpoint, directUrl the DIRECT one.
+// Migrations run against directUrl; the app runs against url.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_DATABASE_URL")
+  extensions = [citext, postgis, btree_gist, pg_trgm]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// platform — transactional outbox (platform R5, R6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Outbox {
+  id          BigInt    @id @default(autoincrement())
+  topic       String
+  payload     Json
+  requestId   String?   @map("request_id")
+  claimedAt   DateTime? @map("claimed_at") @db.Timestamptz(6)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
+  attempts    Int       @default(0) @db.SmallInt
+  lastError   String?   @map("last_error")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@map("outbox")
+}
+
+/// The job queue (platform/queue.ts). Partial indexes live in migration 023.
+model Job {
+  id          BigInt    @id @default(autoincrement())
+  queue       String
+  name        String
+  data        Json      @default("{}")
+  dedupeKey   String?   @map("dedupe_key")
+  /// queued | active | completed | failed. CHECK in the migration.
+  state       String    @default("queued")
+  attempts    Int       @default(0) @db.SmallInt
+  maxAttempts Int       @default(3) @map("max_attempts") @db.SmallInt
+  backoffMs   Int       @default(1000) @map("backoff_ms")
+  runAt       DateTime  @default(now()) @map("run_at") @db.Timestamptz(6)
+  lockedUntil DateTime? @map("locked_until") @db.Timestamptz(6)
+  lastError   String?   @map("last_error")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  finishedAt  DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  @@map("jobs")
+}
+
+/// Repeatable jobs. `key` is "<queue>:<name>".
+model JobSchedule {
+  key       String   @id
+  queue     String
+  name      String
+  cron      String
+  nextRunAt DateTime @map("next_run_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("job_schedules")
+}
+
+/// platform/rateLimit.ts — one row per consumed attempt.
+model RateLimitHit {
+  id  BigInt   @id @default(autoincrement())
+  key String
+  at  DateTime @db.Timestamptz(6)
+
+  @@index([key, at])
+  @@index([at])
+  @@map("rate_limit_hits")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// identity (docs/modules/01-identity.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id                  String    @id @db.Uuid
+  /// The identity. Normalised to lowercase before every read and write (R4).
+  email               String    @unique @db.Citext
+  /// Optional, unverified contact information. NEVER an auth factor (R12).
+  phoneE164           String?   @map("phone_e164")
+  /// ok | bounced | complained — driven by the Resend webhook (R13).
+  emailStatus         String    @default("ok") @map("email_status")
+  displayName         String    @map("display_name")
+  /// Cloudinary public_id, never a URL (ADR 0003 §C3).
+  avatarPublicId      String?   @map("avatar_public_id")
+  /// active | suspended | deleted. CHECK in the migration.
+  status              String    @default("active")
+  /// F20 — a walk-in with no account: never signs in, never emailed.
+  isGuest             Boolean   @default(false) @map("is_guest")
+  /// identity R18 — the scrub runs 30 days after this.
+  deletionRequestedAt DateTime? @map("deletion_requested_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  profile                 PlayerProfile?
+  refreshTokens           RefreshToken[]
+  eventStaff              EventStaff[]
+  venuesCreated           Venue[]
+  eventsOrganized         Event[]
+  teamMemberships         TeamMember[]
+  registrations           Registration[]            @relation("registrationCaptain")
+  checkIns                Registration[]            @relation("registrationCheckedInBy")
+  invitesReceived         RegistrationInvite[]
+  platformStaff           PlatformStaff?            @relation("platformStaffUser")
+  platformGrants          PlatformStaff[]           @relation("platformStaffGrantor")
+  scoreEvents             MatchScoreEvent[]
+  resultsSubmitted        MatchResult[]             @relation("resultSubmittedBy")
+  resultsConfirmed        MatchResult[]             @relation("resultConfirmedBy")
+  resultsDisputed         MatchResult[]             @relation("resultDisputedBy")
+  notifications           Notification[]
+  deviceRegistrations     DeviceRegistration[]
+  notificationPreferences NotificationPreferences[]
+  venueReviews            VenueReview[]             @relation("venueReviewAuthor")
+  venueReviewReplies      VenueReview[]             @relation("venueReviewReplier")
+  venueVisits             VenueVisit[]
+  payoutAccounts          PayoutAccount[]           @relation("payoutAccountUser")
+  payoutAccountsReviewed  PayoutAccount[]           @relation("payoutAccountReviewer")
+  eventReports            EventReport[]             @relation("eventReportAuthor")
+  eventReportsResolved    EventReport[]             @relation("eventReportResolver")
+
+  /// profile.search() matches display names with ILIKE '%q%', which only a
+  /// trigram index can serve. The column stays owned by identity.
+  @@index([displayName(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("users")
+}
+
+model OtpChallenge {
+  id              String    @id @db.Uuid
+  email           String    @db.Citext
+  /// argon2id. The plaintext code is never stored and never logged (R1).
+  codeHash        String    @map("code_hash")
+  purpose         String
+  attempts        Int       @default(0) @db.SmallInt
+  consumedAt      DateTime? @map("consumed_at") @db.Timestamptz(6)
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  /// Correlates with Resend delivery events (R13).
+  resendMessageId String?   @map("resend_message_id")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([email, createdAt(sort: Desc)])
+  @@map("otp_challenges")
+}
+
+model RefreshToken {
+  id          String    @id @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash")
+  /// Rotation lineage. Reuse of a spent token revokes the whole family (R7).
+  familyId    String    @map("family_id") @db.Uuid
+  deviceLabel String?   @map("device_label")
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedBy  String?   @map("replaced_by") @db.Uuid
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  /// portal R6 — app | portal. A token is only ever rotated for the client it was issued to.
+  client      String    @default("app")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([familyId])
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+/// Organizer is a grant on an event, not a global role (R10).
+/// The events FK was deferred to 005, because `events` did not exist in 001.
+model EventStaff {
+  eventId            String   @map("event_id") @db.Uuid
+  userId             String   @map("user_id") @db.Uuid
+  role               String
+  /// direct | organizer (R16). Organizer rows are written ONLY by
+  /// identity.syncOrganizerGrants; addStaff/removeStaff touch only direct ones.
+  source             String   @default("direct")
+  /// Set exactly when source = 'organizer' (CHECK in the migration).
+  organizerProfileId String?  @map("organizer_profile_id") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user  User  @relation(fields: [userId], references: [id])
+  event Event @relation(fields: [eventId], references: [id])
+
+  @@id([eventId, userId, source])
+  @@index([userId])
+  @@map("event_staff")
+}
+
+/// identity R15 — platform roles. Read per request, never a JWT claim, and
+/// changed only through admin, which audits the change.
+model PlatformStaff {
+  userId    String   @id @map("user_id") @db.Uuid
+  /// admin | support | finance. CHECK in the migration.
+  role      String
+  /// Null only for the CLI bootstrap of the first admin.
+  grantedBy String?  @map("granted_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user    User  @relation("platformStaffUser", fields: [userId], references: [id])
+  grantor User? @relation("platformStaffGrantor", fields: [grantedBy], references: [id], onDelete: SetNull)
+
+  @@map("platform_staff")
+}
+
+/// portal R3 — every staff action: who, what, on what, and the reason given.
+/// Append-only; nothing updates or deletes a row.
+model AuditLog {
+  id          String   @id @db.Uuid
+  actorUserId String   @map("actor_user_id") @db.Uuid
+  action      String
+  targetType  String   @map("target_type")
+  targetId    String   @map("target_id")
+  reason      String?
+  details     Json     @default("{}")
+  /// 037 — pending | succeeded. Written pending before the action, so a crash never loses the record.
+  outcome     String   @default("succeeded")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([targetType, targetId, createdAt(sort: Desc)], map: "audit_log_target_idx")
+  @@map("audit_log")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// organisations (PLAY_FRONTEND/docs/modules/27-organisations.md). Tables from
+// 014; `is_personal` rows are 014's backfill and stand for a player hosting as
+// themselves. Only staff create the others (org R1).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model OrganizerProfile {
+  id               String    @id @db.Uuid
+  slug             String    @unique
+  name             String
+  bio              String?
+  city             String?
+  logoPublicId     String?   @map("logo_public_id")
+  contactEmail     String?   @map("contact_email") @db.Citext
+  contactPhone     String?   @map("contact_phone")
+  /// unverified | pending | verified | rejected | suspended. CHECK in 014.
+  verification     String    @default("unverified")
+  verificationNote String?   @map("verification_note")
+  verifiedAt       DateTime? @map("verified_at") @db.Timestamptz(6)
+  isPersonal       Boolean   @default(false) @map("is_personal")
+  createdBy        String    @map("created_by") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  members OrganizerMember[]
+  invites OrganisationInvite[]
+
+  @@map("organizer_profiles")
+}
+
+model OrganizerMember {
+  organizerProfileId String   @map("organizer_profile_id") @db.Uuid
+  userId             String   @map("user_id") @db.Uuid
+  /// owner | admin | member. CHECK in 014; exactly one owner (org R2).
+  role               String
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organisation OrganizerProfile @relation(fields: [organizerProfileId], references: [id], onDelete: Cascade)
+
+  @@id([organizerProfileId, userId])
+  @@index([userId])
+  @@map("organizer_members")
+}
+
+model OrganisationInvite {
+  id                 String    @id @db.Uuid
+  organizerProfileId String    @map("organizer_profile_id") @db.Uuid
+  email              String    @db.Citext
+  role               String
+  invitedBy          String    @map("invited_by") @db.Uuid
+  expiresAt          DateTime  @map("expires_at") @db.Timestamptz(6)
+  claimedAt          DateTime? @map("claimed_at") @db.Timestamptz(6)
+  claimedBy          String?   @map("claimed_by") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organisation OrganizerProfile @relation(fields: [organizerProfileId], references: [id], onDelete: Cascade)
+
+  @@map("organisation_invites")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sport (docs/modules/02-sport.md)
+//
+// Read-mostly, seeded from version control, cached for the process lifetime
+// (sport R1, R4). A second sport is an INSERT, not a code change.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Sport {
+  id        String  @id @db.Uuid
+  slug      String  @unique
+  name      String
+  /// sport R3 — soft-disabled, never deleted: historical matches must keep
+  /// resolving their sport.
+  active    Boolean @default(true)
+  sortOrder Int     @default(0) @map("sort_order") @db.SmallInt
+
+  formats         Format[]
+  skillBands      SkillBand[]
+  scoringRules    ScoringRule[]
+  playerSports    PlayerSport[]
+  achievements    Achievement[]
+  events          Event[]
+  eventCategories EventCategory[]
+  registrations   Registration[]
+  ratingPeriods   RatingPeriod[]
+  ratingEvents    RatingEvent[]
+  rankings        Ranking[]
+  matchHistory    PlayerMatchHistory[]
+  matches         Match[]
+
+  @@map("sports")
+}
+
+model Format {
+  id       String @id @db.Uuid
+  sportId  String @map("sport_id") @db.Uuid
+  /// singles | doubles | mixed_doubles | team
+  key      String
+  name     String
+  teamSize Int    @map("team_size") @db.SmallInt
+
+  sport        Sport         @relation(fields: [sportId], references: [id])
+  scoringRules ScoringRule[]
+
+  @@unique([sportId, key])
+  @@map("formats")
+}
+
+/// sport R2 — per sport. Every launch sport uses the DUPR-style 2.5–5.0+ ladder
+/// (seed SKILL_BANDS); nothing outside this module may assume that scale.
+model SkillBand {
+  id         String   @id @db.Uuid
+  sportId    String   @map("sport_id") @db.Uuid
+  /// '3.5'
+  key        String
+  label      String
+  lowerBound Decimal? @map("lower_bound") @db.Decimal(4, 2)
+  upperBound Decimal? @map("upper_bound") @db.Decimal(4, 2)
+  sortOrder  Int      @map("sort_order") @db.SmallInt
+
+  sport Sport @relation(fields: [sportId], references: [id])
+
+  @@unique([sportId, key])
+  @@map("skill_bands")
+}
+
+/// sport R5 — the ONLY source of scoring semantics. A new concept is a field
+/// on the `rule` document, never a branch in the scoring module.
+model ScoringRule {
+  id       String  @id @db.Uuid
+  sportId  String  @map("sport_id") @db.Uuid
+  /// null = the default rule for the sport.
+  formatId String? @map("format_id") @db.Uuid
+  /// The ScoringRule shape, validated by Zod on seed.
+  rule     Json
+
+  sport  Sport   @relation(fields: [sportId], references: [id])
+  format Format? @relation(fields: [formatId], references: [id])
+
+  @@unique([sportId, formatId])
+  @@map("scoring_rules")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// profile (docs/modules/03-profile.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PlayerProfile {
+  id                        String                                 @id @db.Uuid
+  userId                    String                                 @unique @map("user_id") @db.Uuid
+  city                      String?
+  geo                       Unsupported("geography(Point, 4326)")?
+  bio                       String?
+  /// public | players_only | private (profile R4). CHECK lives in the migration.
+  visibility                String                                 @default("public")
+  /// profile R8 — materialised on match completion, never computed per request.
+  stats                     Json                                   @default("{}")
+  /// onboarding R6 — sports selected but not yet skill-rated; shrinks as
+  /// updateSports is called, cleared to empty once every pending id has an
+  /// answer. Read only by the profile's own owner.
+  onboardingPendingSportIds String[]                               @default([]) @map("onboarding_pending_sport_ids") @db.Uuid
+  createdAt                 DateTime                               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime                               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user              User                 @relation(fields: [userId], references: [id])
+  sports            PlayerSport[]
+  achievements      Achievement[]
+  conversationsLow  Conversation[]       @relation("low")
+  conversationsHigh Conversation[]       @relation("high")
+  messagesSent      Message[]
+  blocking          PlayerBlock[]        @relation("blocker")
+  blockedBy         PlayerBlock[]        @relation("blocked")
+  ratingEvents      RatingEvent[]
+  rankings          Ranking[]
+  matchHistory      PlayerMatchHistory[]
+
+  @@index([city])
+  @@map("player_profiles")
+}
+
+model PlayerSport {
+  playerId      String   @map("player_id") @db.Uuid
+  sportId       String   @map("sport_id") @db.Uuid
+  /// profile R3 — self-declared and editable. Never conflated with `rating`.
+  skillBand     String   @map("skill_band")
+  /// profile R9 — derived. Written ONLY by applyRating(), called by `rating`.
+  rating        Decimal? @db.Decimal(7, 2)
+  ratingDev     Decimal? @map("rating_dev") @db.Decimal(7, 2)
+  volatility    Decimal? @db.Decimal(7, 5)
+  isProvisional Boolean  @default(true) @map("is_provisional")
+  matchesPlayed Int      @default(0) @map("matches_played")
+
+  player PlayerProfile @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  sport  Sport         @relation(fields: [sportId], references: [id])
+
+  @@id([playerId, sportId])
+  /// The leaderboard read. The migration adds NULLS LAST, which Prisma cannot
+  /// express: unrated players belong at the bottom of a board, not the top.
+  @@index([sportId, rating(sort: Desc)])
+  @@map("player_sports")
+}
+
+model Achievement {
+  id       String   @id @db.Uuid
+  playerId String   @map("player_id") @db.Uuid
+  sportId  String?  @map("sport_id") @db.Uuid
+  /// 'first_win' | 'tournament_winner' | …
+  key      String
+  eventId  String?  @map("event_id") @db.Uuid
+  /// profile R13 — optional tier for graded achievements.
+  tier     Int?     @db.SmallInt
+  earnedAt DateTime @default(now()) @map("earned_at") @db.Timestamptz(6)
+
+  player PlayerProfile @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  sport  Sport?        @relation(fields: [sportId], references: [id])
+
+  /// UNIQUE NULLS NOT DISTINCT in migration 012: a null event_id must not let
+  /// the same achievement be awarded twice.
+  @@unique([playerId, key, eventId], map: "achievements_award_uniq")
+  @@map("achievements")
+}
+
+/// profile R12 — a projection: one row per player per completed match, written
+/// from `match.completed` and rewritten on a correction. Profile never reads
+/// `matches`; this is what it reads instead. `games` is from THIS player's side.
+model PlayerMatchHistory {
+  playerId    String   @map("player_id") @db.Uuid
+  /// No FK: matches belong to tournament.
+  matchId     String   @map("match_id") @db.Uuid
+  sportId     String   @map("sport_id") @db.Uuid
+  eventId     String?  @map("event_id") @db.Uuid
+  partnerIds  String[] @default([]) @map("partner_ids") @db.Uuid
+  opponentIds String[] @default([]) @map("opponent_ids") @db.Uuid
+  won         Boolean
+  /// played | walkover | retired | forfeit
+  outcome     String
+  /// [{ for, against }] — games (rally) or sets, from this player's side.
+  games       Json
+  completedAt DateTime @map("completed_at") @db.Timestamptz(6)
+
+  player PlayerProfile @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  sport  Sport         @relation(fields: [sportId], references: [id])
+
+  @@id([playerId, matchId])
+  @@index([playerId, completedAt(sort: Desc), matchId])
+  @@index([matchId])
+  @@map("player_match_history")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// venues (docs/modules/04-venues.md)
+//
+// Deliberately thin: courts exist so a tournament can be scheduled onto them,
+// and so a player can find a place to play. No booking, no inventory, no
+// availability calendar — that is Phase 3.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Venue {
+  id             String                                @id @db.Uuid
+  name           String
+  address        String
+  city           String
+  /// NOT NULL, so every write goes through raw SQL: Prisma models geography as
+  /// Unsupported and omits it from the typed create input.
+  geo            Unsupported("geography(Point, 4326)")
+  amenities      String[]                              @default([])
+  /// Cloudinary public_ids, never URLs (ADR 0003 §C3).
+  photoPublicIds String[]                              @default([]) @map("photo_public_ids")
+  description    String?
+  /// venues R12 — [{ day: 0-6 (Mon-Sun), opens: "HH:MM", closes: "HH:MM" }], local time.
+  openingHours   Json                                  @default("[]") @map("opening_hours")
+  contactPhone   String?                               @map("contact_phone")
+  /// venues R7 — kept in the same transaction as every review write; hidden reviews excluded.
+  ratingAvg      Decimal?                              @map("rating_avg") @db.Decimal(3, 2)
+  ratingCount    Int                                   @default(0) @map("rating_count")
+  createdBy      String                                @map("created_by") @db.Uuid
+  /// venues R5 — soft delete. A completed tournament must keep resolving where
+  /// it was played.
+  deletedAt      DateTime?                             @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  creator User          @relation(fields: [createdBy], references: [id])
+  courts  VenueCourt[]
+  events  Event[]
+  reviews VenueReview[]
+  visits  VenueVisit[]
+
+  /// The migration makes this partial on `deleted_at IS NULL`, which Prisma
+  /// cannot express. Discovery only reads live venues, so neither should the
+  /// index. The gist index on `geo` (venues R1) is migration-only for the same
+  /// reason.
+  @@index([city])
+  @@map("venues")
+}
+
+/// venues R2 — a court belongs to exactly one venue and carries sport_ids[],
+/// because one physical court often serves several sports.
+model VenueCourt {
+  id       String   @id @db.Uuid
+  /// Null for a court the host declared for one event (F14). CHECK: venue XOR event.
+  venueId  String?  @map("venue_id") @db.Uuid
+  eventId  String?  @map("event_id") @db.Uuid
+  /// "Court 3"
+  name     String
+  surface  String?
+  indoor   Boolean  @default(false)
+  /// venues R10 — court | turf | ground | pitch | table. CHECK in the migration.
+  kind     String   @default("court")
+  sportIds String[] @map("sport_ids") @db.Uuid
+  active   Boolean  @default(true)
+
+  venue            Venue?            @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  event            Event?            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  matches          Match[]
+  courtAssignments CourtAssignment[]
+
+  @@unique([venueId, name])
+  @@map("venue_courts")
+}
+
+/// venues R6 — a projection of "played here", written from match.completed
+/// (later game.past and booking.completed). Review eligibility reads only this.
+model VenueVisit {
+  venueId   String   @map("venue_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  /// match | game | booking
+  source    String
+  sourceId  String   @map("source_id") @db.Uuid
+  visitedAt DateTime @map("visited_at") @db.Timestamptz(6)
+
+  venue Venue @relation(fields: [venueId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@id([source, sourceId, userId])
+  @@index([venueId, userId, visitedAt(sort: Desc)])
+  @@map("venue_visits")
+}
+
+/// venues R6–R8 — one review per user per venue, editable; one staff reply.
+model VenueReview {
+  id        String    @id @db.Uuid
+  venueId   String    @map("venue_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  stars     Int       @db.SmallInt
+  body      String?
+  replyBody String?   @map("reply_body")
+  repliedBy String?   @map("replied_by") @db.Uuid
+  repliedAt DateTime? @map("replied_at") @db.Timestamptz(6)
+  /// admin R6 — hidden reviews drop out of lists and the rating.
+  hiddenAt  DateTime? @map("hidden_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  venue   Venue @relation(fields: [venueId], references: [id])
+  author  User  @relation("venueReviewAuthor", fields: [userId], references: [id])
+  replier User? @relation("venueReviewReplier", fields: [repliedBy], references: [id])
+
+  @@unique([venueId, userId])
+  @@index([venueId, createdAt(sort: Desc)])
+  @@map("venue_reviews")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// events (docs/modules/05-events.md)
+//
+// An EVENT is a tournament a player finds. An EVENT CATEGORY is what they
+// register for. Capacity, fee and format live on the CATEGORY, never the event,
+// because one tournament sells eight draws at eight prices.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Event {
+  id                   String                                 @id @db.Uuid
+  sportId              String                                 @map("sport_id") @db.Uuid
+  organizerId          String                                 @map("organizer_id") @db.Uuid
+  venueId              String?                                @map("venue_id") @db.Uuid
+  /// events R8 — permanent once published. It is a deep link that will exist in
+  /// someone's WhatsApp forever.
+  slug                 String                                 @unique
+  title                String
+  description          String?
+  city                 String
+  geo                  Unsupported("geography(Point, 4326)")?
+  /// Stored UTC; the timezone rides alongside so "Saturday 9am" survives a
+  /// multi-zone future (conventions.md §2).
+  timezone             String                                 @default("Asia/Kolkata")
+  startsAt             DateTime                               @map("starts_at") @db.Timestamptz(6)
+  endsAt               DateTime                               @map("ends_at") @db.Timestamptz(6)
+  registrationClosesAt DateTime                               @map("registration_closes_at") @db.Timestamptz(6)
+  /// Full refund before this instant.
+  cancellationCutoffAt DateTime?                              @map("cancellation_cutoff_at") @db.Timestamptz(6)
+  /// draft | published | live | completed | cancelled. CHECK in the migration.
+  status               String                                 @default("draft")
+  /// events R11 — tournament | league_season. Discovery filters on it.
+  kind                 String                                 @default("tournament")
+  coverPublicId        String?                                @map("cover_public_id")
+  /// Shown to the event's staff and seated entrants only.
+  contactPhone         String?                                @map("contact_phone")
+  /// "Court 3, behind the parking lot"
+  locationNote         String?                                @map("location_note")
+  /// Publishing requires it (hosting).
+  hostTermsAcceptedAt  DateTime?                              @map("host_terms_accepted_at") @db.Timestamptz(6)
+  /// F18 — the venue or dates changed after people entered; free withdrawal for 48 h.
+  termsChangedAt       DateTime?                              @map("terms_changed_at") @db.Timestamptz(6)
+  /// F27 — standard | flexible. CHECK in the migration.
+  refundPolicy         String                                 @default("standard") @map("refund_policy")
+  /// org R3 — the organisation this event is hosted as. Null for a player's own
+  /// event; a personal profile backfilled by 014 reads the same.
+  organizerProfileId   String?                                @map("organizer_profile_id") @db.Uuid
+  createdAt            DateTime                               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sport         Sport           @relation(fields: [sportId], references: [id])
+  organizer     User            @relation(fields: [organizerId], references: [id])
+  venue         Venue?          @relation(fields: [venueId], references: [id])
+  categories    EventCategory[]
+  media         EventMedia[]
+  staff         EventStaff[]
+  registrations Registration[]
+  tournaments   Tournament[]
+  payouts       Payout[]
+  reports       EventReport[]
+  courts        VenueCourt[]
+
+  /// events R6 — the migration makes this partial on
+  /// status IN ('published','live'). Draft and cancelled events are never
+  /// listed, so they should not be in the index either.
+  @@index([sportId, city, startsAt])
+  @@map("events")
+}
+
+model EventCategory {
+  id               String    @id @db.Uuid
+  eventId          String    @map("event_id") @db.Uuid
+  sportId          String    @map("sport_id") @db.Uuid
+  /// "Men's Doubles 3.5"
+  name             String
+  format           String
+  teamSize         Int       @default(1) @map("team_size") @db.SmallInt
+  drawType         String    @default("single_elim_with_plate") @map("draw_type")
+  skillMin         Decimal?  @map("skill_min") @db.Decimal(4, 2)
+  skillMax         Decimal?  @map("skill_max") @db.Decimal(4, 2)
+  ageMin           Int?      @map("age_min") @db.SmallInt
+  ageMax           Int?      @map("age_max") @db.SmallInt
+  capacity         Int
+  /// events R9 — below this at registration close, the category is cancelled
+  /// and fully refunded.
+  minEntries       Int       @default(4) @map("min_entries") @db.SmallInt
+  /// Money is bigint paise. No float touches it, here or in GraphQL.
+  entryFeePaise    BigInt    @map("entry_fee_paise")
+  platformFeePaise BigInt    @default(0) @map("platform_fee_paise")
+  /// 18% GST in basis points. Integer arithmetic all the way down (events R3).
+  taxBps           Int       @default(0) @map("tax_bps")
+  /// The platform's share of the entry fee, server-set. 1000 = 10%.
+  commissionBps    Int       @default(0) @map("commission_bps")
+  /// open | full | closed | drawn | completed | cancelled. CHECK in the migration.
+  status           String    @default("open")
+  /// F14 — the scheduler's slot for one match. Null = 45 minutes.
+  matchMinutes     Int?      @map("match_minutes") @db.SmallInt
+  /// F23 — a knockout without a Plate plays a match for third place.
+  thirdPlace       Boolean   @default(false) @map("third_place")
+  /// F24 — what the draw is played for, and the host's format notes.
+  prizes           String?
+  rulesNote        String?   @map("rules_note")
+  /// F21, F22 — the rule this draw is played under, frozen. Null = the sport's current default.
+  scoringRule      Json?     @map("scoring_rule")
+  /// F12 — the host was told this draw is short of its minimum.
+  shortWarnedAt    DateTime? @map("short_warned_at") @db.Timestamptz(6)
+
+  event           Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sport           Sport           @relation(fields: [sportId], references: [id])
+  teams           Team[]
+  registrations   Registration[]
+  seatHolds       SeatHold[]
+  waitlistEntries WaitlistEntry[]
+  tournament      Tournament?
+  matches         Match[]
+
+  @@index([eventId])
+  @@map("event_categories")
+}
+
+/// F3 — a player's report that an event did not happen as promised. An open
+/// one holds the host's payout until PL4Y staff settle it.
+model EventReport {
+  id             String    @id @db.Uuid
+  eventId        String    @map("event_id") @db.Uuid
+  reporterUserId String    @map("reporter_user_id") @db.Uuid
+  /// did_not_happen | different_from_listing | unfair_results | host_conduct | other. CHECK in the migration.
+  reason         String
+  details        String?
+  /// open | resolved | dismissed. CHECK in the migration.
+  status         String    @default("open")
+  resolutionNote String?   @map("resolution_note")
+  resolvedBy     String?   @map("resolved_by") @db.Uuid
+  resolvedAt     DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  event    Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  reporter User  @relation("eventReportAuthor", fields: [reporterUserId], references: [id])
+  resolver User? @relation("eventReportResolver", fields: [resolvedBy], references: [id], onDelete: SetNull)
+
+  @@index([eventId, status], map: "event_reports_event_idx")
+  @@map("event_reports")
+}
+
+model EventMedia {
+  id        String @id @db.Uuid
+  eventId   String @map("event_id") @db.Uuid
+  /// Cloudinary public_id, never a URL (ADR 0003 §C3).
+  publicId  String @map("public_id")
+  /// cover | gallery | sponsor. CHECK in the migration.
+  kind      String
+  sortOrder Int    @default(0) @map("sort_order") @db.SmallInt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@map("event_media")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// registration (docs/modules/06-registration.md)
+//
+// Highest-risk module in the system. Three failure modes cost real money:
+// overselling a draw with physical courts, double-charging a player, and a
+// partner who never accepts.
+//
+// Correctness lives in Postgres, not in Redis and not in the service: the
+// unique partial index below is registration R1, and the FOR UPDATE capacity
+// query is R4.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Team {
+  id              String   @id @db.Uuid
+  eventCategoryId String   @map("event_category_id") @db.Uuid
+  name            String?
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  eventCategory EventCategory  @relation(fields: [eventCategoryId], references: [id])
+  members       TeamMember[]
+  registrations Registration[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  teamId    String  @map("team_id") @db.Uuid
+  userId    String  @map("user_id") @db.Uuid
+  /// registration R6 — the captain pays for the whole team.
+  isCaptain Boolean @default(false) @map("is_captain")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@id([teamId, userId])
+  @@map("team_members")
+}
+
+model Registration {
+  id              String    @id @db.Uuid
+  eventId         String    @map("event_id") @db.Uuid
+  eventCategoryId String    @map("event_category_id") @db.Uuid
+  sportId         String    @map("sport_id") @db.Uuid
+  /// The payer (registration R6).
+  captainUserId   String    @map("captain_user_id") @db.Uuid
+  /// Null for singles.
+  teamId          String?   @map("team_id") @db.Uuid
+  /// draft | awaiting_partner | waitlisted | payment_pending | confirmed |
+  /// checked_in | withdrawn | expired | payment_failed | refunded.
+  ///
+  /// registration R11 — written ONLY through the transition guard. The CHECK
+  /// lives in the migration, as does the unique partial index that makes R1 a
+  /// constraint rather than a read-then-write race.
+  status          String    @default("draft")
+  /// Set at draw time by `tournament`.
+  seed            Int?
+  /// The quote frozen at `begin`. What the player agreed to pay.
+  amountPaise     BigInt    @map("amount_paise")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  confirmedAt     DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  /// online | offline | comp (R14). CHECK in the migration.
+  paymentMode     String    @default("online") @map("payment_mode")
+  /// R13 — the original check-in time. A re-scan never moves it.
+  checkedInAt     DateTime? @map("checked_in_at") @db.Timestamptz(6)
+  checkedInBy     String?   @map("checked_in_by") @db.Uuid
+  /// R16 — why staff withdrew the entry.
+  withdrawnReason String?   @map("withdrawn_reason")
+
+  event           Event                @relation(fields: [eventId], references: [id])
+  eventCategory   EventCategory        @relation(fields: [eventCategoryId], references: [id])
+  sport           Sport                @relation(fields: [sportId], references: [id])
+  captain         User                 @relation("registrationCaptain", fields: [captainUserId], references: [id])
+  checkedInByUser User?                @relation("registrationCheckedInBy", fields: [checkedInBy], references: [id], onDelete: SetNull)
+  team            Team?                @relation(fields: [teamId], references: [id])
+  waitlistEntry   WaitlistEntry?
+  invites         RegistrationInvite[]
+  seatHolds       SeatHold[]
+  paymentOrders   PaymentOrder[]
+  ledgerEntries   LedgerEntry[]
+  matchesSideA    Match[]              @relation("matchSideA")
+  matchesSideB    Match[]              @relation("matchSideB")
+  matchesWon      Match[]              @relation("matchWinner")
+  resultsWon      MatchResult[]        @relation("resultWinner")
+  resultsLost     MatchResult[]        @relation("resultLoser")
+
+  @@index([eventCategoryId, status])
+  @@index([captainUserId])
+  @@map("registrations")
+}
+
+model RegistrationInvite {
+  id             String   @id @db.Uuid
+  registrationId String   @map("registration_id") @db.Uuid
+  /// registration R12 — the partner may have no account yet (ADR 0002).
+  invitedEmail   String   @map("invited_email") @db.Citext
+  invitedUserId  String?  @map("invited_user_id") @db.Uuid
+  token          String   @unique
+  /// pending | accepted | declined | expired. CHECK in the migration.
+  status         String   @default("pending")
+  /// +48 h (registration R3).
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  invitedUser  User?        @relation(fields: [invitedUserId], references: [id])
+
+  /// The migration makes this partial on `status = 'pending'`: an accepted
+  /// invite is never looked up by email again.
+  @@index([invitedEmail])
+  @@map("registration_invites")
+}
+
+/// registration R4, R5 — capacity is decided here, under FOR UPDATE, counting
+/// holds whose `expires_at > now()`. An expired hold stops blocking capacity the
+/// instant it expires; the release job only tidies up after it.
+model SeatHold {
+  id              String    @id @db.Uuid
+  eventCategoryId String    @map("event_category_id") @db.Uuid
+  registrationId  String    @map("registration_id") @db.Uuid
+  seats           Int       @default(1) @db.SmallInt
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  releasedAt      DateTime? @map("released_at") @db.Timestamptz(6)
+
+  eventCategory EventCategory @relation(fields: [eventCategoryId], references: [id])
+  registration  Registration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  /// Partial on `released_at IS NULL` in the migration — a released hold is
+  /// never counted, so it does not belong in the index that counts.
+  @@index([eventCategoryId])
+  @@map("seat_holds")
+}
+
+/// registration R17 — the queue for a full draw. A waitlisted entry holds NO
+/// seat; promotion acquires one through the same FOR UPDATE query as R4.
+model WaitlistEntry {
+  registrationId  String    @id @map("registration_id") @db.Uuid
+  eventCategoryId String    @map("event_category_id") @db.Uuid
+  /// Set when the entry is promoted. Kept afterwards, so a lapsed offer is
+  /// distinguishable from an ordinary expired hold.
+  offeredAt       DateTime? @map("offered_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  registration  Registration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  eventCategory EventCategory @relation(fields: [eventCategoryId], references: [id])
+
+  /// Partial on offered_at IS NULL in the migration.
+  @@index([eventCategoryId, createdAt], map: "waitlist_entries_queue_idx")
+  @@map("waitlist_entries")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// payments (docs/modules/07-payments.md)
+//
+// THE WEBHOOK IS THE TRUTH. The gateway's client-side checkout callback is a UI
+// hint and confirms nothing (payments R5).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PaymentOrder {
+  id               String   @id @db.Uuid
+  /// payments R20 — exactly one of registration_id and booking_id (CHECK in 037).
+  registrationId   String?  @map("registration_id") @db.Uuid
+  bookingId        String?  @map("booking_id") @db.Uuid
+  /// The gateway's id for the order. Unique, because it is our idempotency handle.
+  gatewayOrderId   String   @unique @map("gateway_order_id")
+  /// The frozen breakdown, so a receipt can be re-rendered years later (R11).
+  entryFeePaise    BigInt   @map("entry_fee_paise")
+  platformFeePaise BigInt   @map("platform_fee_paise")
+  taxPaise         BigInt   @map("tax_paise")
+  amountPaise      BigInt   @map("amount_paise")
+  currency         String   @default("INR")
+  /// created | attempted | paid | failed | expired. CHECK in the migration.
+  status           String   @default("created")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  registration Registration? @relation(fields: [registrationId], references: [id])
+  payments     Payment[]
+
+  @@index([registrationId])
+  @@map("payment_orders")
+}
+
+model Payment {
+  id               String    @id @db.Uuid
+  paymentOrderId   String    @map("payment_order_id") @db.Uuid
+  gatewayPaymentId String    @unique @map("gateway_payment_id")
+  /// upi | card | netbanking | wallet
+  method           String?
+  amountPaise      BigInt    @map("amount_paise")
+  /// authorized | captured | failed | refunded | partially_refunded.
+  status           String
+  failureReason    String?   @map("failure_reason")
+  capturedAt       DateTime? @map("captured_at") @db.Timestamptz(6)
+  /// F27 — what the gateway kept on this payment (its fee plus tax). Null when unknown.
+  feePaise         BigInt?   @map("fee_paise")
+  /// payments R10 — the raw gateway payload. When a player disputes a charge in
+  /// four months, this is the evidence.
+  raw              Json
+
+  paymentOrder  PaymentOrder  @relation(fields: [paymentOrderId], references: [id])
+  refunds       Refund[]
+  ledgerEntries LedgerEntry[]
+
+  @@index([paymentOrderId])
+  @@map("payments")
+}
+
+model Refund {
+  id              String    @id @db.Uuid
+  paymentId       String    @map("payment_id") @db.Uuid
+  gatewayRefundId String?   @unique @map("gateway_refund_id")
+  amountPaise     BigInt    @map("amount_paise")
+  reason          String
+  /// payments R7 — retrying a refund must never send money twice.
+  idempotencyKey  String    @unique @map("idempotency_key")
+  /// pending | processed | failed. CHECK in the migration.
+  status          String
+  /// gap #15 — how many times the gateway has been asked; each retry uses a fresh receipt.
+  attempts        Int       @default(0) @db.SmallInt
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  processedAt     DateTime? @map("processed_at") @db.Timestamptz(6)
+
+  payment       Payment       @relation(fields: [paymentId], references: [id])
+  ledgerEntries LedgerEntry[]
+
+  @@index([paymentId])
+  @@map("refunds")
+}
+
+/// payments R3 — Gateways retry; this table is why that is harmless. The id
+/// is claimed BEFORE any work happens, so a duplicate delivery does nothing and
+/// gets a 200 immediately.
+model PaymentWebhookEvent {
+  gatewayEventId String    @id @map("gateway_event_id")
+  eventType      String    @map("event_type")
+  payload        Json
+  receivedAt     DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+  processedAt    DateTime? @map("processed_at") @db.Timestamptz(6)
+  attempts       Int       @default(0) @db.SmallInt
+  lastError      String?   @map("last_error")
+
+  @@map("payment_webhook_events")
+}
+
+/// payments R6 — what actually reconciles against a gateway settlement report.
+/// The payments table is a record of gateway objects; THIS is the money.
+model LedgerEntry {
+  id             BigInt   @id @default(autoincrement())
+  registrationId String?  @map("registration_id") @db.Uuid
+  paymentId      String?  @map("payment_id") @db.Uuid
+  refundId       String?  @map("refund_id") @db.Uuid
+  /// payouts R11 — set on the rows a payout writes.
+  payoutId       String?  @map("payout_id") @db.Uuid
+  /// charge | platform_fee | tax | refund | fee_reversal | tax_reversal, plus the
+  /// payout kinds host_commission | commission_tax | tds_withheld | host_payout |
+  /// host_receivable | receivable_recovered.
+  kind           String
+  /// Signed: credits positive, debits negative.
+  amountPaise    BigInt   @map("amount_paise")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  registration Registration? @relation(fields: [registrationId], references: [id])
+  payment      Payment?      @relation(fields: [paymentId], references: [id])
+  refund       Refund?       @relation(fields: [refundId], references: [id])
+  payout       Payout?       @relation(fields: [payoutId], references: [id])
+
+  @@index([registrationId])
+  @@index([payoutId], map: "ledger_entries_payout_idx")
+  @@map("ledger_entries")
+}
+
+/// payouts R1–R7 — where a host's money goes. One per user. The PAN and
+/// account number are sealed (R2); nothing here is ever returned in clear.
+model PayoutAccount {
+  id                 String    @id @db.Uuid
+  /// The host, or for an organisation's account the owner who saved it. One
+  /// personal account per user and one per organisation (partial unique
+  /// indexes in 036).
+  userId             String    @map("user_id") @db.Uuid
+  /// org R6 — set when this is an organisation's account.
+  organizerProfileId String?   @map("organizer_profile_id") @db.Uuid
+  legalName          String    @map("legal_name")
+  panCipher          Bytes     @map("pan_cipher")
+  panLast4           String    @map("pan_last4")
+  accountCipher      Bytes     @map("account_cipher")
+  accountLast4       String    @map("account_last4")
+  ifsc               String
+  panSurnameOk       Boolean   @map("pan_surname_ok")
+  bankNameReturned   String?   @map("bank_name_returned")
+  nameMatch          Int?      @map("name_match") @db.SmallInt
+  /// checking | verified | needs_review | rejected | suspended. CHECK in the migration.
+  status             String    @default("checking")
+  statusReason       String?   @map("status_reason")
+  verifyRef          String?   @map("verify_ref")
+  checkAttempts      Int       @default(0) @map("check_attempts") @db.SmallInt
+  reviewedBy         String?   @map("reviewed_by") @db.Uuid
+  reviewedAt         DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  verifiedAt         DateTime? @map("verified_at") @db.Timestamptz(6)
+  /// gap #25 — the legal name the account was last verified under.
+  verifiedLegalName  String?   @map("verified_legal_name")
+  /// gap #25 — when verified details were last replaced; payouts wait 48 h after it.
+  detailsChangedAt   DateTime? @map("details_changed_at") @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user     User     @relation("payoutAccountUser", fields: [userId], references: [id])
+  reviewer User?    @relation("payoutAccountReviewer", fields: [reviewedBy], references: [id])
+  payouts  Payout[]
+
+  @@map("payout_accounts")
+}
+
+/// payouts R8–R15 — one per event per account. The quote is frozen when the
+/// transfer is sent, so the row always explains the amount that moved.
+model Payout {
+  id                 String    @id @db.Uuid
+  payoutAccountId    String    @map("payout_account_id") @db.Uuid
+  eventId            String    @map("event_id") @db.Uuid
+  entryFeesPaise     BigInt    @default(0) @map("entry_fees_paise")
+  refundsPaise       BigInt    @default(0) @map("refunds_paise")
+  commissionPaise    BigInt    @default(0) @map("commission_paise")
+  commissionTaxPaise BigInt    @default(0) @map("commission_tax_paise")
+  tdsPaise           BigInt    @default(0) @map("tds_paise")
+  receivablesPaise   BigInt    @default(0) @map("receivables_paise")
+  /// F27 — gateway fees the host bears on an event they cancelled.
+  gatewayFeesPaise   BigInt    @default(0) @map("gateway_fees_paise")
+  amountPaise        BigInt    @default(0) @map("amount_paise")
+  /// scheduled | held | awaiting_funds | sending | paid | failed. CHECK in the migration.
+  status             String    @default("scheduled")
+  holdReason         String?   @map("hold_reason")
+  transferRef        String?   @unique @map("transfer_ref")
+  providerStatus     String?   @map("provider_status")
+  providerRef        String?   @map("provider_ref")
+  attempts           Int       @default(0) @db.SmallInt
+  lastError          String?   @map("last_error")
+  dueAt              DateTime  @map("due_at") @db.Timestamptz(6)
+  /// F3 — staff released a review hold; review holds stop unless a newer report arrives.
+  reviewClearedAt    DateTime? @map("review_cleared_at") @db.Timestamptz(6)
+  sentAt             DateTime? @map("sent_at") @db.Timestamptz(6)
+  paidAt             DateTime? @map("paid_at") @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  payoutAccount PayoutAccount @relation(fields: [payoutAccountId], references: [id])
+  event         Event         @relation(fields: [eventId], references: [id])
+  ledgerEntries LedgerEntry[]
+
+  @@unique([eventId, payoutAccountId])
+  @@map("payouts")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// tournament (docs/modules/09-tournament.md)
+//
+// Every match knows where its winner AND its loser go before a single point is
+// played. That is what the four wiring columns are for: confirming a result is
+// one write per side with no traversal, which is what makes advancement safe to
+// serialise under one advisory lock and safe to retry (R5, R9, R10).
+//
+// A bye is a REAL match row with one side null and status 'walkover' — a bye is
+// a result, so advancement has no special case (R3).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Tournament {
+  id              String    @id @db.Uuid
+  eventId         String    @map("event_id") @db.Uuid
+  /// One draw per category, and the unique index is what makes a second,
+  /// concurrent generateDraw collide rather than interleave two half-brackets.
+  eventCategoryId String    @unique @map("event_category_id") @db.Uuid
+  drawType        String    @default("single_elim_with_plate") @map("draw_type")
+  bracketSize     Int       @map("bracket_size") @db.SmallInt
+  /// R5 — sized to the number of FIRST-ROUND LOSERS, which is the number of
+  /// round-1 matches that are a real contest rather than a bye.
+  plateSize       Int       @default(0) @map("plate_size") @db.SmallInt
+  drawnAt         DateTime  @default(now()) @map("drawn_at") @db.Timestamptz(6)
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  event         Event         @relation(fields: [eventId], references: [id])
+  eventCategory EventCategory @relation(fields: [eventCategoryId], references: [id])
+  matches       Match[]
+
+  @@index([eventId])
+  @@map("tournaments")
+}
+
+model Match {
+  id              String @id @db.Uuid
+  tournamentId    String @map("tournament_id") @db.Uuid
+  eventCategoryId String @map("event_category_id") @db.Uuid
+  sportId         String @map("sport_id") @db.Uuid
+  /// championship | plate. CHECK in the migration.
+  bracket         String
+  round           Int    @db.SmallInt
+  slot            Int    @db.SmallInt
+  /// Set on a group-stage match only: which group, from 1.
+  groupNo         Int?   @map("group_no") @db.SmallInt
+  /// The scoreline totals a league table counts (goals, runs, points over every set). Null until a result, and for a walkover.
+  tallyA          Int?   @map("tally_a")
+  tallyB          Int?   @map("tally_b")
+
+  sideARegistrationId String? @map("side_a_registration_id") @db.Uuid
+  sideBRegistrationId String? @map("side_b_registration_id") @db.Uuid
+
+  /// Who came out of this match. `match_results` belongs to `scoring` and
+  /// records HOW it was won; this records THAT it was won, because a final has
+  /// nowhere to advance a winner to and the champion of a draw has to be
+  /// derivable from the draw. A CHECK in the migration keeps it to a side.
+  winnerRegistrationId String? @map("winner_registration_id") @db.Uuid
+
+  /// R5 — written at draw time, both directions, in one pass. A null
+  /// `loserMatchId` on a round-1 match means that match is a bye: it has no
+  /// loser to drop into the Plate.
+  winnerMatchId String? @map("winner_match_id") @db.Uuid
+  winnerSlot    Int?    @map("winner_slot") @db.SmallInt
+  loserMatchId  String? @map("loser_match_id") @db.Uuid
+  loserSlot     Int?    @map("loser_slot") @db.SmallInt
+
+  courtId      String?   @map("court_id") @db.Uuid
+  scheduledAt  DateTime? @map("scheduled_at") @db.Timestamptz(6)
+  /// scheduled | ready | live | awaiting_confirm | completed | walkover | void.
+  status       String    @default("scheduled")
+  /// Denormalised; owned and written by `scoring` (docs/modules/10-scoring.md).
+  currentScore Json?     @map("current_score")
+  scoreSeq     Int       @default(0) @map("score_seq")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  tournament    Tournament    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  eventCategory EventCategory @relation(fields: [eventCategoryId], references: [id])
+  sport         Sport         @relation(fields: [sportId], references: [id])
+  sideA         Registration? @relation("matchSideA", fields: [sideARegistrationId], references: [id])
+  sideB         Registration? @relation("matchSideB", fields: [sideBRegistrationId], references: [id])
+  winner        Registration? @relation("matchWinner", fields: [winnerRegistrationId], references: [id])
+  winnerMatch   Match?        @relation("winnerWiring", fields: [winnerMatchId], references: [id])
+  winnerFeeders Match[]       @relation("winnerWiring")
+  loserMatch    Match?        @relation("loserWiring", fields: [loserMatchId], references: [id])
+  loserFeeders  Match[]       @relation("loserWiring")
+  court         VenueCourt?   @relation(fields: [courtId], references: [id])
+
+  courtAssignment CourtAssignment?
+  ratingEvents    RatingEvent[]
+  scoreEvents     MatchScoreEvent[]
+  result          MatchResult?
+
+  @@unique([tournamentId, bracket, round, slot])
+  @@index([eventCategoryId, status, scheduledAt])
+  /// The migration makes this partial on `court_id IS NOT NULL`: an unscheduled
+  /// match is not on a court and has no business in the index that answers
+  /// "what is on this court".
+  @@index([courtId, scheduledAt])
+  /// Advancement reads the wiring by TARGET — "what feeds this slot?" — which
+  /// is how a bye is told apart from a side that has not arrived yet. Both are
+  /// partial on NOT NULL in the migration.
+  @@index([winnerMatchId])
+  @@index([loserMatchId])
+  @@map("matches")
+}
+
+/// The schedule is ADVISORY (R13) — organizers reassign courts by hand all day.
+/// What is NOT advisory is the exclusion constraint in the migration: two
+/// matches cannot occupy one court at the same time, and the database is what
+/// says so, because the scheduler is not the only thing that writes here.
+model CourtAssignment {
+  matchId    String    @id @map("match_id") @db.Uuid
+  courtId    String    @map("court_id") @db.Uuid
+  startsAt   DateTime  @map("starts_at") @db.Timestamptz(6)
+  endsAt     DateTime? @map("ends_at") @db.Timestamptz(6)
+  /// scheduler | organizer. CHECK in the migration.
+  assignedBy String    @map("assigned_by")
+
+  match Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  court VenueCourt @relation(fields: [courtId], references: [id])
+
+  @@map("court_assignments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rating (docs/modules/08-rating.md)
+//
+// Glicko-2 per player per sport, written APPEND-ONLY, with `rankings` as a
+// cache rebuilt on write. The algorithm is replaceable; the log is not — every
+// row carries `algo_version`, and replacing the model means writing
+// `glicko2-v2` and replaying the log rather than migrating anything (R8).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// R4 — the weekly batch Glicko-2 is actually defined over. Monday 03:00 IST.
+model RatingPeriod {
+  id          String    @id @db.Uuid
+  sportId     String    @map("sport_id") @db.Uuid
+  startsAt    DateTime  @map("starts_at") @db.Timestamptz(6)
+  endsAt      DateTime  @map("ends_at") @db.Timestamptz(6)
+  /// Null until the job has run. Non-null is the PERIOD_ALREADY_RUN guard.
+  ranAt       DateTime? @map("ran_at") @db.Timestamptz(6)
+  algoVersion String    @map("algo_version")
+
+  sport  Sport         @relation(fields: [sportId], references: [id])
+  events RatingEvent[]
+
+  @@unique([sportId, startsAt])
+  @@map("rating_periods")
+}
+
+/// The log. Append-only: a rating is never updated in place, it is superseded.
+model RatingEvent {
+  id              BigInt  @id @default(autoincrement())
+  playerId        String  @map("player_id") @db.Uuid
+  sportId         String  @map("sport_id") @db.Uuid
+  /// tournament owns `matches`. 008 carried no foreign key because the table
+  /// did not exist yet; 009 added it, exactly as 005 added the one
+  /// `event_staff` had been waiting for since 001.
+  matchId         String? @map("match_id") @db.Uuid
+  ratingPeriodId  String? @map("rating_period_id") @db.Uuid
+  /// R8 — 'glicko2-v1'. A new model is a new value here, never a migration.
+  algoVersion     String  @map("algo_version")
+  ratingBefore    Decimal @map("rating_before") @db.Decimal(7, 2)
+  ratingAfter     Decimal @map("rating_after") @db.Decimal(7, 2)
+  rdBefore        Decimal @map("rd_before") @db.Decimal(7, 2)
+  rdAfter         Decimal @map("rd_after") @db.Decimal(7, 2)
+  volatilityAfter Decimal @map("volatility_after") @db.Decimal(7, 5)
+  /// How many matches this row covers: 1 for a provisional row, and a whole
+  /// period's card for a settled one. R9 needs a count of SETTLED matches, and
+  /// a settled row carries no match_id — it is one update over a week — so
+  /// without this the count is unknowable from the log, and a count that is not
+  /// derivable from the log cannot survive a replay.
+  matchesPlayed   Int     @default(0) @map("matches_played") @db.SmallInt
+
+  /// R3 — true for the number that moves the moment a result is confirmed.
+  /// Superseded by the period job, and kept, so history reads continuously.
+  isProvisional Boolean  @default(false) @map("is_provisional")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  player PlayerProfile @relation(fields: [playerId], references: [id])
+  sport  Sport         @relation(fields: [sportId], references: [id])
+  period RatingPeriod? @relation(fields: [ratingPeriodId], references: [id])
+  /// The foreign key 008 deferred: `matches` did not exist until 009.
+  match  Match?        @relation(fields: [matchId], references: [id])
+
+  /// The migration makes this partial-unique on `rating_period_id IS NOT NULL`,
+  /// which Prisma cannot express: R4's period job is retried, and a retry must
+  /// not rate anyone twice.
+  @@index([playerId, ratingPeriodId])
+  @@index([playerId, sportId, createdAt(sort: Desc)])
+  /// The migration makes this partial on `is_provisional = false`, which Prisma
+  /// cannot express: one settled row per player per match (R3).
+  @@index([playerId, matchId])
+  @@map("rating_events")
+}
+
+/// A cache, rebuilt on write. Nothing reads a ranking to decide anything.
+model Ranking {
+  sportId       String   @map("sport_id") @db.Uuid
+  /// R10 — 'national' | 'city:Bengaluru' | 'age:35+'. Enumerated, never free
+  /// text: an open-ended scope string is an unbounded table.
+  scope         String
+  playerId      String   @map("player_id") @db.Uuid
+  rank          Int
+  rating        Decimal  @db.Decimal(7, 2)
+  matchesPlayed Int      @map("matches_played")
+  /// R11 — against the previous rebuild, stored so the arrow costs no query.
+  movement      Int      @default(0)
+  computedAt    DateTime @map("computed_at") @db.Timestamptz(6)
+
+  sport  Sport         @relation(fields: [sportId], references: [id])
+  player PlayerProfile @relation(fields: [playerId], references: [id])
+
+  @@id([sportId, scope, playerId])
+  @@index([sportId, scope, rank])
+  @@map("rankings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// scoring (docs/modules/10-scoring.md)
+//
+// `matches.current_score` and `matches.score_seq` are this module's too: they
+// are the denormalised head of the log below, written in the same transaction
+// as the event that moved them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// R2 — append-only. Never updated, never deleted: an undo is a new row of kind
+/// 'undo'. This is what makes an undo, a dispute and a mid-match device failure
+/// all recoverable.
+model MatchScoreEvent {
+  id          BigInt   @id @default(autoincrement())
+  matchId     String   @map("match_id") @db.Uuid
+  seq         Int
+  /// start | point | undo | event. CHECK in the migration.
+  kind        String
+  /// a | b. Set for a point, and for an event that has a side.
+  scoringSide String?  @map("scoring_side")
+  /// R3 — the complete score, never a delta.
+  stateAfter  Json     @map("state_after")
+  /// The typed event for kind = 'event' (a score action, a period end, a kick). Null otherwise.
+  event       Json?
+  recordedBy  String   @map("recorded_by") @db.Uuid
+  recordedAt  DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  match    Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  recorder User  @relation(fields: [recordedBy], references: [id])
+
+  /// R1 — two scorers cannot both write sequence 41.
+  @@unique([matchId, seq])
+  @@map("match_score_events")
+}
+
+/// HOW a match was won. `matches.winner_registration_id` (tournament's) records
+/// THAT it was, once this row is confirmed (R6).
+model MatchResult {
+  matchId              String    @id @map("match_id") @db.Uuid
+  /// Null for a draw (a league or group match ended level).
+  winnerRegistrationId String?   @map("winner_registration_id") @db.Uuid
+  loserRegistrationId  String?   @map("loser_registration_id") @db.Uuid
+  /// [{a:11,b:7},{a:9,b:11},{a:11,b:5}] — empty for a walkover (R10).
+  games                Json
+  /// played | walkover | retired | forfeit. CHECK in the migration.
+  outcome              String
+  /// How it was won beyond the scoreline: shootout today; KO, by runs… later. Null for normal play.
+  method               String?
+  /// Qualifies the method: the shootout tally "4–3". Null without a method.
+  margin               String?
+  submittedBy          String    @map("submitted_by") @db.Uuid
+  submittedAt          DateTime  @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  confirmedBy          String?   @map("confirmed_by") @db.Uuid
+  confirmedAt          DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  disputedBy           String?   @map("disputed_by") @db.Uuid
+  disputedAt           DateTime? @map("disputed_at") @db.Timestamptz(6)
+  disputeReason        String?   @map("dispute_reason")
+  ratingApplied        Boolean   @default(false) @map("rating_applied")
+  /// live | typed — scoring R12. CHECK in the migration.
+  source               String
+  /// player | staff, at the moment of submission — scoring R12. CHECK in the migration.
+  submitterRole        String    @map("submitter_role")
+  /// scoring R11 — null means a person must confirm it.
+  autoConfirmAt        DateTime? @map("auto_confirm_at") @db.Timestamptz(6)
+  /// opponent | staff | auto — set with confirmed_at. CHECK in the migration.
+  confirmedVia         String?   @map("confirmed_via")
+  /// scoring R14 — the reminder went out.
+  remindedAt           DateTime? @map("reminded_at") @db.Timestamptz(6)
+  /// scoring R13 — counted in an organizer alert.
+  staffAlertedAt       DateTime? @map("staff_alerted_at") @db.Timestamptz(6)
+  /// gap #20 — the last reminder to the organizer about this open dispute.
+  disputeAlertedAt     DateTime? @map("dispute_alerted_at") @db.Timestamptz(6)
+  /// gap #20 — handed to PL4Y staff because nobody settled it.
+  escalatedAt          DateTime? @map("escalated_at") @db.Timestamptz(6)
+
+  match     Match         @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  winner    Registration? @relation("resultWinner", fields: [winnerRegistrationId], references: [id])
+  loser     Registration? @relation("resultLoser", fields: [loserRegistrationId], references: [id])
+  submitter User          @relation("resultSubmittedBy", fields: [submittedBy], references: [id])
+  confirmer User?         @relation("resultConfirmedBy", fields: [confirmedBy], references: [id])
+  disputer  User?         @relation("resultDisputedBy", fields: [disputedBy], references: [id])
+
+  /// rating reads confirmed results by window (rating R4).
+  @@index([confirmedAt])
+  @@map("match_results")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// notifications (docs/modules/11-notifications.md)
+//
+// Depends on nobody: the worker hands it a user id, a template key and a typed
+// payload. It never reads another module's tables.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// R1 — the in-app row is ALWAYS written. Push is a separate, failable job.
+model Notification {
+  id          String    @id @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  /// A key in the template registry. CHECK-free on purpose: the registry, not
+  /// the database, is the closed list (R4).
+  template    String
+  /// The typed payload the template renders from. Copy is never stored (R4).
+  payload     Json
+  /// event | match | player | venue | game | community | route. CHECK in the migration.
+  targetKind  String?   @map("target_kind")
+  targetId    String?   @map("target_id")
+  /// R10 — set when target_kind = 'route'. A closed enum, never a free string.
+  targetRoute String?   @map("target_route")
+  readAt      DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("notifications")
+}
+
+model DeviceRegistration {
+  id         String   @id @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  /// An Expo push token. Unique: a phone that changes hands belongs to its new user.
+  token      String   @unique
+  /// ios | android | web. CHECK in the migration.
+  platform   String
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_registrations")
+}
+
+/// R2 — gates PUSH only. The feed row is written whatever these say.
+model NotificationPreferences {
+  userId      String   @id @map("user_id") @db.Uuid
+  pushEnabled Boolean  @default(true) @map("push_enabled")
+  /// Template keys the player has muted for push.
+  muted       String[] @default([])
+  /// R3 — 22:00–07:00 IST. `match.starting_soon` ignores it.
+  quietHours  Boolean  @default(true) @map("quiet_hours")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// chat (docs/superpowers/specs/2026-09-29-chat-design.md)
+//
+// One-to-one conversations. Replaces follows: players connect through shared
+// play, not a follower count.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One per pair of players. The pair is stored sorted (low < high) so the
+/// UNIQUE makes "open a conversation" a race-free upsert.
+model Conversation {
+  id             String    @id @db.Uuid
+  playerLowId    String    @map("player_low_id") @db.Uuid
+  playerHighId   String    @map("player_high_id") @db.Uuid
+  /// Who sent the first message — the side a request is FROM (chat R3).
+  initiatorId    String    @map("initiator_id") @db.Uuid
+  /// request | active | declined. CHECK in the migration.
+  status         String
+  lowLastReadAt  DateTime? @map("low_last_read_at") @db.Timestamptz(6)
+  highLastReadAt DateTime? @map("high_last_read_at") @db.Timestamptz(6)
+  lastMessageAt  DateTime? @map("last_message_at") @db.Timestamptz(6)
+  /// chat R10 — when the request was declined. Set exactly when status is `declined`.
+  declinedAt     DateTime? @map("declined_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  low      PlayerProfile @relation("low", fields: [playerLowId], references: [id], onDelete: Cascade)
+  high     PlayerProfile @relation("high", fields: [playerHighId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@unique([playerLowId, playerHighId])
+  @@index([playerHighId])
+  @@map("conversations")
+}
+
+/// chat R9 — append-only.
+model Message {
+  id             String   @id @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  senderId       String   @map("sender_id") @db.Uuid
+  body           String
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversation Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       PlayerProfile @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("messages")
+}
+
+/// chat R6 — silent to the blocked player.
+model PlayerBlock {
+  blockerId String   @map("blocker_id") @db.Uuid
+  blockedId String   @map("blocked_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  blocker PlayerProfile @relation("blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked PlayerProfile @relation("blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("player_blocks")
+}
+
+/// Plans 7, 8 — a field contest: many entrants, one heat (scoring module).
+/// Foreign keys live in migration 028; no relation fields, so the models
+/// they point at are untouched.
+model Heat {
+  id              String   @id @db.Uuid
+  eventCategoryId String   @map("event_category_id") @db.Uuid
+  name            String
+  /// 1 for the first heats; each advance adds a round, the last is the final.
+  round           Int      @default(1)
+  /// live | closed. CHECK in the migration.
+  status          String   @default("live")
+  scoreSeq        Int      @default(0) @map("score_seq")
+  /// scoring R3 — the whole field state.
+  currentState    Json     @map("current_state")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([eventCategoryId])
+  @@map("heats")
+}
+
+model HeatEntry {
+  heatId         String @map("heat_id") @db.Uuid
+  registrationId String @map("registration_id") @db.Uuid
+  /// Lane, bib, flight order or tee time.
+  position       Int
+
+  @@id([heatId, registrationId])
+  @@map("heat_entries")
+}
+
+/// scoring R2 — append-only (trigger in migration 028).
+model HeatScoreEvent {
+  id         BigInt   @id @default(autoincrement())
+  heatId     String   @map("heat_id") @db.Uuid
+  seq        Int
+  event      Json
+  stateAfter Json     @map("state_after")
+  recordedBy String   @map("recorded_by") @db.Uuid
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  @@unique([heatId, seq])
+  @@map("heat_score_events")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 037 — admin Phase 2 queues (docs/modules/15-admin.md R6, R7, R8). Foreign
+// keys live in the migration; relations are left out so these tables stay
+// out of every other model's type.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ModerationReport {
+  id         String    @id @db.Uuid
+  reporterId String    @map("reporter_id") @db.Uuid
+  /// player | venue_review | message
+  targetType String    @map("target_type")
+  targetId   String    @map("target_id") @db.Uuid
+  /// spam | abuse | fake | unsafe | inaccurate | other
+  reason     String
+  note       String?
+  /// open | actioned | dismissed
+  status     String    @default("open")
+  resolution String?
+  resolvedBy String?   @map("resolved_by") @db.Uuid
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("moderation_reports")
+}
+
+model SupportTicket {
+  id              String    @id @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  subject         String
+  linkedType      String?   @map("linked_type")
+  linkedId        String?   @map("linked_id") @db.Uuid
+  requestId       String?   @map("request_id")
+  /// open | pending_user | resolved | closed
+  status          String    @default("open")
+  assignedTo      String?   @map("assigned_to") @db.Uuid
+  firstResponseAt DateTime? @map("first_response_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  messages SupportMessage[]
+
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id        String   @id @db.Uuid
+  ticketId  String   @map("ticket_id") @db.Uuid
+  authorId  String   @map("author_id") @db.Uuid
+  body      String
+  /// R7 — never returned to the user.
+  internal  Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("support_messages")
+}
+
+model FraudSignal {
+  id          String    @id @db.Uuid
+  /// user | organisation | venue | device
+  subjectType String    @map("subject_type")
+  subjectId   String    @map("subject_id")
+  detector    String
+  score       Int       @db.SmallInt
+  dedupeKey   String    @unique @map("dedupe_key")
+  evidence    Json      @default("{}")
+  reviewedAt  DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  reviewedBy  String?   @map("reviewed_by") @db.Uuid
+  /// confirmed | dismissed
+  outcome     String?
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("fraud_signals")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 037 — bookings (docs/modules/19-bookings.md). The exclusion constraint that
+// stops a double booking (R1) is in the migration; Prisma cannot express it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VenueStaff {
+  venueId   String   @map("venue_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  /// owner | manager | desk
+  role      String
+  grantedBy String?  @map("granted_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([venueId, userId])
+  @@index([userId], map: "venue_staff_user_idx")
+  @@map("venue_staff")
+}
+
+model VenueBookingPolicy {
+  venueId            String   @id @map("venue_id") @db.Uuid
+  bookable           Boolean  @default(false)
+  advanceDays        Int      @default(14) @map("advance_days") @db.SmallInt
+  minSlotMinutes     Int      @default(60) @map("min_slot_minutes") @db.SmallInt
+  fullRefundHours    Int      @default(24) @map("full_refund_hours") @db.SmallInt
+  partialRefundHours Int      @default(6) @map("partial_refund_hours") @db.SmallInt
+  partialRefundBps   Int      @default(5000) @map("partial_refund_bps")
+  platformFeePaise   BigInt   @default(0) @map("platform_fee_paise")
+  taxBps             Int      @default(0) @map("tax_bps")
+  timezone           String   @default("Asia/Kolkata")
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("venue_booking_policies")
+}
+
+model CourtAvailabilityRule {
+  id                String   @id @db.Uuid
+  courtId           String   @map("court_id") @db.Uuid
+  /// 0 = Monday … 6 = Sunday
+  weekday           Int      @db.SmallInt
+  opensAt           DateTime @map("opens_at") @db.Time(6)
+  closesAt          DateTime @map("closes_at") @db.Time(6)
+  pricePerHourPaise BigInt   @map("price_per_hour_paise")
+
+  @@index([courtId, weekday], map: "court_availability_rules_court_idx")
+  @@map("court_availability_rules")
+}
+
+model CourtBlackout {
+  id        String   @id @db.Uuid
+  venueId   String   @map("venue_id") @db.Uuid
+  courtId   String?  @map("court_id") @db.Uuid
+  /// maintenance | event | private | holiday
+  kind      String
+  eventId   String?  @map("event_id") @db.Uuid
+  startsAt  DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt    DateTime @map("ends_at") @db.Timestamptz(6)
+  note      String?
+  createdBy String   @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("court_blackouts")
+}
+
+model CourtBooking {
+  id               String    @id @db.Uuid
+  venueId          String    @map("venue_id") @db.Uuid
+  courtId          String    @map("court_id") @db.Uuid
+  userId           String?   @map("user_id") @db.Uuid
+  walkInName       String?   @map("walk_in_name")
+  walkInPhone      String?   @map("walk_in_phone")
+  startsAt         DateTime  @map("starts_at") @db.Timestamptz(6)
+  endsAt           DateTime  @map("ends_at") @db.Timestamptz(6)
+  /// held | confirmed | checked_in | completed | cancelled | expired | no_show | payment_failed
+  status           String    @default("held")
+  /// online | offline | comp
+  paymentMode      String    @default("online") @map("payment_mode")
+  holdExpiresAt    DateTime? @map("hold_expires_at") @db.Timestamptz(6)
+  courtPaise       BigInt    @map("court_paise")
+  platformFeePaise BigInt    @default(0) @map("platform_fee_paise")
+  taxPaise         BigInt    @default(0) @map("tax_paise")
+  amountPaise      BigInt    @map("amount_paise")
+  cancelledBy      String?   @map("cancelled_by") @db.Uuid
+  cancelReason     String?   @map("cancel_reason")
+  cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  checkedInAt      DateTime? @map("checked_in_at") @db.Timestamptz(6)
+  createdBy        String    @map("created_by") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId, startsAt(sort: Desc)], map: "court_bookings_user_idx")
+  @@index([venueId, startsAt], map: "court_bookings_venue_idx")
+  @@map("court_bookings")
+}

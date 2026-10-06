@@ -1,0 +1,22 @@
+# Which dependencies are allowed to run install scripts (pnpm 11 `allowBuilds`).
+# Only the ones we actually need a postinstall from: Prisma fetches its query
+# engine, esbuild and msgpackr-extract unpack a native binary. Everything else
+# is denied — an install script is arbitrary code from the network.
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  prisma: true
+  esbuild: true
+  msgpackr-extract: true
+  '@apollo/protobufjs': false
+  protobufjs: false
+  cpu-features: false
+  ssh2: false
+
+# Kept for pnpm 10, which reads this list instead of `allowBuilds`.
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - prisma
+  - esbuild
+  - msgpackr-extract

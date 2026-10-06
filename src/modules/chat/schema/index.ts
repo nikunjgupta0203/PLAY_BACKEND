@@ -1,0 +1,301 @@
+/**
+ * chat — GraphQL surface (docs/superpowers/specs/2026-09-29-chat-design.md).
+ *
+ * Resolvers never touch Prisma (conventions.md §1). Every read is scoped to the
+ * signed-in player: a conversation the viewer is not in, or has hidden (a
+ * declined request, a blocked player), resolves to null rather than an error.
+ */
+import { builder, clampFirst } from '../../../graphql/builder.js';
+import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
+import type { UserErrorShape } from '../../../graphql/userError.js';
+import { SystemError } from '../../../platform/errors/index.js';
+import { profile } from '../../profile/index.js';
+import { PlayerProfileRef } from '../../profile/schema/index.js';
+import { chat } from '../index.js';
+import type { ChatMessage, ConversationView, Messaging } from '../index.js';
+
+type ChatMessageNode = ChatMessage & { viewerId: string };
+
+const ConversationStatusEnum = builder.enumType('ConversationStatus', {
+  description:
+    'chat R3 — a request becomes active when the other player accepts or replies. ' +
+    'DECLINED is only ever shown to the sender (chat R10).',
+  values: {
+    REQUEST: { value: 'request' as const },
+    ACTIVE: { value: 'active' as const },
+    DECLINED: { value: 'declined' as const },
+  },
+});
+
+const MessageRef = builder.objectRef<ChatMessageNode>('Message').implement({
+  description: 'chat R9 — append-only. `body` is the sender’s own words: render as text, never markup.',
+  fields: (t) => ({
+    id: t.exposeID('id'),
+    body: t.exposeString('body'),
+    sentAt: t.field({ type: 'DateTime', resolve: (m) => m.createdAt }),
+    fromViewer: t.boolean({ resolve: (m) => m.senderId === m.viewerId }),
+  }),
+});
+
+const MessageConnectionRef = builder.connectionObject(
+  { type: MessageRef, name: 'MessageConnection' },
+  { name: 'MessageEdge' },
+);
+
+const ConversationRef = builder.objectRef<ConversationView>('Conversation').implement({
+  fields: (t) => ({
+    id: t.exposeID('id'),
+    other: t.field({
+      type: PlayerProfileRef,
+      nullable: true,
+      resolve: (c, _args, ctx) => profile.publicView(ctx.actor?.userId ?? null, c.otherId),
+    }),
+    status: t.field({ type: ConversationStatusEnum, resolve: (c) => c.status }),
+    isIncomingRequest: t.exposeBoolean('isIncomingRequest', {
+      description: 'You are being asked. Accept, decline, or reply (which accepts).',
+    }),
+    canSend: t.exposeBoolean('canSend'),
+    canResendAt: t.field({
+      type: 'DateTime',
+      nullable: true,
+      description: 'chat R10 — when you may send a new request after a decline. Null otherwise.',
+      resolve: (c) => c.canResendAt,
+    }),
+    unreadCount: t.int({ resolve: (c) => chat.unreadIn(c) }),
+    lastMessage: t.field({
+      type: MessageRef,
+      nullable: true,
+      resolve: async (c) => {
+        const m = await chat.lastMessage(c.id);
+        return m ? { ...m, viewerId: c.viewerId } : null;
+      },
+    }),
+    lastMessageAt: t.field({ type: 'DateTime', nullable: true, resolve: (c) => c.lastMessageAt }),
+    messages: t.connection(
+      {
+        type: MessageRef,
+        description: 'Newest first. Forward pagination only.',
+        resolve: async (c, args, ctx) => {
+          if (args.last != null || args.before != null) {
+            throw new SystemError('BAD_USER_INPUT', 'messages supports forward pagination only');
+          }
+          const actor = requireActor(ctx);
+          const page = await chat.messages(actor.userId, c.id, {
+            first: clampFirst(args.first, 30),
+            after: args.after ?? null,
+          });
+          const edges = page.nodes.map((m, i) => ({
+            cursor: page.cursors[i] ?? '',
+            node: { ...m, viewerId: c.viewerId },
+          }));
+          return {
+            edges,
+            pageInfo: {
+              hasNextPage: page.hasNextPage,
+              hasPreviousPage: args.after != null,
+              startCursor: edges[0]?.cursor ?? null,
+              endCursor: page.endCursor,
+            },
+          };
+        },
+      },
+      MessageConnectionRef,
+    ),
+  }),
+});
+
+const ConversationConnectionRef = builder.connectionObject(
+  { type: ConversationRef, name: 'ConversationConnection' },
+  { name: 'ConversationEdge' },
+);
+
+const MessagingRef = builder.objectRef<Messaging>('Messaging').implement({
+  description: 'What the viewer can do about messaging a player (chat R1–R4, R6).',
+  fields: (t) => ({
+    canMessage: t.exposeBoolean('canMessage'),
+    isRequest: t.exposeBoolean('isRequest', {
+      description: 'Sending is (or was) a message request, not an open chat.',
+    }),
+    conversationId: t.exposeID('conversationId', { nullable: true }),
+    blocked: t.exposeBoolean('blocked', { description: 'You have blocked this player.' }),
+    requestDeclined: t.exposeBoolean('requestDeclined', {
+      description: 'chat R10 — your message request to this player was declined.',
+    }),
+    canResendAt: t.field({
+      type: 'DateTime',
+      nullable: true,
+      description: 'chat R10 — when you may send a new request. Null when not declined.',
+      resolve: (m) => m.canResendAt,
+    }),
+  }),
+});
+
+builder.objectField(PlayerProfileRef, 'viewerMessaging', (t) =>
+  t.field({
+    type: MessagingRef,
+    nullable: true,
+    description: 'Null on your own profile and when signed out.',
+    resolve: (p, _args, ctx) => chat.messagingWith(ctx.actor?.userId ?? null, p.id),
+  }),
+);
+
+// --- payloads ----------------------------------------------------------------
+
+const SendMessagePayload = builder
+  .objectRef<{
+    conversation: ConversationView | null;
+    message: ChatMessageNode | null;
+    userError: UserErrorShape | null;
+  }>('SendMessagePayload')
+  .implement({
+    fields: (t) => ({
+      conversation: t.field({ type: ConversationRef, nullable: true, resolve: (p) => p.conversation }),
+      message: t.field({ type: MessageRef, nullable: true, resolve: (p) => p.message }),
+      userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
+    }),
+  });
+
+const ConversationPayload = builder
+  .objectRef<{ conversation: ConversationView | null; userError: UserErrorShape | null }>('ConversationPayload')
+  .implement({
+    fields: (t) => ({
+      conversation: t.field({
+        type: ConversationRef,
+        nullable: true,
+        description: 'Null after you decline: the request left your inbox.',
+        resolve: (p) => p.conversation,
+      }),
+      userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
+    }),
+  });
+
+const BlockPayload = builder
+  .objectRef<{ messaging: Messaging | null; userError: UserErrorShape | null }>('BlockPayload')
+  .implement({
+    fields: (t) => ({
+      messaging: t.field({ type: MessagingRef, nullable: true, resolve: (p) => p.messaging }),
+      userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
+    }),
+  });
+
+const SendMessageInput = builder.inputType('SendMessageInput', {
+  fields: (t) => ({
+    playerId: t.id({ required: true }),
+    body: t.string({ required: true }),
+  }),
+});
+
+// --- queries -----------------------------------------------------------------
+
+builder.queryFields((t) => ({
+  conversations: t.connection(
+    {
+      type: ConversationRef,
+      description: 'chat R3 — your chats and requests either way, newest activity first.',
+      resolve: async (_root, args, ctx) => {
+        if (args.last != null || args.before != null) {
+          throw new SystemError('BAD_USER_INPUT', 'conversations supports forward pagination only');
+        }
+        const actor = requireActor(ctx);
+        const page = await chat.list(actor.userId, {
+          first: clampFirst(args.first, 20),
+          after: args.after ?? null,
+        });
+        const edges = page.nodes.map((node, i) => ({ cursor: page.cursors[i] ?? '', node }));
+        return {
+          edges,
+          pageInfo: {
+            hasNextPage: page.hasNextPage,
+            hasPreviousPage: args.after != null,
+            startCursor: edges[0]?.cursor ?? null,
+            endCursor: page.endCursor,
+          },
+        };
+      },
+    },
+    ConversationConnectionRef,
+  ),
+
+  conversation: t.field({
+    type: ConversationRef,
+    nullable: true,
+    args: { id: t.arg.id({ required: true }) },
+    resolve: (_root, args, ctx) => chat.byId(requireActor(ctx).userId, args.id),
+  }),
+
+  unreadConversationCount: t.int({
+    description: 'chat R7 — conversations with something unread. The inbox badge.',
+    resolve: (_root, _args, ctx) => chat.unreadConversationCount(requireActor(ctx).userId),
+  }),
+}));
+
+// --- mutations ---------------------------------------------------------------
+
+builder.mutationFields((t) => ({
+  sendMessage: t.field({
+    type: SendMessagePayload,
+    description: 'Opens the conversation when there is none (chat R2, R3).',
+    args: { input: t.arg({ type: SendMessageInput, required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() =>
+        chat.send(actor, { playerId: args.input.playerId, body: args.input.body }),
+      );
+      return {
+        conversation: data?.conversation ?? null,
+        message: data ? { ...data.message, viewerId: data.conversation.viewerId } : null,
+        userError,
+      };
+    },
+  }),
+
+  acceptMessageRequest: t.field({
+    type: ConversationPayload,
+    args: { conversationId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() => chat.accept(actor, args.conversationId));
+      return { conversation: data, userError };
+    },
+  }),
+
+  declineMessageRequest: t.field({
+    type: ConversationPayload,
+    args: { conversationId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { userError } = await attempt(() => chat.decline(actor, args.conversationId));
+      return { conversation: null, userError };
+    },
+  }),
+
+  markConversationRead: t.field({
+    type: ConversationPayload,
+    args: { conversationId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() => chat.markRead(actor, args.conversationId));
+      return { conversation: data, userError };
+    },
+  }),
+
+  blockPlayer: t.field({
+    type: BlockPayload,
+    args: { playerId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { userError } = await attempt(() => chat.block(actor, args.playerId));
+      return { messaging: userError ? null : await chat.messagingWith(actor.userId, args.playerId), userError };
+    },
+  }),
+
+  unblockPlayer: t.field({
+    type: BlockPayload,
+    args: { playerId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { userError } = await attempt(() => chat.unblock(actor, args.playerId));
+      return { messaging: userError ? null : await chat.messagingWith(actor.userId, args.playerId), userError };
+    },
+  }),
+}));

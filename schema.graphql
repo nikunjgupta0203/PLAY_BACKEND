@@ -1,0 +1,3896 @@
+type Achievement {
+  earnedAt: DateTime!
+  eventId: ID
+  id: ID!
+  key: String!
+  sport: Sport
+}
+
+type AddOrganisationMemberPayload {
+  """Set instead of `member` when the address has no account yet."""
+  invite: OrganisationInvite
+  member: OrganisationMember
+  userError: UserError
+}
+
+type AdminClosedPayload {
+  closed: Int
+  userError: UserError
+}
+
+type AdminContactPayload {
+  email: String
+  phone: String
+  userError: UserError
+}
+
+type AdminEventPage {
+  hasNextPage: Boolean!
+  nodes: [Event!]!
+  total: Int!
+}
+
+"""portal — what is waiting on someone."""
+type AdminOverview {
+  accountsForReview: Int!
+  escalatedResults: Int!
+
+  """15-admin R8 — subjects over the review threshold."""
+  fraudCases: Int!
+
+  """15-admin R6 — reported people, reviews and messages waiting."""
+  moderationCases: Int!
+  openOrganisationInvites: Int!
+  openReports: Int!
+
+  """15-admin R7 — tickets waiting on support."""
+  openTickets: Int!
+  payoutsNeedingAttention: Int!
+  suspendedOrganisations: Int!
+}
+
+"""
+portal — a person, with contact details masked (15-admin R4). adminRevealContact shows them, audited.
+"""
+type AdminUser {
+  avatarUrl: String
+  createdAt: DateTime!
+  displayName: String!
+  emailMasked: String!
+
+  """Registrations they made, in any state."""
+  entriesCount: Int!
+
+  """Events they own, manage or score, newest first."""
+  hostedEvents: [Event!]!
+  id: ID!
+  isGuest: Boolean!
+  organisations: [OrganisationMembership!]!
+  phoneMasked: String
+  platformRole: String
+
+  """active | suspended | deleted"""
+  status: String!
+}
+
+type AdminUserPage {
+  hasNextPage: Boolean!
+  nodes: [AdminUser!]!
+}
+
+type AdminUserPayload {
+  user: AdminUser
+  userError: UserError
+}
+
+"""
+R13 — the manual override. The exclusion constraint on `court_assignments` is what keeps two matches off one court, not this input.
+"""
+input AssignCourtInput {
+  courtId: ID!
+
+  """Defaults to 45 minutes."""
+  endsAt: DateTime
+  matchId: ID!
+  startsAt: DateTime!
+}
+
+type AuditEntry {
+  action: String!
+  actorName: String!
+  actorUserId: ID!
+  createdAt: DateTime!
+
+  """JSON."""
+  details: String!
+  id: ID!
+
+  """
+  15-admin R2 — `succeeded`, or `pending`: the action started and its outcome is unknown (check the target).
+  """
+  outcome: String!
+  reason: String
+  targetId: String!
+  targetType: String!
+}
+
+type AuditPage {
+  hasNextPage: Boolean!
+  nodes: [AuditEntry!]!
+}
+
+enum AuthClient {
+  APP
+  PORTAL
+}
+
+"""
+Derived, never stored (events R4). CLOSED wins over FULL: past the registration deadline the seats are no longer for sale either way.
+"""
+enum Availability {
+  ALMOST_FULL
+  CLOSED
+  FULL
+  OPEN
+}
+
+"""Named Cloudinary transformations (ADR 0003 §C1). Not free-form sizes."""
+enum AvatarSize {
+  lg
+  md
+  sm
+}
+
+"""
+A short-lived signature for a direct-to-Cloudinary upload (ADR 0003 §C2). Send the resulting public_id back through setAvatar.
+"""
+type AvatarUpload {
+  apiKey: String!
+  cloudName: String!
+  expiresAt: DateTime!
+  folder: String!
+  publicId: String!
+  signature: String!
+  timestamp: Int!
+  uploadPreset: String!
+  uploadUrl: String!
+}
+
+type AvatarUploadPayload {
+  upload: AvatarUpload
+  userError: UserError
+}
+
+"""Plan 4 — what kind of extra a delivery was. Absent for a fair ball."""
+enum BallExtra {
+  BYE
+  LEG_BYE
+  NO_BALL
+  WIDE
+}
+
+input BeginRegistrationInput {
+  eventCategoryId: ID!
+}
+
+type BlockPayload {
+  messaging: Messaging
+  userError: UserError
+}
+
+"""BOUTS only."""
+type Bout {
+  """Judged bouts: every round’s cards."""
+  cards: [RoundCards!]!
+  margin: String
+  method: String
+  penalties: GameScore!
+
+  """1-based; one past the last once the bout is over."""
+  round: Int!
+  roundsWon: GameScore!
+
+  """Karate: the first unopposed point."""
+  senshu: MatchSide
+}
+
+"""One column of the bracket. `name` is derived on read, never stored."""
+type BracketRound {
+  bracket: BracketType!
+  matches: [Match!]!
+
+  """"Final", "Semi-final", "Round of 16"."""
+  name: String!
+  round: Int!
+}
+
+"""
+Every draw is a Championship and a Plate. A first-round loser is not out of the tournament — they are in the other half of it (tournament R5).
+"""
+enum BracketType {
+  CHAMPIONSHIP
+
+  """A group-stage match; see Match.group."""
+  GROUP
+
+  """Everyone plays everyone; a table decides."""
+  LEAGUE
+  PLATE
+
+  """F23 — the semi-final losers play for third."""
+  THIRD_PLACE
+}
+
+type CancelCourtBookingPayload {
+  booking: CourtBooking
+  refundPaise: Int
+  userError: UserError
+}
+
+"""events R5 — `held` is live seat holds. They count against capacity."""
+type Capacity {
+  capacity: Int!
+  held: Int!
+  remaining: Int!
+  taken: Int!
+}
+
+type CategoryAnalytics {
+  """Started but never paid (hold expired or payment failed)."""
+  abandoned: Int!
+
+  """Entries started, whatever became of them."""
+  begun: Int!
+  capacity: Int!
+  categoryId: ID!
+  checkedIn: Int!
+  confirmed: Int!
+  name: String!
+
+  """Walk-ins and cash entries the desk added."""
+  offline: Int!
+
+  """Entries paid through PL4Y — the ones a host payout is made of."""
+  onlinePaid: Int!
+  waitlisted: Int!
+  withdrawn: Int!
+}
+
+type CheckoutField {
+  key: String!
+  value: String!
+}
+
+"""
+POST these fields, unchanged, to `action`. Signed by the server; the client never computes or checks a hash.
+"""
+type CheckoutForm {
+  action: String!
+  fields: [CheckoutField!]!
+}
+
+type Conversation {
+  """
+  chat R10 — when you may send a new request after a decline. Null otherwise.
+  """
+  canResendAt: DateTime
+  canSend: Boolean!
+  id: ID!
+
+  """You are being asked. Accept, decline, or reply (which accepts)."""
+  isIncomingRequest: Boolean!
+  lastMessage: Message
+  lastMessageAt: DateTime
+
+  """Newest first. Forward pagination only."""
+  messages(after: String, before: String, first: Int, last: Int): MessageConnection!
+  other: PlayerProfile
+  status: ConversationStatus!
+  unreadCount: Int!
+}
+
+type ConversationConnection {
+  edges: [ConversationEdge!]!
+  pageInfo: PageInfo!
+}
+
+type ConversationEdge {
+  cursor: String!
+  node: Conversation!
+}
+
+type ConversationPayload {
+  """Null after you decline: the request left your inbox."""
+  conversation: Conversation
+  userError: UserError
+}
+
+"""
+chat R3 — a request becomes active when the other player accepts or replies. DECLINED is only ever shown to the sender (chat R10).
+"""
+enum ConversationStatus {
+  ACTIVE
+  DECLINED
+  REQUEST
+}
+
+"""
+One playing surface. A court belongs to exactly one venue and may serve several sports (venues R2).
+"""
+type Court {
+  active: Boolean!
+  id: ID!
+  indoor: Boolean!
+  kind: PlayingAreaKind!
+
+  """
+  "Court 3"
+  """
+  name: String!
+  sports: [Sport!]!
+  surface: String
+}
+
+"""
+tournament R13 — the schedule is advisory. SCHEDULER produced it; ORGANIZER means a human moved it, which happens all day.
+"""
+enum CourtAssignedBy {
+  ORGANIZER
+  SCHEDULER
+}
+
+type CourtAssignment {
+  assignedBy: CourtAssignedBy!
+  court: Court
+  endsAt: DateTime
+  match: Match!
+  startsAt: DateTime!
+}
+
+type CourtAvailabilityRule {
+  closesMinute: Int!
+  courtId: ID!
+
+  """Minutes after local midnight."""
+  opensMinute: Int!
+  pricePerHourPaise: Int!
+
+  """0 = Monday … 6 = Sunday."""
+  weekday: Int!
+}
+
+type CourtBlackout {
+  """Null: the whole venue."""
+  courtId: ID
+  endsAt: DateTime!
+  id: ID!
+  kind: String!
+  note: String
+  startsAt: DateTime!
+}
+
+input CourtBlackoutInput {
+  courtId: ID
+  endsAt: DateTime!
+  kind: CourtBlackoutKind!
+  note: String
+  startsAt: DateTime!
+  venueId: ID!
+}
+
+enum CourtBlackoutKind {
+  EVENT
+  HOLIDAY
+  MAINTENANCE
+  PRIVATE
+}
+
+type CourtBooking {
+  """R5 — the frozen total."""
+  amountPaise: Int!
+
+  """Desk only: who the court is booked under."""
+  bookedBy: String
+  cancelledAt: DateTime
+  checkedInAt: DateTime
+  court: Court!
+  courtPaise: Int!
+  endsAt: DateTime!
+  holdExpiresAt: DateTime
+  id: ID!
+
+  """online | offline | comp"""
+  paymentMode: String!
+  platformFeePaise: Int!
+
+  """app R11 — what the desk scans: the booking id, prefixed."""
+  qrPayload: String!
+  startsAt: DateTime!
+  status: CourtBookingStatus!
+  taxPaise: Int!
+  venue: Venue!
+  walkIn: Boolean!
+  walkInPhone: String
+}
+
+"""
+app R10 — what cancelling now gives back, computed on the server, before the player confirms.
+"""
+type CourtBookingCancelPreview {
+  refundPaise: Int!
+  shareBps: Int!
+}
+
+type CourtBookingPayload {
+  booking: CourtBooking
+  userError: UserError
+}
+
+enum CourtBookingStatus {
+  CANCELLED
+  CHECKED_IN
+  COMPLETED
+  CONFIRMED
+  EXPIRED
+  HELD
+  NO_SHOW
+  PAYMENT_FAILED
+}
+
+input CourtInput {
+  indoor: Boolean
+  kind: PlayingAreaKind
+  name: String!
+  sportIds: [ID!]
+  surface: String
+}
+
+type CourtPayload {
+  court: Court
+  userError: UserError
+}
+
+input CourtRuleInput {
+  closesMinute: Int!
+  opensMinute: Int!
+  pricePerHourPaise: Int!
+  weekday: Int!
+}
+
+"""
+bookings R4 — derived on the server. Available or not; never why (app R2).
+"""
+type CourtSlot {
+  available: Boolean!
+  court: Court!
+  courtId: ID!
+  endsAt: DateTime!
+
+  """R5 — the court price for this slot."""
+  pricePaise: Int!
+  startsAt: DateTime!
+}
+
+input CreateEventInput {
+  acceptHostTerms: Boolean
+  cancellationCutoffAt: DateTime
+
+  """Ignored when `venueId` is given — the venue decides."""
+  city: String
+
+  """A 10-digit Indian mobile; +91 allowed."""
+  contactPhone: String
+  description: String
+  endsAt: DateTime!
+  location: GeoPointInput
+  locationNote: String
+
+  """
+  org R3 — host as this organisation (you must be a member). Absent: host as yourself.
+  """
+  organisationId: ID
+  refundPolicy: RefundPolicy
+  registrationClosesAt: DateTime!
+  sportId: ID!
+  startsAt: DateTime!
+  timezone: String
+  title: String!
+  venueId: ID
+}
+
+input CreateOrganisationInput {
+  bio: String
+  city: String
+  contactEmail: String
+  contactPhone: String
+  name: String!
+
+  """Becomes the owner, or is emailed an invite."""
+  ownerEmail: String!
+}
+
+type CreateOrganisationPayload {
+  organisation: Organisation
+
+  """The owner had no account, so they were emailed an invite."""
+  ownerInvited: Boolean!
+  userError: UserError
+}
+
+type CreatePaymentOrderPayload {
+  amountPaise: Int
+  checkoutForm: CheckoutForm
+  gatewayOrderId: String
+  quote: PriceQuote
+  userError: UserError
+}
+
+input CreateVenueInput {
+  address: String!
+  amenities: [String!]
+  city: String!
+  courts: [CourtInput!]
+  location: GeoPointInput!
+  name: String!
+
+  """Cloudinary public_ids, never URLs (ADR 0003 §C3)."""
+  photoPublicIds: [String!]
+}
+
+"""An ISO-8601 timestamp in UTC."""
+scalar DateTime
+
+"""
+R10 — non-entity screens. Closed: a new route is a reviewed schema change.
+"""
+enum DeepLinkRoute {
+  CONVERSATION
+  COURT_BOOKING
+  ORGANISATION
+  ORGANIZER_DASHBOARD
+  ORGANIZER_PAYOUTS
+  PAYMENT_HISTORY
+  SUPPORT_TICKET
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+"""Plan 4 — how a batter was out off a delivery."""
+enum Dismissal {
+  BOWLED
+  CAUGHT
+  HIT_WICKET
+  LBW
+  OTHER
+  RUN_OUT
+  STUMPED
+}
+
+input DisputeMatchResultInput {
+  matchId: ID!
+  reason: String!
+}
+
+"""F1 — the draw as it would be made now. Nothing is written."""
+type DrawPreview {
+  bracketSize: Int!
+  drawType: String!
+  firstRound: [DrawPreviewPair!]!
+
+  """A league is one group; a group stage one per group."""
+  groups: [DrawPreviewGroup!]!
+
+  """Matches in the whole draw, byes excluded."""
+  matchCount: Int!
+  plateSize: Int!
+  seeds: [DrawPreviewSeed!]!
+}
+
+type DrawPreviewGroup {
+  entries: [Registration!]!
+}
+
+type DrawPreviewPair {
+  """Null is a bye."""
+  sideA: Registration
+  sideB: Registration
+}
+
+type DrawPreviewSeed {
+  registration: Registration
+  registrationId: ID!
+  seed: Int!
+}
+
+type Event implements Node {
+  """A cancellation before this instant is refunded in full."""
+  cancellationCutoffAt: DateTime
+  categories: [EventCategory!]!
+  city: String!
+
+  """The host's number. Null unless the viewer is staff or holds a seat."""
+  contactPhone: String
+
+  """F14 — courts the host declared for this event."""
+  courts: [EventCourt!]!
+  coverUrl: String
+  description: String
+  endsAt: DateTime!
+  galleryUrls: [String!]!
+  hostTermsAccepted: Boolean!
+  id: ID!
+  kind: EventKind!
+
+  """
+  What is on court right now, across every draw in this event. This is the Live Mode screen.
+  """
+  liveMatches: [Match!]!
+
+  """F17 — the event’s pin, else its venue’s. Null when neither is known."""
+  location: GeoPoint
+  locationNote: String
+  nodeId: ID!
+  organizer: OrganizerSummary!
+  payout: Payout
+  refundPolicy: RefundPolicy!
+  registrationClosesAt: DateTime!
+
+  """
+  Permanent once published — it is a deep link that outlives us (events R8).
+  """
+  slug: String!
+  sport: Sport!
+  startsAt: DateTime!
+  status: EventStatus!
+
+  """
+  F18 — when the place or dates last changed after people entered. Entrants may withdraw in full for 48 hours.
+  """
+  termsChangedAt: DateTime
+
+  """
+  Times are UTC; this is how "Saturday 9am" survives a multi-zone future.
+  """
+  timezone: String!
+  title: String!
+  venue: Venue
+
+  """True when the viewer is owner or manager of this event."""
+  viewerIsHost: Boolean!
+
+  """F3 — what the viewer reported about this event, if anything."""
+  viewerReport: EventReport
+
+  """owner | manager | scorer — the viewer’s grant on this event, or null."""
+  viewerRole: String
+}
+
+"""14-organizers — how an event did. Money from the ledger (payments R6)."""
+type EventAnalytics {
+  asOf: DateTime!
+  begun: Int!
+  byCategory: [CategoryAnalytics!]!
+  capacity: Int!
+  checkedIn: Int!
+  confirmed: Int!
+  eventId: ID!
+
+  """confirmed / capacity, 0 to 1."""
+  fillRate: Float!
+  grossPaise: Int!
+
+  """Paid less refunded."""
+  netPaise: Int!
+
+  """
+  Confirmed but never checked in, counted once the event has finished. Not proof they did not play: shown as "not checked in".
+  """
+  noShows: Int!
+  offline: Int!
+  platformFeePaise: Int!
+  refundedPaise: Int!
+  refunds: Int!
+  slug: String!
+  startsAt: DateTime!
+  status: String!
+  title: String!
+  withdrawn: Int!
+}
+
+"""
+What a player actually registers for. Capacity, fee and format live here and not on the event, because one tournament sells eight draws at eight prices.
+"""
+type EventCategory {
+  availability: Availability!
+  capacity: Int!
+  capacityDetail: Capacity!
+
+  """The platform's share of the entry fee, server-set. 1000 = 10%."""
+  commissionBps: Int!
+  drawType: String!
+
+  """Subtracts live holds as well as confirmed entries (events R5)."""
+  entriesRemaining: Int!
+  format: Format!
+
+  """
+  F21 — how a match is played, in a few words ("1 game to 21", "best of 3 sets", "2 × 20 min"). Null when the rule has no short form.
+  """
+  formatSummary: String
+
+  """What the host keeps per entry: the entry fee less the commission."""
+  hostReceivesPaise: Int!
+  id: ID!
+
+  """F14 — how long one match takes, for the schedule. Null = 45."""
+  matchMinutes: Int
+
+  """
+  Below this at registration close, the draw is cancelled and refunded (events R9).
+  """
+  minEntries: Int!
+
+  """
+  "Men’s Doubles 3.5"
+  """
+  name: String!
+  priceQuote: PriceQuote!
+
+  """F24"""
+  prizes: String
+
+  """F24 — the host’s format notes."""
+  rulesNote: String
+  skillMax: Float
+  skillMin: Float
+  status: String!
+  teamSize: Int!
+
+  """F23 — a knockout without a Plate plays a match for third place."""
+  thirdPlace: Boolean!
+
+  """Null until an organizer generates the draw."""
+  tournament: Tournament
+}
+
+input EventCategoryInput {
+  ageMax: Int
+  ageMin: Int
+  capacity: Int!
+  drawType: String
+  entryFeePaise: Int!
+
+  """A `Format.key` for this event’s sport."""
+  format: String!
+  matchMinutes: Int
+  minEntries: Int
+  name: String!
+  prizes: String
+  rulesNote: String
+  skillMax: Float
+  skillMin: Float
+  thirdPlace: Boolean
+  tweaks: RuleTweaksInput
+}
+
+type EventCategoryPayload {
+  category: EventCategory
+  userError: UserError
+}
+
+type EventConnection {
+  edges: [EventEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""F14 — a court the host declared for this event."""
+type EventCourt {
+  id: ID!
+  name: String!
+}
+
+type EventCourtPayload {
+  court: EventCourt
+  userError: UserError
+}
+
+type EventEdge {
+  cursor: String!
+  node: Event!
+}
+
+input EventFilter {
+  city: String
+
+  """A `Format.key`."""
+  format: String
+  from: DateTime
+  kind: EventKind
+  maxPricePaise: Int
+  near: GeoPointInput
+
+  """
+  discovery R1 — free text, matched against the title and the venue name.
+  """
+  query: String
+
+  """Capped at 50 (events R6)."""
+  radiusKm: Float
+
+  """A `SkillBand.key`. Needs `sportId` to mean anything."""
+  skillBand: String
+  sportId: ID
+  to: DateTime
+}
+
+"""Organizer permission is a grant on one event, not a global role."""
+type EventGrant {
+  eventId: ID!
+  role: String!
+  userId: ID!
+}
+
+"""
+events R11 — what discovery calls tournaments and what it calls leagues.
+"""
+enum EventKind {
+  LEAGUE_SEASON
+  TOURNAMENT
+}
+
+enum EventMediaKind {
+  COVER
+  GALLERY
+  SPONSOR
+}
+
+type EventPayload {
+  event: Event
+  userError: UserError
+}
+
+"""F3 — a player’s report that the event did not happen as promised."""
+type EventReport {
+  createdAt: DateTime!
+  details: String
+  event: Event
+  eventId: ID!
+  id: ID!
+  reason: EventReportReason!
+  reporterName: String!
+  resolutionNote: String
+  resolvedAt: DateTime
+  status: EventReportStatus!
+}
+
+type EventReportPayload {
+  report: EventReport
+  userError: UserError
+}
+
+enum EventReportReason {
+  DID_NOT_HAPPEN
+  DIFFERENT_FROM_LISTING
+  HOST_CONDUCT
+  OTHER
+  UNFAIR_RESULTS
+}
+
+enum EventReportStatus {
+  DISMISSED
+  OPEN
+  RESOLVED
+}
+
+"""Somebody who helps run the event. `role` is owner, manager or scorer."""
+type EventStaffMember {
+  displayName: String!
+  role: String!
+  userId: ID!
+}
+
+type EventStaffPayload {
+  member: EventStaffMember
+  userError: UserError
+}
+
+enum EventStaffRole {
+  MANAGER
+  SCORER
+}
+
+"""
+LIVE is what flips the Event Detail screen into Live Mode. Live Mode is a state, not a separate route.
+"""
+enum EventStatus {
+  CANCELLED
+  COMPLETED
+  DRAFT
+  LIVE
+  PUBLISHED
+}
+
+type FieldAttempt {
+  lift: String
+  valid: Boolean!
+
+  """Null for a pass."""
+  value: Float
+}
+
+"""
+Plans 7, 8 — whether a category is run as heats, what the viewer may do, and its heats.
+"""
+type FieldCategory {
+  heats: [Heat!]!
+  isField: Boolean!
+
+  """May open a heat (owner or manager)."""
+  viewerCanManage: Boolean!
+  viewerCanScore: Boolean!
+}
+
+"""Everything recorded for one entrant in a heat."""
+type FieldEntryRecord {
+  attempts: [FieldAttempt!]!
+
+  """Golf strokes per hole, bowling rolls, or arrows (X = 11)."""
+  card: [Int!]!
+  judgeScores: [Float!]
+  marks: [Float!]!
+  placements: [FieldPlacement!]!
+}
+
+enum FieldEventType {
+  """`value` (null for a pass), `valid`, and `lift` where there are lifts."""
+  ATTEMPT
+
+  """`values` — a golf hole, bowling rolls, or an end of arrows (X = 11)."""
+  CARD
+
+  """The standings are final."""
+  CLOSE
+
+  """`scores` — one per judge."""
+  JUDGE_SCORES
+
+  """`value` — a time, a distance, a rep count."""
+  MARK
+
+  """`place` and `kills` for one battle-royale match."""
+  PLACEMENT
+
+  """`code` — DNS, DNF or DQ."""
+  STATUS
+}
+
+type FieldPlacement {
+  kills: Int!
+  place: Int!
+}
+
+type FinishFieldCategoryPayload {
+  ok: Boolean!
+  userError: UserError
+}
+
+"""A way a sport is played. Its team size drives registration."""
+type Format {
+  id: ID!
+
+  """singles | doubles | mixed_doubles | team"""
+  key: String!
+  name: String!
+
+  """
+  F21 — the default rule for this format, as JSON, so a host sees what they are changing.
+  """
+  ruleDefinition: String!
+
+  """
+  F21 — how this format is scored: rally | sets | goals | innings | series | bouts | performance | scorecard. Decides which numbers a host may change (RuleTweaksInput).
+  """
+  ruleKind: String!
+  teamSize: Int!
+}
+
+"""
+admin R8 — open signals on one subject. Nothing here is a punishment; a person decides.
+"""
+type FraudCase {
+  """At or over the review threshold."""
+  isCase: Boolean!
+  latestAt: DateTime!
+  score: Int!
+  signals: [FraudSignal!]!
+  subjectId: ID!
+  subjectName: String
+  subjectType: FraudSubject!
+}
+
+type FraudCasePage {
+  hasNextPage: Boolean!
+  nodes: [FraudCase!]!
+}
+
+type FraudSignal {
+  createdAt: DateTime!
+  detector: String!
+
+  """JSON."""
+  evidence: String!
+  id: ID!
+  outcome: String
+  reviewedAt: DateTime
+  score: Int!
+}
+
+enum FraudSubject {
+  DEVICE
+  ORGANISATION
+  USER
+  VENUE
+}
+
+type GameScore {
+  a: Int!
+  b: Int!
+}
+
+input GameScoreInput {
+  a: Int!
+  b: Int!
+}
+
+input GenerateDrawInput {
+  eventCategoryId: ID!
+
+  """
+  F1 — the host seeding: every confirmed entry registration id, once, seed 1 first. Absent: seeded by rating.
+  """
+  seedOrder: [ID!]
+}
+
+type GenerateDrawPayload {
+  tournament: Tournament
+  userError: UserError
+}
+
+"""WGS-84 latitude and longitude."""
+type GeoPoint {
+  lat: Float!
+  lng: Float!
+}
+
+"""A map centre. Paired with `radiusKm`, which is capped at 50."""
+input GeoPointInput {
+  lat: Float!
+  lng: Float!
+}
+
+"""
+Plans 7, 8 — a field contest: many entrants, ranked by the sport’s rule.
+"""
+type Heat {
+  """Registration ids in running order: lane, bib, flight or tee time."""
+  entryOrder: [ID!]!
+  id: ID!
+  name: String!
+
+  """1 for the first heats; the last round is the final."""
+  round: Int!
+
+  """The rule document as JSON."""
+  ruleDefinition: String!
+
+  """performance | scorecard"""
+  ruleKind: String!
+
+  """The expectedSeq the next write must carry (scoring R1)."""
+  seq: Int!
+
+  """Best first; entrants with no result, then DNS/DNF/DQ, last."""
+  standings: [HeatStanding!]!
+
+  """live | closed"""
+  status: String!
+
+  """Any staff grant on the event may record into a heat."""
+  viewerCanScore: Boolean!
+}
+
+type HeatPayload {
+  """The heat as the server now has it — on failure too."""
+  heat: Heat
+  userError: UserError
+}
+
+type HeatStanding {
+  """How the value reads: "−1 thru 2", "220"."""
+  display: String
+
+  """
+  Shared by entrants level on every criterion. Null: no result yet, or DNS/DNF/DQ.
+  """
+  place: Int
+  record: FieldEntryRecord!
+  registration: Registration
+  registrationId: ID!
+
+  """active | DNS | DNF | DQ"""
+  status: String!
+  value: Float
+}
+
+type HeatsPayload {
+  heats: [Heat!]!
+  userError: UserError
+}
+
+input HoldCourtBookingInput {
+  courtId: ID!
+  endsAt: DateTime!
+  startsAt: DateTime!
+}
+
+"""home R4 — one confirmed or checked-in entry, with its event."""
+type HomeEntry {
+  event: Event!
+  registration: Registration!
+}
+
+"""
+Every region of the Home screen, in its fixed order. A region with nothing in it is null or empty, and the client removes it from the layout (home R1).
+"""
+type HomeFeed {
+  """The city the feed was built for: the argument, else the profile's."""
+  city: String
+
+  """
+  Published events in the city, soonest first, excluding ones already entered.
+  """
+  featured: [Event!]!
+
+  """home R6 — the viewer has never entered an event."""
+  firstRun: Boolean!
+  hero: HomeHero
+
+  """home R5 — LIVE events the viewer has an entry in."""
+  liveNow: [Event!]!
+
+  """home R7 — null until the viewer has played a match in the sport."""
+  stats: StatsSnapshot
+
+  """
+  home R4 — confirmed entries, soonest first, excluding the hero and live ones.
+  """
+  upcoming: [HomeEntry!]!
+}
+
+"""
+home R3 — the viewer's next confirmed entry, or when there is none the city's headline event. `registration` is null for the headline case.
+"""
+type HomeHero {
+  event: Event!
+  registration: Registration
+}
+
+"""hosting R3 — one thing waiting on the host, on one event."""
+type HostingNeedsYouItem {
+  count: Int!
+  detail: String
+  eventId: ID!
+  eventSlug: String!
+  eventTitle: String!
+  kind: HostingNeedsYouKind!
+}
+
+enum HostingNeedsYouKind {
+  DISPUTE
+  DRAW
+  RESULT
+  SHORT
+}
+
+"""INNINGS only — every innings so far, the current one last."""
+type Innings {
+  """The next legal ball is a free hit: only a run out dismisses."""
+  freeHit: Boolean!
+  list: [InningsRecord!]!
+
+  """main | super_over"""
+  phase: String!
+}
+
+type InningsRecord {
+  """Legal deliveries. Overs are balls ÷ the rule’s ballsPerOver."""
+  balls: Int!
+  batting: MatchSide!
+  extras: Int!
+  maxBalls: Int!
+  maxWickets: Int!
+  runs: Int!
+
+  """Runs needed to win, for a chasing innings."""
+  target: Int
+  wickets: Int!
+}
+
+"""
+registration R12 — prefer `playerId` (a PlayerProfile id, straight from in-app search). `playerUserId` is kept for callers that already hold a user id. `email` is the fallback for a partner with no account, and it is the friction most likely to cost a doubles entry.
+"""
+input InvitePartnerInput {
+  email: String
+  playerId: ID
+  playerUserId: ID
+  registrationId: ID!
+}
+
+type InvitePartnerPayload {
+  invite: PartnerInvite
+  userError: UserError
+}
+
+"""
+A league table, or one group of a group stage. Ties: points, then score difference, then score for, then the matches between those still level, then the seeding.
+"""
+type LeagueGroup {
+  """Null for a league; 1, 2, … for a group."""
+  group: Int
+
+  """Places 1 to this go through to the knockout. 0 in a league."""
+  qualify: Int!
+  table: [LeagueRow!]!
+}
+
+"""One line of a league or group table: 3 points a win, 1 a draw."""
+type LeagueRow {
+  drawn: Int!
+  lost: Int!
+  place: Int!
+  played: Int!
+  points: Int!
+  registration: Registration
+  registrationId: ID!
+  scoreAgainst: Int!
+
+  """Goals, runs, points — whatever the scoreline counts."""
+  scoreFor: Int!
+  won: Int!
+}
+
+"""
+payments R6 — one row per money movement. Signed: credits positive, debits negative. This, not the payments table, is what reconciles against a gateway settlement report.
+"""
+type LedgerEntry {
+  amountPaise: Int!
+  createdAt: DateTime!
+  kind: String!
+}
+
+type ManagedVenue {
+  role: VenueRole!
+  venue: Venue!
+}
+
+type MarkReadPayload {
+  unreadCount: Int!
+  userError: UserError
+}
+
+type Match implements Node {
+  bracket: BracketType!
+  completedAt: DateTime
+  court: Court
+
+  """Null until the match is started."""
+  currentScore: ScoreState
+
+  """Which group, from 1 — group-stage matches only."""
+  group: Int
+  id: ID!
+  nodeId: ID!
+
+  """Null until a result is submitted."""
+  result: MatchResult
+
+  """A knockout round, or a league or group matchday."""
+  round: Int!
+
+  """Advisory (tournament R13). Organizers move matches by hand."""
+  scheduledAt: DateTime
+
+  """
+  Optimistic-concurrency handle for live scoring (scoring R1). Clients send it back with every point.
+  """
+  scoreSeq: Int!
+  scoringRule: ScoringRule!
+
+  """
+  Null while the feeding match is still being played — or forever, on a bye.
+  """
+  sideA: Registration
+  sideB: Registration
+
+  """0-based, top of the bracket first."""
+  slot: Int!
+  status: MatchStatus!
+
+  """
+  Side A’s total on the scoreline (goals, runs, points) once a result is confirmed; what a table counts.
+  """
+  tallyA: Int
+  tallyB: Int
+
+  """A staff grant on the event, or a place in this match."""
+  viewerCanScore: Boolean!
+
+  """The side the viewer plays on, if they play in this match."""
+  viewerSide: MatchSide
+
+  """
+  Who came out of this match. `scoring` records how it was won; this is the bracket’s own record that it was, because a final advances nobody.
+  """
+  winner: Registration
+}
+
+type MatchHistoryConnection {
+  edges: [MatchHistoryEdge!]!
+  pageInfo: PageInfo!
+}
+
+type MatchHistoryEdge {
+  cursor: String!
+  node: MatchResultSummary!
+}
+
+enum MatchHistoryOutcome {
+  FORFEIT
+  PLAYED
+  RETIRED
+  WALKOVER
+}
+
+"""
+scoring R10 — only PLAYED carries a point log, and only PLAYED moves a rating (rating R7).
+"""
+enum MatchOutcome {
+  FORFEIT
+  PLAYED
+  RETIRED
+  WALKOVER
+}
+
+type MatchPayload {
+  match: Match
+  userError: UserError
+}
+
+"""
+HOW a match was won. It advances the bracket only once confirmed — by the other side, by a scorer who scored it, by an organizer 15 minutes later, or by itself at autoConfirmAt (scoring R6, R11, R12).
+"""
+type MatchResult {
+  """
+  When it confirms itself if nobody disputes it (R11). Null: a person must confirm it.
+  """
+  autoConfirmAt: DateTime
+  confirmedAt: DateTime
+  confirmedVia: ResultConfirmation
+  disputeReason: String
+  disputedAt: DateTime
+
+  """Empty for a walkover (R10)."""
+  games: [GameScore!]!
+
+  """A league or group match that ended level."""
+  isDraw: Boolean!
+
+  """
+  Qualifies the method — the shootout tally "4–3". Null without a method.
+  """
+  margin: String
+
+  """
+  How it was won beyond the scoreline: "shootout" today. Null for a win in normal play.
+  """
+  method: String
+  outcome: MatchOutcome!
+
+  """When an organizer may confirm on the other side’s behalf (R6)."""
+  overrideOpensAt: DateTime!
+  source: ResultSource!
+  submittedAt: DateTime!
+  viewerCanConfirm: Boolean!
+  viewerCanDispute: Boolean!
+
+  """Null for a draw."""
+  winner: Registration
+}
+
+type MatchResultPayload {
+  match: Match
+  result: MatchResult
+  userError: UserError
+}
+
+"""
+profile R12 — one completed match from one player's side. Part of the competitive record, so it is visible on every profile (R5).
+"""
+type MatchResultSummary {
+  completedAt: DateTime!
+  event: Event
+
+  """Empty for a walkover."""
+  games: [PlayerGameScore!]!
+  matchId: ID!
+  opponents: [PlayerProfile!]!
+  outcome: MatchHistoryOutcome!
+  partners: [PlayerProfile!]!
+  sport: Sport!
+  won: Boolean!
+}
+
+"""A is `Match.sideA`, B is `Match.sideB`."""
+enum MatchSide {
+  A
+  B
+}
+
+"""
+WALKOVER is a result, not an absence: a bye is a real match row with one side (tournament R3). VOID is a Plate position nobody could ever reach.
+"""
+enum MatchStatus {
+  AWAITING_CONFIRM
+  COMPLETED
+  LIVE
+  READY
+  SCHEDULED
+  VOID
+  WALKOVER
+}
+
+"""
+A short-lived signature for a direct-to-Cloudinary upload (ADR 0003 §C2). Send the resulting public_id back through the matching add mutation.
+"""
+type MediaUpload {
+  apiKey: String!
+  cloudName: String!
+  expiresAt: DateTime!
+  folder: String!
+  publicId: String!
+  signature: String!
+  timestamp: Int!
+  uploadPreset: String!
+  uploadUrl: String!
+}
+
+type MediaUploadPayload {
+  upload: MediaUpload
+  userError: UserError
+}
+
+"""
+chat R9 — append-only. `body` is the sender’s own words: render as text, never markup.
+"""
+type Message {
+  body: String!
+  fromViewer: Boolean!
+  id: ID!
+  sentAt: DateTime!
+}
+
+type MessageConnection {
+  edges: [MessageEdge!]!
+  pageInfo: PageInfo!
+}
+
+type MessageEdge {
+  cursor: String!
+  node: Message!
+}
+
+type MessageEventPlayersPayload {
+  ok: Boolean!
+  userError: UserError
+}
+
+"""What the viewer can do about messaging a player (chat R1–R4, R6)."""
+type Messaging {
+  """You have blocked this player."""
+  blocked: Boolean!
+  canMessage: Boolean!
+
+  """chat R10 — when you may send a new request. Null when not declined."""
+  canResendAt: DateTime
+  conversationId: ID
+
+  """Sending is (or was) a message request, not an open chat."""
+  isRequest: Boolean!
+
+  """chat R10 — your message request to this player was declined."""
+  requestDeclined: Boolean!
+}
+
+type ModerationCase {
+  firstReportedAt: DateTime!
+  reporterCount: Int!
+  reports: [ModerationReport!]!
+  target: ModerationTargetSummary!
+  targetId: ID!
+  targetType: ReportTarget!
+}
+
+type ModerationPage {
+  hasNextPage: Boolean!
+  nodes: [ModerationCase!]!
+}
+
+type ModerationReport {
+  createdAt: DateTime!
+  id: ID!
+  note: String
+  reason: ReportReason!
+  reporterName: String!
+  resolution: String
+  resolvedAt: DateTime
+  status: ModerationStatus!
+  targetId: ID!
+  targetType: ReportTarget!
+}
+
+enum ModerationStatus {
+  ACTIONED
+  DISMISSED
+  OPEN
+}
+
+type ModerationTargetSummary {
+  authorName: String
+  authorUserId: ID
+  body: String
+
+  """R6 — hidden by reports or a moderator."""
+  hidden: Boolean!
+  portalPath: String
+  title: String!
+}
+
+type Mutation {
+  acceptMessageRequest(conversationId: ID!): ConversationPayload!
+
+  """
+  Where the team becomes real, and therefore where a seat is taken — or, when the draw filled meanwhile, where the team joins the waitlist (R17).
+  """
+  acceptPartnerInvite(token: String!): RegistrationPayload!
+  addCourt(input: CourtInput!, venueId: ID!): CourtPayload!
+  addCourtBlackout(input: CourtBlackoutInput!): VenueBookingSetupPayload!
+  addEventCategory(eventId: ID!, input: EventCategoryInput!): EventCategoryPayload!
+
+  """
+  F14 — a court the host has for this event ("Court 1"). The scheduler uses these first.
+  """
+  addEventCourt(eventId: ID!, name: String!): EventCourtPayload!
+
+  """A Cloudinary public_id, never a URL (ADR 0003 §C3)."""
+  addEventMedia(eventId: ID!, kind: EventMediaKind!, publicId: String!, sortOrder: Int): EventPayload!
+
+  """
+  Adds a helper to the event by their account email. The owner adds managers and scorers; a manager adds scorers. Scorers can check players in and score matches.
+  """
+  addEventStaff(email: String!, eventId: ID!, role: EventStaffRole!): EventStaffPayload!
+
+  """
+  Owner or manager. Seats a player who paid at the desk (OFFLINE) or plays free (COMP), until the draw is made. F20 — by account email, or by name with no account (a guest); a doubles walk-in names both players. No money moves through PL4Y for it.
+  """
+  addOfflineRegistration(email: String, eventCategoryId: ID!, guestName: String, mode: PaymentMode!, partnerEmail: String, partnerName: String): RegistrationPayload!
+
+  """
+  The owner adds admins and members; an admin adds members. No account yet: they are emailed an invite.
+  """
+  addOrganisationMember(email: String!, organisationId: ID!, role: OrganisationAddableRole!): AddOrganisationMemberPayload!
+  addVenuePhoto(
+    """Never a URL (ADR 0003 §C3)."""
+    publicId: String!
+    venueId: ID!
+  ): VenuePayload!
+  adminAddOrganisationMember(email: String!, organisationId: ID!, reason: String!, role: OrganisationAddableRole!): AddOrganisationMemberPayload!
+
+  """Take a ticket (assign it to yourself), or let it go (toMe false)."""
+  adminAssignSupportTicket(ticketId: ID!, toMe: Boolean!): StaffSupportTicketPayload!
+  adminCancelOrganisationInvite(inviteId: ID!, reason: String!): OrganisationOkPayload!
+
+  """org R1 — created verified, with its owner (or an invite to them)."""
+  adminCreateOrganisation(input: CreateOrganisationInput!, reason: String!): CreateOrganisationPayload!
+  adminReinstateOrganisation(organisationId: ID!, reason: String!): OrganisationPayload!
+  adminReinstateUser(reason: String!, userId: ID!): AdminUserPayload!
+  adminRemoveOrganisationMember(organisationId: ID!, reason: String!, userId: ID!): OrganisationOkPayload!
+
+  """
+  admin R7 — answer a ticket (the person is told), or add an internal note (nobody is).
+  """
+  adminReplySupportTicket(body: String!, internal: Boolean!, ticketId: ID!): StaffSupportTicketPayload!
+  adminResendOrganisationInvite(inviteId: ID!, reason: String!): OrganisationOkPayload!
+
+  """
+  admin R6 — close every open report on a target. Acting on a review keeps it hidden; dismissing shows it.
+  """
+  adminResolveModeration(outcome: ModerationStatus!, reason: String!, targetId: ID!, targetType: ReportTarget!): AdminClosedPayload!
+
+  """
+  15-admin R4 — a person’s full email and phone, for a reason that is audited.
+  """
+  adminRevealContact(reason: String!, userId: ID!): AdminContactPayload!
+
+  """
+  admin R8 — mark every open signal on a subject confirmed or dismissed. Suspending is a separate step.
+  """
+  adminReviewFraudCase(confirmed: Boolean!, reason: String!, subjectId: ID!, subjectType: FraudSubject!): AdminClosedPayload!
+
+  """
+  org R2 — the only way ownership moves. The previous owner stays on as an admin.
+  """
+  adminSetOrganisationOwner(email: String!, organisationId: ID!, reason: String!): CreateOrganisationPayload!
+
+  """
+  Admins only: make someone admin, support or finance, or (role null) take it away. By `userId` (staff already listed) or `email` (someone new).
+  """
+  adminSetPlatformRole(email: String, reason: String!, role: PlatformStaffRole, userId: ID): PlatformStaffPayload!
+  adminSetSupportTicketStatus(status: SupportTicketStatus!, ticketId: ID!): StaffSupportTicketPayload!
+
+  """
+  org R7 — no publishing, no entries, payouts held. The reason is shown to its owner.
+  """
+  adminSuspendOrganisation(organisationId: ID!, reason: String!): OrganisationPayload!
+
+  """identity R8 — signs them out everywhere and stops new sign-ins."""
+  adminSuspendUser(reason: String!, userId: ID!): AdminUserPayload!
+  adminUpdateOrganisation(input: OrganisationDetailsInput!, organisationId: ID!, reason: String!): OrganisationPayload!
+
+  """
+  The next round from a round whose heats are all final: the top `perHeat` of each heat, then the `best` of the rest across heats.
+  """
+  advanceHeats(best: Int, eventCategoryId: ID!, name: String, perHeat: Int!): HeatPayload!
+  approvePayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
+
+  """R13 — an organizer moving a match by hand. This is the normal case."""
+  assignCourt(input: AssignCourtInput!): MatchPayload!
+
+  """
+  Freezes the price and, for a singles draw, takes the seat. A doubles draw takes NO hold until a partner accepts (registration R2). A free draw is confirmed immediately (R18). CATEGORY_FULL means: offer `joinWaitlist` (R17).
+  """
+  beginRegistration(input: BeginRegistrationInput!): RegistrationPayload!
+  blockPlayer(playerId: ID!): BlockPayload!
+
+  """
+  bookings R6 — the player cancels; the refund follows the venue’s policy.
+  """
+  cancelCourtBooking(bookingId: ID!): CancelCourtBookingPayload!
+
+  """
+  events R7 — irreversible, and every confirmed registration is refunded in full, platform fee included.
+  """
+  cancelEvent(eventId: ID!, reason: String!): EventPayload!
+  cancelOrganisationInvite(inviteId: ID!): OrganisationOkPayload!
+
+  """
+  registration R9 — after the cancellation cutoff this refunds nothing but still returns the slot to the draw.
+  """
+  cancelRegistration(registrationId: ID!): RegistrationPayload!
+
+  """
+  registration R10, F13 — open from two hours before the start until the end. Staff on the event check anyone in; an entrant checks themselves in only within a kilometre of the event (send `at`, the phone location).
+  """
+  checkIn(at: GeoPointInput, registrationId: ID!): RegistrationPayload!
+
+  """
+  registration R13 — a staff scan of an entrant’s QR. Idempotent: a re-scan returns the entry with its original check-in time.
+  """
+  checkInByToken(token: String!): RegistrationPayload!
+  checkInCourtBooking(bookingId: ID!): CourtBookingPayload!
+
+  """
+  Owner or manager. Closes registration now so the draws can be made. Draws below their minimum entries are cancelled and refunded, exactly as at the deadline.
+  """
+  closeEventRegistration(eventId: ID!): EventPayload!
+
+  """
+  R6 — the other side, or an owner/manager 15 minutes after submission (at once when disputed). Advances the bracket.
+  """
+  confirmMatchResult(matchId: ID!): MatchResultPayload!
+
+  """
+  R7, R8 — an owner or manager corrects a CONFIRMED result. A new winner takes the old one’s place in the next match, which must not have started yet. Ratings are redone.
+  """
+  correctMatchResult(input: SubmitMatchResultInput!): MatchResultPayload!
+
+  """
+  payments R20, bookings R2, R5 — the order for a held court. The amount is the quote frozen on the booking; there is no argument for a client amount.
+  """
+  createBookingPaymentOrder(bookingId: ID!): CreatePaymentOrderPayload!
+
+  """Creates a draft. Publishing is the validation gate (events R1)."""
+  createEvent(input: CreateEventInput!): EventPayload!
+
+  """
+  A heat of every confirmed entry in a field category. Owners and managers only.
+  """
+  createHeat(eventCategoryId: ID!, name: String): HeatPayload!
+
+  """
+  Round 1: the confirmed entries split serpentine into `count` heats. Owners and managers, once per category.
+  """
+  createHeats(count: Int!, eventCategoryId: ID!): HeatsPayload!
+
+  """
+  payments R1 — the amount is recomputed from events.priceQuote(). There is deliberately no argument for a client-supplied amount to arrive in.
+  """
+  createPaymentOrder(registrationId: ID!): CreatePaymentOrderPayload!
+
+  """
+  venues R3 — anyone signed in may add a venue; moderation is manual in Phase 1.
+  """
+  createVenue(input: CreateVenueInput!): VenuePayload!
+
+  """
+  bookings R8 — the desk books a court for someone in person or on the phone. Same constraint, no bypass.
+  """
+  createWalkInBooking(input: WalkInBookingInput!): CourtBookingPayload!
+  declineMessageRequest(conversationId: ID!): ConversationPayload!
+  declinePartnerInvite(token: String!): RegistrationPayload!
+
+  """
+  venues R5 — soft delete. Completed tournaments keep resolving their venue.
+  """
+  deleteVenue(venueId: ID!): VenuePayload!
+  disputeMatchResult(input: DisputeMatchResultInput!): MatchResultPayload!
+
+  """
+  ADR 0003 §C2 — upload the cover straight to Cloudinary under this signature, then report `folder/publicId` through addEventMedia(kind: COVER).
+  """
+  eventCoverUploadSignature(eventId: ID!): MediaUploadPayload!
+
+  """
+  gap #32 — owner or manager, once every heat is final: the category is over. That can complete the event, which schedules the host’s payout.
+  """
+  finishFieldCategory(eventCategoryId: ID!): FinishFieldCategoryPayload!
+
+  """
+  R1, R6, R7 — confirmed entries only, the whole bracket in one transaction, and never below the category’s minimum.
+  """
+  generateDraw(input: GenerateDrawInput!): GenerateDrawPayload!
+
+  """
+  bookings R1, R2 — holds the court for 10 minutes. Then createBookingPaymentOrder. A free court is booked at once.
+  """
+  holdCourtBooking(input: HoldCourtBookingInput!): CourtBookingPayload!
+  holdPayout(id: ID!, reason: String!): PayoutPayload!
+  invitePartner(input: InvitePartnerInput!): InvitePartnerPayload!
+
+  """
+  registration R17 — queue for a full draw. Holds no seat. A doubles team is queued when the partner accepts, so for doubles this returns a DRAFT to invite from.
+  """
+  joinWaitlist(eventCategoryId: ID!): RegistrationPayload!
+
+  """org R9 — your own events stay yours."""
+  leaveOrganisation(organisationId: ID!): OrganisationOkPayload!
+  leaveWaitlist(registrationId: ID!): RegistrationPayload!
+  logout(allDevices: Boolean = false): OkPayload!
+  markAllNotificationsRead: MarkReadPayload!
+  markConversationRead(conversationId: ID!): ConversationPayload!
+  markCourtBookingNoShow(bookingId: ID!): CourtBookingPayload!
+
+  """At most 100 ids. Ids that are not the viewer’s are ignored (R8)."""
+  markNotificationsRead(ids: [ID!]!): MarkReadPayload!
+
+  """
+  Manual payouts — record a "Ready to pay" payout as sent. `amountPaise` must be its exact amount; the UTR is shown to the host and kept in the audit log.
+  """
+  markPayoutPaid(amountPaise: Int!, id: ID!, utr: String!): PayoutPayload!
+
+  """
+  Organizer staff only. Sends `message` (1–500 characters, plain text) to every confirmed entrant as a notification — feed row and push. At most 5 an hour per event.
+  """
+  messageEventPlayers(eventId: ID!, message: String!): MessageEventPlayersPayload!
+  openSupportTicket(input: SupportTicketInput!): SupportTicketPayload!
+
+  """
+  ADR 0003 §C2 — upload the logo under this signature, then save `folder/publicId` as logoPublicId.
+  """
+  organisationLogoUploadSignature(organisationId: ID!): MediaUploadPayload!
+
+  """
+  events R1 — needs at least one category, a city or venue, a registration window that closes by the start, a future start, a contact phone and accepted hosting terms. A paid category also needs a verified host (ORGANIZER_NOT_VERIFIED).
+  """
+  publishEvent(eventId: ID!): EventPayload!
+
+  """
+  Scoring R1–R5 for a heat. SCORE_STALE and INVALID_EVENT come back with the heat.
+  """
+  recordFieldEvent(input: RecordFieldEventInput!): HeatPayload!
+
+  """
+  R1 — rejected with SCORE_STALE when `expectedSeq` is not the server’s; the payload then carries the server’s match. The last point of a match submits its result (R6).
+  """
+  recordPoint(input: RecordPointInput!): MatchPayload!
+
+  """
+  Any typed score event (scoring R1–R5): a score action, a period end, a shootout kick. Rejected with SCORE_STALE like recordPoint, and with INVALID_EVENT when the sport’s rule does not take it. The event that ends the match submits its result (R6).
+  """
+  recordScoreEvent(input: RecordScoreEventInput!): MatchPayload!
+
+  """
+  bookings R2 — the booking twin of refreshPayment. The webhook is still the truth; this asks the gateway.
+  """
+  refreshBookingPayment(bookingId: ID!): RefreshPaymentPayload!
+
+  """
+  gap #22 — the app calls this while checkout is open. It asks the gateway about the entry’s open orders and applies a capture exactly as the webhook would, so a late webhook costs seconds, not the seat. Captain only.
+  """
+  refreshPayment(registrationId: ID!): RefreshPaymentPayload!
+  refreshSession(client: AuthClient = APP, refreshToken: String!): SessionPayload!
+
+  """
+  R8 — allowed until the first match leaves `scheduled`, then DRAW_LOCKED.
+  """
+  regenerateDraw(seedOrder: [ID!], tournamentId: ID!): GenerateDrawPayload!
+
+  """
+  Idempotent. Clients call it on every cold start with permission granted — tokens rotate.
+  """
+  registerDevice(input: RegisterDeviceInput!): RegisterDevicePayload!
+  reinstatePayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
+  rejectPayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
+  releasePayout(id: ID!, reason: String!): PayoutPayload!
+  removeCourtBlackout(blackoutId: ID!): Boolean!
+
+  """
+  F19 — deletes a draw nobody has entered. A published event keeps at least one.
+  """
+  removeEventCategory(categoryId: ID!): OrganizerOkPayload!
+
+  """
+  F14 — retires one of the event’s courts. Matches already on it keep it.
+  """
+  removeEventCourt(courtId: ID!, eventId: ID!): OrganizerOkPayload!
+  removeEventStaff(eventId: ID!, userId: ID!): EventStaffPayload!
+  removeOrganisationMember(organisationId: ID!, userId: ID!): OrganisationOkPayload!
+
+  """
+  Owner or manager, before the draw is made. Takes one entry out of its draw; with `refund: true` the player gets back everything they paid, platform fee included.
+  """
+  removeRegistration(refund: Boolean!, registrationId: ID!): RegistrationPayload!
+  replySupportTicket(body: String!, ticketId: ID!): SupportTicketPayload!
+
+  """venues R8 — the venue’s one public reply to a review."""
+  replyToVenueReview(input: ReplyVenueReviewInput!): VenueReviewPayload!
+
+  """admin R6 — report a player, a venue review or a chat message."""
+  reportContent(note: String, reason: ReportReason!, targetId: ID!, targetType: ReportTarget!): ReportContentPayload!
+
+  """
+  F3 — a player who entered says the event did not happen as promised. Open from the start until two weeks after the end. Holds the host’s payout until PL4Y staff look.
+  """
+  reportEvent(details: String, eventId: ID!, reason: EventReportReason!): EventReportPayload!
+
+  """
+  identity R18 — revokes every session now; personal data is scrubbed after 30 days. ACCOUNT_DELETION_BLOCKED while the account has a confirmed place in an upcoming event.
+  """
+  requestAccountDeletion: RequestAccountDeletionPayload!
+  requestAvatarUpload: AvatarUploadPayload!
+  requestOtp(email: String!): RequestOtpPayload!
+
+  """
+  gap #25 — emails a code that savePayoutAccount needs before verified bank details change.
+  """
+  requestPayoutChangeCode: PayoutChangeCodePayload!
+
+  """F9 — PL4Y staff close a report: RESOLVED (acted on) or DISMISSED."""
+  resolveEventReport(note: String!, outcome: EventReportStatus!, reportId: ID!): EventReportPayload!
+  retryPayout(id: ID!, reason: String!): PayoutPayload!
+
+  """
+  Manual payouts — the full account number, for admin and finance. Takes a reason; every look is audited.
+  """
+  revealPayoutAccount(id: ID!, reason: String!): PayoutAccountDetailsPayload!
+
+  """
+  venues R6, R7 — only after playing here in the last 12 months (REVIEW_NOT_ELIGIBLE). A second call edits your review.
+  """
+  reviewVenue(input: ReviewVenueInput!): VenueReviewPayload!
+
+  """
+  payouts R1 — saves (or replaces) the host bank details and starts the bank check. With `organisationId`, the organisation’s account instead: its owner only (org R6).
+  """
+  savePayoutAccount(
+    accountNumber: String!
+
+    """
+    gap #25 — required when replacing details that were already verified. Ask with requestPayoutChangeCode.
+    """
+    emailCode: String
+    ifsc: String!
+    legalName: String!
+    organisationId: ID
+    pan: String!
+  ): PayoutAccountPayload!
+
+  """
+  Runs the greedy scheduler over everything that is ready and unplaced (R11, R12). Also runs from a job whenever a match becomes ready.
+  """
+  scheduleDraw(tournamentId: ID!): ScheduleDrawPayload!
+  selectOnboardingSports(input: SelectOnboardingSportsInput!): ProfilePayload!
+
+  """Opens the conversation when there is none (chat R2, R3)."""
+  sendMessage(input: SendMessageInput!): SendMessagePayload!
+  setAvatar(publicId: String!): ProfilePayload!
+  setContactPhone(phone: String): ViewerPayload!
+
+  """bookings R4 — replaces a court’s weekly opening rules."""
+  setCourtAvailability(courtId: ID!, rules: [CourtRuleInput!]!): VenueBookingSetupPayload!
+
+  """
+  F14 — when a match is played, with or without a court. Players get the 30-minute reminder. Null takes the time (and any court) off.
+  """
+  setMatchTime(matchId: ID!, startsAt: DateTime): MatchPayload!
+  setNotificationPreferences(input: NotificationPreferencesInput!): PreferencesPayload!
+  setProfileVisibility(visibility: ProfileVisibility!): ProfilePayload!
+  setVenueBookingPolicy(input: VenueBookingPolicyInput!, venueId: ID!): VenueBookingSetupPayload!
+
+  """
+  bookings R7 — owners add desk or manager staff by email, or (role null) remove them.
+  """
+  setVenueStaff(email: String!, role: VenueRole, venueId: ID!): VenueStaffPayload!
+
+  """
+  F9 — PL4Y staff settle a dispute: KEEP the submitted result, or send the right one in `input`. Confirmed at once either way.
+  """
+  settleEscalatedResult(
+    input: SubmitMatchResultInput
+    keep: Boolean!
+    matchId: ID!
+
+    """portal R3 — kept in the audit log."""
+    reason: String!
+  ): MatchResultPayload!
+
+  """
+  gap #33 — PL4Y staff refund one entry by hand, up to what is left of its payment. Admin web only.
+  """
+  staffRefundRegistration(amountPaise: Int!, reason: String!, registrationId: ID!): StaffRefundPayload!
+
+  """Opens the point log. Idempotent on a live match."""
+  startMatch(firstServer: MatchSide, matchId: ID!): MatchPayload!
+  submitMatchResult(input: SubmitMatchResultInput!): MatchResultPayload!
+  suspendPayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
+
+  """Takes a match off its court and back into the scheduler’s queue."""
+  unassignCourt(matchId: ID!): MatchPayload!
+  unblockPlayer(playerId: ID!): BlockPayload!
+
+  """
+  R2 — an appended event, never a delete. Takes back the last point standing.
+  """
+  undoPoint(input: UndoPointInput!): MatchPayload!
+
+  """
+  Sign-out calls this so the next user of the phone does not get this user’s pushes.
+  """
+  unregisterDevice(token: String!): RegisterDevicePayload!
+  updateCourt(courtId: ID!, input: UpdateCourtInput!): CourtPayload!
+  updateEvent(eventId: ID!, input: UpdateEventInput!): EventPayload!
+  updateEventCategory(categoryId: ID!, input: UpdateEventCategoryInput!): EventCategoryPayload!
+
+  """
+  The owner or an admin: logo, description, city and contact. Not the name.
+  """
+  updateOrganisation(input: OrganisationDetailsInput!, organisationId: ID!): OrganisationPayload!
+  updateProfileDetails(input: UpdateProfileDetailsInput!): ProfilePayload!
+  updateProfileLocation(input: UpdateProfileLocationInput!): ProfilePayload!
+  updateProfileSports(input: UpdateProfileSportsInput!): ProfilePayload!
+  updateVenue(input: UpdateVenueInput!, venueId: ID!): VenuePayload!
+
+  """
+  bookings R6 — the venue cancels; everything is refunded, the platform fee too. Managers.
+  """
+  venueCancelCourtBooking(bookingId: ID!, reason: String!): CourtBookingPayload!
+
+  """
+  ADR 0003 §C2 — the client uploads straight to Cloudinary under this signature, then reports the public_id back through addVenuePhoto.
+  """
+  venuePhotoUploadSignature(venueId: ID!): MediaUploadPayload!
+  verifyOtp(client: AuthClient = APP, code: String!, deviceLabel: String, email: String!): SessionPayload!
+}
+
+"""
+Where the viewer stands on one board (rating R9, R11). Read from Postgres, never the board cache, so it is right the moment a rebuild lands.
+"""
+type MyRanking {
+  """The place above; null at the top or when unranked."""
+  next: NextPlace
+
+  """
+  Null when unranked on this board (fewer than five settled matches, or another city).
+  """
+  row: RankingRow
+
+  """When the board was last rebuilt (rating R4 — weekly)."""
+  updatedAt: DateTime
+}
+
+"""The place directly above yours on a board."""
+type NextPlace {
+  rank: Int!
+  rating: Float!
+}
+
+interface Node {
+  nodeId: ID!
+}
+
+"""
+R4 — `title` and `body` are rendered on the server from versioned templates. R11 — `body` may carry user-written text: render it as plain text, never markup.
+"""
+type Notification {
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+  kind: String!
+  readAt: DateTime
+  target: NotificationTarget
+  title: String!
+}
+
+type NotificationConnection {
+  edges: [NotificationEdge!]!
+  pageInfo: PageInfo!
+}
+
+type NotificationEdge {
+  cursor: String!
+  node: Notification!
+}
+
+"""
+What a notification is about. Muting one silences its push, never its feed row (R2).
+"""
+enum NotificationKind {
+  ACHIEVEMENT_EARNED
+  BOOKING_CANCELLED
+  BOOKING_CONFIRMED
+  CATEGORY_CANCELLED
+  CHAT_MESSAGE
+  CHAT_REQUEST
+  DRAW_FINISHED
+  DRAW_GENERATED
+  EVENT_CANCELLED
+  EVENT_CHANGED
+  EVENT_REPORT_RESOLVED
+  HOST_DRAW_CANCELLED
+  HOST_DRAW_SHORT
+  HOST_EVENT_COMPLETED
+  HOST_NEW_ENTRY
+  HOST_READY_TO_DRAW
+  MATCH_RESULT
+  MATCH_RESULTS_WAITING
+  MATCH_RESULT_DISPUTED
+  MATCH_RESULT_PENDING
+  MATCH_RESULT_REMINDER
+  MATCH_STARTING_SOON
+  ORGANISATION_MEMBERSHIP
+  ORGANIZER_MESSAGE
+  PARTNER_DECLINED
+  PARTNER_INVITE
+  PAYMENT_UPDATED
+  PAYOUT_ACCOUNT_STATUS
+  PAYOUT_STATUS
+  RANKING_CHANGED
+  RATING_CHANGED
+  REGISTRATION_CONFIRMED
+  REGISTRATION_EXPIRED
+  SUPPORT_REPLY
+  WAITLIST_OFFER
+}
+
+"""
+R2 — these gate PUSH only. The feed row is written whatever they say. R3 — quiet hours are 22:00–07:00 IST; a match starting soon is pushed through them.
+"""
+type NotificationPreferences {
+  muted: [NotificationKind!]!
+  pushEnabled: Boolean!
+  quietHours: Boolean!
+}
+
+"""Omitted fields are left as they are."""
+input NotificationPreferencesInput {
+  muted: [NotificationKind!]
+  pushEnabled: Boolean
+  quietHours: Boolean
+}
+
+"""
+Where tapping the notification goes. A client that does not know the kind renders the row untappable.
+"""
+type NotificationTarget {
+  id: ID
+  kind: NotificationTargetKind!
+  route: DeepLinkRoute
+
+  """Events are routed by slug."""
+  slug: String
+}
+
+enum NotificationTargetKind {
+  COMMUNITY
+  EVENT
+  GAME
+  MATCH
+  PLAYER
+  ROUTE
+  VENUE
+}
+
+type OkPayload {
+  ok: Boolean!
+}
+
+type OpenReceivable {
+  openPaise: Int!
+  payoutAccountId: ID!
+  userId: ID!
+}
+
+"""
+venues R12 — one opening window in the venue’s local time. A day with two sessions has two windows; a day with none is closed.
+"""
+type OpeningHours {
+  """HH:MM"""
+  closes: String!
+
+  """0 is Monday, 6 is Sunday."""
+  day: Int!
+
+  """HH:MM"""
+  opens: String!
+}
+
+input OpeningHoursInput {
+  """HH:MM"""
+  closes: String!
+
+  """0 is Monday, 6 is Sunday."""
+  day: Int!
+
+  """HH:MM"""
+  opens: String!
+}
+
+"""
+org — a club, academy or company PL4Y verified. Its members host events under its name.
+"""
+type Organisation {
+  bio: String
+  city: String
+  contactEmail: String
+  contactPhone: String
+  createdAt: DateTime!
+
+  """
+  org R8 — the public its published and past events; members and staff every one, drafts included.
+  """
+  events: [Event!]!
+
+  """org R4 — events run to the end."""
+  eventsHosted: Int!
+  id: ID!
+
+  """Open invites. The owner, admins and staff only."""
+  invites: [OrganisationInvite!]!
+  logoUrl: String
+
+  """Its members and staff see the team; everyone else an empty list."""
+  members: [OrganisationMember!]!
+  name: String!
+
+  """org R6 — where its money goes. The owner and staff only."""
+  payoutAccount: PayoutAccount
+
+  """org R6 — the owner and staff only, newest first."""
+  payouts: [Payout!]!
+  slug: String!
+  verification: OrganisationVerification!
+
+  """
+  Why it is suspended. PL4Y staff and the organisation’s owner and admins only.
+  """
+  verificationNote: String
+  verified: Boolean!
+  viewerRole: OrganisationRole
+}
+
+enum OrganisationAddableRole {
+  ADMIN
+  MEMBER
+}
+
+type OrganisationAnalytics {
+  asOf: DateTime!
+  events: [EventAnalytics!]!
+  from: DateTime!
+  to: DateTime!
+  totals: OrganisationAnalyticsTotals!
+}
+
+type OrganisationAnalyticsTotals {
+  begun: Int!
+  capacity: Int!
+  checkedIn: Int!
+  confirmed: Int!
+  eventCount: Int!
+  fillRate: Float!
+  grossPaise: Int!
+  netPaise: Int!
+  noShows: Int!
+  offline: Int!
+  platformFeePaise: Int!
+  refundedPaise: Int!
+  refunds: Int!
+  withdrawn: Int!
+}
+
+"""
+Fields left out are unchanged; null clears one. `name` is PL4Y staff’s to change.
+"""
+input OrganisationDetailsInput {
+  bio: String
+  city: String
+  contactEmail: String
+  contactPhone: String
+
+  """From organisationLogoUploadSignature: `folder/publicId`."""
+  logoPublicId: String
+  name: String
+}
+
+"""
+Someone added by email before they had a PL4Y account. Signing in with that email claims it.
+"""
+type OrganisationInvite {
+  createdAt: DateTime!
+  email: String!
+  expiresAt: DateTime!
+  id: ID!
+  role: OrganisationRole!
+}
+
+type OrganisationMember {
+  avatarUrl: String
+  displayName: String!
+  joinedAt: DateTime!
+  role: OrganisationRole!
+  userId: ID!
+}
+
+type OrganisationMembership {
+  organisation: Organisation!
+  role: OrganisationRole!
+}
+
+type OrganisationOkPayload {
+  ok: Boolean!
+  userError: UserError
+}
+
+type OrganisationPage {
+  hasNextPage: Boolean!
+  nodes: [Organisation!]!
+  total: Int!
+}
+
+type OrganisationPayload {
+  organisation: Organisation
+  userError: UserError
+}
+
+enum OrganisationRole {
+  ADMIN
+  MEMBER
+  OWNER
+}
+
+enum OrganisationVerification {
+  PENDING
+  REJECTED
+  SUSPENDED
+  UNVERIFIED
+  VERIFIED
+}
+
+enum OrganizerKind {
+  ORGANISATION
+  PERSON
+}
+
+type OrganizerOkPayload {
+  ok: Boolean!
+  userError: UserError
+}
+
+type OrganizerSummary {
+  avatarUrl: String
+  displayName: String!
+
+  """F3 — events this host (or organisation) has run to the end on PL4Y."""
+  eventsHosted: Int!
+  id: ID!
+
+  """org R4 — a person hosting, or an organisation PL4Y verified."""
+  kind: OrganizerKind!
+
+  """org R8 — opens the organisation’s page. Null for a person."""
+  organisationSlug: String
+
+  """
+  F3 — the host’s bank account and PAN are verified by PL4Y; for an organisation, PL4Y verified it (org R4).
+  """
+  verified: Boolean!
+}
+
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+}
+
+type PartnerInvite {
+  expiresAt: DateTime!
+  id: ID!
+  invitedEmail: String!
+  invitedUserId: ID
+  status: String!
+  token: String!
+}
+
+type PaymentConnection {
+  edges: [PaymentEdge!]!
+  pageInfo: PageInfo!
+}
+
+type PaymentEdge {
+  cursor: String!
+  node: PaymentRecord!
+}
+
+"""registration R14 — how the entry was paid for."""
+enum PaymentMode {
+  COMP
+  OFFLINE
+  ONLINE
+}
+
+type PaymentRecord {
+  amountPaise: Int!
+  at: DateTime!
+  registrationId: ID!
+  status: String!
+}
+
+"""
+payouts R9, R14 — the breakdown is the live quote until the transfer is sent, then frozen.
+"""
+type Payout {
+  amountPaise: Int!
+  commissionPaise: Int!
+  commissionTaxPaise: Int!
+  dueAt: DateTime!
+  entryFeesPaise: Int!
+
+  """
+  The event this payout settles (G35; the admin payout list needs its name).
+  """
+  event: Event
+  eventId: ID!
+
+  """
+  F27 — gateway fees on an event the host cancelled, taken from what they are paid.
+  """
+  gatewayFeesPaise: Int!
+  holdReason: String
+  id: ID!
+  lastError: String
+  paidAt: DateTime
+
+  """The account it goes to, masked."""
+  payoutAccount: PayoutAccount
+  receivablesPaise: Int!
+  refundsPaise: Int!
+  sentAt: DateTime
+  status: PayoutStatus!
+  tdsPaise: Int!
+
+  """
+  Manual payouts — in "Ready to pay": the amount is frozen and a person sends it from PL4Y’s bank.
+  """
+  toPayByHand: Boolean!
+
+  """Manual payouts — the bank reference (UTR) recorded when it was paid."""
+  utr: String
+}
+
+"""payouts R2 — PAN and account number are only ever masked here."""
+type PayoutAccount {
+  accountMasked: String!
+  bankNameReturned: String
+
+  """
+  gap #25 — when verified details were last replaced. Payouts wait 48 hours after it.
+  """
+  detailsChangedAt: DateTime
+  id: ID!
+  ifsc: String!
+  legalName: String!
+  nameMatch: Int
+  panMasked: String!
+  status: PayoutAccountStatus!
+  statusReason: String
+  verifiedAt: DateTime
+}
+
+"""
+Manual payouts — the clear account number, for staff to check it or send money. Every read is audited.
+"""
+type PayoutAccountDetails {
+  accountNumber: String!
+  detailsChangedAt: DateTime
+  id: ID!
+  ifsc: String!
+  legalName: String!
+  status: PayoutAccountStatus!
+}
+
+type PayoutAccountDetailsPayload {
+  details: PayoutAccountDetails
+  userError: UserError
+}
+
+type PayoutAccountPayload {
+  account: PayoutAccount
+  userError: UserError
+}
+
+enum PayoutAccountStatus {
+  CHECKING
+  NEEDS_REVIEW
+  REJECTED
+  SUSPENDED
+  VERIFIED
+}
+
+type PayoutChangeCodePayload {
+  """The masked address the code went to."""
+  sentTo: String
+  userError: UserError
+}
+
+type PayoutConnection {
+  edges: [PayoutEdge!]!
+  pageInfo: PageInfo!
+}
+
+type PayoutEdge {
+  cursor: String!
+  node: Payout!
+}
+
+type PayoutPayload {
+  payout: Payout
+  userError: UserError
+}
+
+enum PayoutStatus {
+  AWAITING_FUNDS
+  FAILED
+  HELD
+  PAID
+  SCHEDULED
+  SENDING
+}
+
+type PlatformStaffMember {
+  createdAt: DateTime!
+  grantedByName: String
+  role: PlatformStaffRole!
+  user: AdminUser!
+}
+
+type PlatformStaffPayload {
+  staff: [PlatformStaffMember!]
+  userError: UserError
+}
+
+enum PlatformStaffRole {
+  ADMIN
+  FINANCE
+  SUPPORT
+}
+
+"""
+profile R10 — a player shared a completed match with, as partner or opponent.
+"""
+type PlayedWith {
+  lastPlayedAt: DateTime!
+  matches: Int!
+  player: PlayerProfile!
+}
+
+type PlayerConnection {
+  edges: [PlayerEdge!]!
+  pageInfo: PageInfo!
+}
+
+type PlayerEdge {
+  cursor: String!
+  node: PlayerProfile!
+}
+
+"""One game (rally) or set, from the profile owner's side."""
+type PlayerGameScore {
+  against: Int!
+  for: Int!
+}
+
+type PlayerProfile implements Node {
+  achievements: [Achievement!]!
+  avatarUrl(size: AvatarSize = md): String
+  bio: String
+  city: String
+
+  """False when city and bio were withheld for this viewer."""
+  detailsVisible: Boolean!
+  displayName: String!
+  id: ID!
+
+  """
+  profile R12 — every completed match, newest first. Forward pagination only.
+  """
+  matchHistory(after: String, before: String, first: Int, last: Int, sportId: ID): MatchHistoryConnection!
+  nodeId: ID!
+
+  """
+  Sports selected but not yet skill-rated. Empty for anyone but the owner.
+  """
+  onboardingPendingSportIds: [ID!]!
+
+  """
+  profile R10 — who this player has played with, most recent first. Empty when the profile details are withheld from the viewer (R4).
+  """
+  playedWith(first: Int = 20): [PlayedWith!]!
+
+  """profile R14 — the newest completed matches, every sport."""
+  recentResults(first: Int = 5): [MatchResultSummary!]!
+  sports: [PlayerSport!]!
+
+  """profile R8 — one materialised snapshot per selected sport."""
+  stats: [StatsSnapshot!]!
+
+  """Null on your own profile and when signed out."""
+  viewerMessaging: Messaging
+  visibility: ProfileVisibility!
+}
+
+"""
+rating R2 — the SETTLED rating, and whether it is fit to show. `provisional` is true below five settled matches, and the app renders *unranked* rather than a number nobody should act on (R9).
+"""
+type PlayerRating {
+  """Glicko-2 RD. It grows while a player is away (rating R1)."""
+  deviation: Float!
+  matchesPlayed: Int!
+  provisional: Boolean!
+  rating: Float!
+  sportId: ID!
+}
+
+"""
+One sport a player has selected. `skillBand` is self-declared and editable; `rating` is derived and read-only to the player (profile R3).
+"""
+type PlayerSport {
+  matchesPlayed: Int!
+
+  """Null when unranked. Filled by the rating module (Sprint 6)."""
+  rank: Int
+  rating: Float
+  ratingProvisional: Boolean!
+  skillBand: String!
+  sport: Sport!
+}
+
+input PlayerSportInput {
+  skillBand: String!
+  sportId: ID!
+}
+
+"""venues R10 — what a playing area is called: a court, a turf, a table…"""
+enum PlayingAreaKind {
+  COURT
+  GROUND
+  PITCH
+  TABLE
+  TURF
+}
+
+type PreferencesPayload {
+  preferences: NotificationPreferences
+  userError: UserError
+}
+
+"""
+events R3 — computed by the one function `registration` and `payments` also call. The client never calculates a total.
+"""
+type PriceQuote {
+  currency: String!
+  entryFeePaise: Int!
+  platformFeePaise: Int!
+  taxPaise: Int!
+  totalPaise: Int!
+}
+
+type ProfilePayload {
+  profile: PlayerProfile
+  userError: UserError
+}
+
+"""
+Who may see contact details and activity. Competitive record is visible regardless: you cannot enter a public draw and hide the outcome (profile R5).
+"""
+enum ProfileVisibility {
+  PLAYERS_ONLY
+  PRIVATE
+  PUBLIC
+}
+
+type Query {
+  """
+  portal — every staff action, newest first. Admins only; narrowed to one target when given.
+  """
+  adminAuditLog(first: Int, offset: Int, targetId: String, targetType: String): AuditPage!
+
+  """portal — any event, any status, by title or link; soonest start first."""
+  adminEvents(first: Int, offset: Int, search: String, status: EventStatus): AdminEventPage!
+  adminFraudQueue(first: Int, offset: Int, reviewed: Boolean): FraudCasePage!
+
+  """Every signal on one person, for their page in the portal."""
+  adminFraudSignalsFor(userId: ID!): [FraudSignal!]!
+  adminModerationQueue(first: Int, offset: Int, status: ModerationStatus): ModerationPage!
+  adminOrganisation(id: ID!): Organisation
+
+  """portal — every organisation, newest first. Staff only."""
+  adminOrganisations(first: Int, offset: Int, search: String, verification: OrganisationVerification): OrganisationPage!
+  adminOverview: AdminOverview!
+  adminStaff: [PlatformStaffMember!]!
+  adminSupportTicket(id: ID!): StaffSupportTicket
+  adminSupportTickets(first: Int, offset: Int, search: String, status: SupportTicketStatus): StaffSupportTicketPage!
+  adminUser(id: ID!): AdminUser
+
+  """portal — find people by email or name, newest first."""
+  adminUsers(first: Int, offset: Int, search: String!): AdminUserPage!
+
+  """
+  registration R13 — every confirmed entry, for scanning offline. Any staff grant on the event. Check-ins made offline replay through `checkInByToken`.
+  """
+  checkInRoster(eventId: ID!): [RosterEntry!]!
+  conversation(id: ID!): Conversation
+
+  """chat R3 — your chats and requests either way, newest activity first."""
+  conversations(after: String, before: String, first: Int, last: Int): ConversationConnection!
+
+  """bookings R4 — the slot grid for one local date (YYYY-MM-DD)."""
+  courtAvailability(date: String!, durationMinutes: Int, sportId: ID, venueId: ID!): [CourtSlot!]!
+  courtBooking(id: ID!): CourtBooking
+  courtBookingCancelPreview(bookingId: ID!): CourtBookingCancelPreview!
+
+  """
+  F1 — event staff: the draw as it would be made now, with an optional seeding. Nothing is written.
+  """
+  drawPreview(input: GenerateDrawInput!): DrawPreview!
+
+  """
+  F9 — PL4Y staff only: disputes handed to PL4Y and still open, oldest first.
+  """
+  escalatedResults: [Match!]!
+  event(slug: String!): Event
+
+  """
+  14-organizers — entries, check-ins and money for one event. Owners and managers.
+  """
+  eventAnalytics(eventId: ID!): EventAnalytics
+
+  """
+  F12, F15 — results on this event that nobody has confirmed yet, disputes first. Event staff only. What the organizer section lists under "needs you".
+  """
+  eventPendingResults(eventId: ID!): [Match!]!
+
+  """The organizer entry list. Requires a staff grant on the event."""
+  eventRegistrations(after: String, before: String, categoryId: ID, eventId: ID!, first: Int, last: Int, status: [RegistrationStatus!]): RegistrationConnection!
+
+  """F9 — PL4Y staff only: players’ reports, oldest first."""
+  eventReports(status: EventReportStatus): [EventReport!]!
+
+  """Owners and managers only: everyone who helps run the event."""
+  eventStaff(eventId: ID!): [EventStaffMember!]!
+
+  """
+  Explore. Only published and live events appear, ordered by start time (events R6).
+  """
+  events(after: String, before: String, filter: EventFilter, first: Int, last: Int): EventConnection!
+  fieldCategory(eventCategoryId: ID!): FieldCategory!
+  heat(id: ID!): Heat
+
+  """A field category’s heats, oldest first."""
+  heats(eventCategoryId: ID!): [Heat!]!
+
+  """
+  Fills the entire Home screen (home R1). `city` defaults to the viewer's profile city; passing one browses without editing the profile (home R2). Signed-out viewers get the city shelf only.
+  """
+  home(city: String, sportId: ID): HomeFeed!
+  match(id: ID!): Match
+  me: Viewer
+  myCourtBookings(first: Int, offset: Int): [CourtBooking!]!
+  myEventGrants: [EventGrant!]!
+
+  """
+  Events the viewer helps run (any grant), drafts included, newest start first.
+  """
+  myHostedEvents: [Event!]!
+
+  """
+  bookings R7 — venues this person runs: the desk entry in the Hosting tab.
+  """
+  myManagedVenues: [ManagedVenue!]!
+  myPayoutAccount: PayoutAccount
+  myPayouts(after: String, before: String, first: Int, last: Int): PayoutConnection!
+
+  """
+  The signed-in player's own profile. A fresh install reads it here rather than walking the player through onboarding again.
+  """
+  myProfile: PlayerProfile
+
+  """Your own place on one board, and when that board was last rebuilt."""
+  myRanking(scope: RankingScopeInput!, sportId: ID!): MyRanking!
+
+  """Everything the viewer has entered, as captain or as partner."""
+  myRegistrations: [Registration!]!
+  mySupportTickets(first: Int, offset: Int): SupportTicketPage!
+
+  """
+  app States — "no availability that day" offers the next date that has some.
+  """
+  nextAvailableBookingDate(durationMinutes: Int, from: String, venueId: ID!): String
+  node(id: ID!): Node
+  nodes(ids: [ID!]!): [Node]!
+  notificationPreferences: NotificationPreferences!
+  notifications(after: String, before: String, first: Int, last: Int): NotificationConnection!
+  openReceivables: [OpenReceivable!]!
+
+  """org R8 — an organisation’s page, by slug."""
+  organisation(slug: String!): Organisation
+
+  """
+  14-organizers — every event of an organisation that starts in the range (default: the last 90 days and the next 90).
+  """
+  organisationAnalytics(from: DateTime, organisationId: ID!, to: DateTime): OrganisationAnalytics!
+  paymentHistory(after: String, before: String, first: Int, last: Int): PaymentConnection!
+  payoutAccountsForReview: [PayoutAccount!]!
+  payoutsNeedingAttention: [Payout!]!
+
+  """
+  Manual payouts — "Ready to pay": send each from PL4Y’s bank, then markPayoutPaid. Oldest first.
+  """
+  payoutsToPay: [Payout!]!
+  playerProfile(id: ID!): PlayerProfile
+
+  """The settled rating for one player in one sport."""
+  playerRating(playerId: ID!, sportId: ID!): PlayerRating!
+
+  """Player search by display name. Private profiles never appear."""
+  players(after: String, before: String, first: Int, last: Int, query: String!, sportId: ID): PlayerConnection!
+
+  """
+  A leaderboard. Only settled ratings with five or more matches appear (rating R9), and the first page of every board is served from cache.
+  """
+  rankings(after: String, before: String, first: Int, last: Int, scope: RankingScopeInput!, sportId: ID!): QueryRankingsConnection!
+
+  """Your own rating log, newest first. Provisional rows included."""
+  ratingHistory(after: String, before: String, first: Int, last: Int, sportId: ID!): QueryRatingHistoryConnection!
+  receipt(paymentId: ID!): Receipt!
+  recommendedPlayers(city: String, first: Int = 10, sportId: ID): [PlayerProfile!]!
+  registration(id: ID!): Registration
+
+  """
+  F8 — what "close registration now" would do to each draw still taking entries.
+  """
+  registrationClosePreview(eventId: ID!): [RegistrationClosePreview!]!
+
+  """Every money movement against one registration, oldest first."""
+  registrationLedger(registrationId: ID!): [LedgerEntry!]!
+  sport(slug: String!): Sport
+
+  """Active sports, in display order. Retired sports are hidden (sport R3)."""
+  sports: [Sport!]!
+  supportTicket(id: ID!): SupportTicket
+
+  """The draw for one event category, if it has been generated."""
+  tournament(eventCategoryId: ID!): Tournament
+
+  """chat R7 — conversations with something unread. The inbox badge."""
+  unreadConversationCount: Int!
+
+  """
+  The badge. Never derive it from the feed, which is only ever the first page.
+  """
+  unreadNotificationCount: Int!
+  venue(id: ID!): Venue
+
+  """
+  bookings R7 — the policy, opening rules and blackouts. Managers and owners.
+  """
+  venueBookingSetup(venueId: ID!): VenueBookingSetup!
+  venueDashboard(from: String!, to: String!, venueId: ID!): VenueDashboard!
+  venueSchedule(date: String!, venueId: ID!): VenueSchedule!
+  venueStaff(venueId: ID!): [VenueStaffMember!]!
+
+  """
+  Venues near a point, in a city, or hosting a sport. Radius is capped at 50 km (venues R1).
+  """
+  venues(
+    after: String
+    before: String
+    city: String
+    first: Int
+    last: Int
+    near: GeoPointInput
+
+    """discovery R1 — free text over name and address."""
+    query: String
+    radiusKm: Float = 10
+    sportId: ID
+  ): VenueConnection!
+}
+
+type QueryRankingsConnection {
+  edges: [QueryRankingsConnectionEdge!]!
+  pageInfo: PageInfo!
+}
+
+type QueryRankingsConnectionEdge {
+  cursor: String!
+  node: RankingRow!
+}
+
+type QueryRatingHistoryConnection {
+  edges: [QueryRatingHistoryConnectionEdge!]!
+  pageInfo: PageInfo!
+}
+
+type QueryRatingHistoryConnectionEdge {
+  cursor: String!
+  node: RatingEvent!
+}
+
+"""
+One place on a leaderboard. `rank` is dense — two players on the same rating share a place — and `movement` is stored rather than computed, so the up/down arrow costs no second query (rating R11).
+"""
+type RankingRow {
+  matchesPlayed: Int!
+
+  """Places gained since the previous rebuild. +3 is up three."""
+  movement: Int!
+  player: PlayerProfile
+  rank: Int!
+  rating: Float!
+}
+
+"""NATIONAL takes no value; CITY and AGE_BAND require one."""
+input RankingScopeInput {
+  kind: RankingScopeKind!
+  value: String
+}
+
+"""
+rating R10 — the ranking scopes that exist. Enumerated, not arbitrary: an open-ended scope string is an unbounded table.
+"""
+enum RankingScopeKind {
+  AGE_BAND
+  CITY
+  NATIONAL
+}
+
+"""
+One row of the append-only log. A provisional row is the number a player was shown the moment their result was confirmed; the weekly period writes the settled row that supersedes it, and both stay (rating R3).
+"""
+type RatingEvent {
+  algoVersion: String!
+  at: DateTime!
+  deviationAfter: Float!
+  id: ID!
+  isProvisional: Boolean!
+  matchId: ID
+  ratingAfter: Float!
+  ratingBefore: Float!
+}
+
+"""
+payments R11 — rendered on demand from `ledger_entries`. There is no PDF, no bucket and no signed file URL: the ledger is already the source of truth, and a stored file would only be a second copy that can disagree.
+"""
+type Receipt {
+  currency: String!
+  gatewayPaymentId: String!
+  lines: [LedgerEntry!]!
+  method: String
+  netPaise: Int!
+  paidAt: DateTime
+  paymentId: ID!
+  refundedPaise: Int!
+  registrationId: ID!
+  totalPaise: Int!
+}
+
+input RecordFieldEventInput {
+  code: String
+
+  """The registration this is for. Every type but CLOSE."""
+  entry: ID
+  expectedSeq: Int!
+  heatId: ID!
+  kills: Int
+  lift: String
+  place: Int
+  scores: [Float!]
+  type: FieldEventType!
+  valid: Boolean
+  value: Float
+  values: [Int!]
+}
+
+input RecordPointInput {
+  """R1 — `currentScore.seq` as this device last knew it."""
+  expectedSeq: Int!
+  matchId: ID!
+
+  """Who won the rally."""
+  side: MatchSide!
+}
+
+input RecordScoreEventInput {
+  """SCORE only — a key from the rule’s actions."""
+  action: String
+
+  """ROUND_CARDS only — one per judge."""
+  cards: [GameScoreInput!]
+
+  """R1 — `currentScore.seq` as this device last knew it."""
+  expectedSeq: Int!
+
+  """BALL only."""
+  extra: BallExtra
+  matchId: ID!
+
+  """FINISH only — ko, tko, submission, fall…"""
+  method: String
+
+  """BALL only — runs taken off the delivery."""
+  runs: Int
+
+  """SHOOTOUT_KICK only."""
+  scored: Boolean
+
+  """Required for POINT, SCORE and SHOOTOUT_KICK."""
+  side: MatchSide
+  type: ScoreEventType!
+
+  """UNIT_WON only, where the rule wants a score."""
+  unitScore: GameScoreInput
+
+  """POINTS only."""
+  value: Int
+
+  """BALL only — how a batter was out."""
+  wicket: Dismissal
+}
+
+type RefreshPaymentPayload {
+  settled: Boolean!
+  userError: UserError
+}
+
+"""
+F27 — STANDARD: a full refund until the cutoff, nothing after. FLEXIBLE: full until the cutoff, half until the start. Once players have paid, a policy may only get kinder.
+"""
+enum RefundPolicy {
+  FLEXIBLE
+  STANDARD
+}
+
+input RegisterDeviceInput {
+  platform: DevicePlatform!
+
+  """An Expo push token."""
+  token: String!
+}
+
+type RegisterDevicePayload {
+  ok: Boolean!
+  userError: UserError
+}
+
+type Registration {
+  amountPaise: Int!
+  category: EventCategory!
+
+  """
+  registration R13 — the payload to render as a QR. Team members only, confirmed entries only. Deterministic, so the app may cache it for offline display.
+  """
+  checkInQr: String
+  checkedInAt: DateTime
+  confirmedAt: DateTime
+  createdAt: DateTime!
+
+  """
+  How the entry reads on a bracket or standings: "Asha", "Asha & Meera", "Asha + 4".
+  """
+  displayName: String!
+  event: Event!
+
+  """
+  Non-null while a seat hold is live. This is the countdown on the checkout screen.
+  """
+  holdExpiresAt: DateTime
+  id: ID!
+  paymentMode: PaymentMode!
+
+  """Set at draw time."""
+  seed: Int
+  status: RegistrationStatus!
+  team: Team
+
+  """registration R17 — 1-based, non-null only while waitlisted."""
+  waitlistPosition: Int
+}
+
+"""F8 — what closing registration now does to one draw."""
+type RegistrationClosePreview {
+  categoryId: ID!
+  confirmed: Int!
+  minEntries: Int!
+  name: String!
+
+  """Players part-way through paying; they are let finish."""
+  paying: Int!
+
+  """Below its minimum: cancelled and refunded."""
+  willCancel: Boolean!
+}
+
+type RegistrationConnection {
+  edges: [RegistrationEdge!]!
+  pageInfo: PageInfo!
+}
+
+type RegistrationEdge {
+  cursor: String!
+  node: Registration!
+}
+
+type RegistrationPayload {
+  registration: Registration
+  userError: UserError
+}
+
+"""The state machine in docs/modules/06-registration.md."""
+enum RegistrationStatus {
+  AWAITING_PARTNER
+  CHECKED_IN
+  CONFIRMED
+  DRAFT
+  EXPIRED
+  PAYMENT_FAILED
+  PAYMENT_PENDING
+  REFUNDED
+  WAITLISTED
+  WITHDRAWN
+}
+
+input ReplyVenueReviewInput {
+  body: String!
+  reviewId: ID!
+}
+
+type ReportContentPayload {
+  report: ModerationReport
+  userError: UserError
+}
+
+enum ReportReason {
+  ABUSE
+  FAKE
+  INACCURATE
+  OTHER
+  SPAM
+  UNSAFE
+}
+
+enum ReportTarget {
+  MESSAGE
+  PLAYER
+  VENUE_REVIEW
+}
+
+type RequestAccountDeletionPayload {
+  ok: Boolean!
+  userError: UserError
+}
+
+type RequestOtpPayload {
+  challengeId: String
+  userError: UserError
+}
+
+"""How a result became final (scoring R6, R11)."""
+enum ResultConfirmation {
+  AUTO
+
+  """
+  gap #20 — a dispute nobody settled, closed on the submitted result. Never rated.
+  """
+  DEFAULT
+  OPPONENT
+  STAFF
+}
+
+"""
+scoring R12 — LIVE came from the point log; TYPED was entered on the result screen. A result a player typed never confirms itself.
+"""
+enum ResultSource {
+  LIVE
+  TYPED
+}
+
+"""venues R6 — creates your review, or edits it if you already wrote one."""
+input ReviewVenueInput {
+  """At most 1,000 characters."""
+  body: String
+
+  """1-5."""
+  stars: Int!
+  venueId: ID!
+}
+
+"""
+registration R13 — one row of the offline check-in roster. Carries a HASH of the QR token, never the token: hash a scan with sha256 and look it up.
+"""
+type RosterEntry {
+  checkedInAt: DateTime
+  eventCategoryId: ID!
+  players: [RosterPlayer!]!
+  registrationId: ID!
+  status: RegistrationStatus!
+  tokenHash: String!
+}
+
+type RosterPlayer {
+  displayName: String!
+  userId: ID!
+}
+
+"""One round’s cards, one per judge."""
+type RoundCards {
+  judges: [GameScore!]!
+}
+
+"""
+F21 — the few numbers a host may change about how a match is played. Each applies only to sports scored that way; anything else is refused.
+"""
+input RuleTweaksInput {
+  """Rally sports: games to win (1 = one game, 2 = best of 3)."""
+  gamesToWin: Int
+
+  """Cricket: overs a side (1–50)."""
+  oversPerInnings: Int
+
+  """Timed sports: minutes a period (5–60)."""
+  periodMinutes: Int
+
+  """Rally sports: points in a game (5–30)."""
+  pointsToWin: Int
+
+  """Set sports: sets to win (1 = one set, 2 = best of 3)."""
+  setsToWin: Int
+}
+
+"""
+What the scheduler placed on this run. It is advisory and idempotent: running it again places only what is newly ready (R11, R13).
+"""
+type ScheduleDrawPayload {
+  assignments: [CourtAssignment!]!
+  userError: UserError
+}
+
+"""
+What a scorer recorded. The sport’s rule decides which it takes (scoring R4).
+"""
+enum ScoreEventType {
+  """INNINGS — one delivery: `runs`, optional `extra` and `wicket`."""
+  BALL
+
+  """BOUTS — `side` won early by `method` (ko, submission, fall…)."""
+  FINISH
+
+  """BOUTS — a penalty against `side`."""
+  PENALTY
+  PERIOD_END
+  POINT
+
+  """SERIES — `value` points to `side` inside the unit."""
+  POINTS
+
+  """BOUTS (judged) — the round’s `cards`, one per judge, 10-point must."""
+  ROUND_CARDS
+
+  """BOUTS (points) — the round’s clock ran out."""
+  ROUND_END
+
+  """A named score action: `action` is one of the rule’s action keys."""
+  SCORE
+
+  """`scored` says whether it went in."""
+  SHOOTOUT_KICK
+
+  """SERIES — a drawn unit (chess): half a point each."""
+  UNIT_DRAWN
+
+  """SERIES — close a points unit; the higher score takes it."""
+  UNIT_END
+
+  """
+  SERIES — a unit won by `side`, with `unitScore` where the rule wants one.
+  """
+  UNIT_WON
+}
+
+"""
+scoring R3 — always the complete score, never a delta. A client that missed ten updates is correct on receiving the eleventh.
+"""
+type ScoreState {
+  bout: Bout
+
+  """
+  Points in the game being played (RALLY), games in the current set (SETS), or the running score (GOALS).
+  """
+  current: GameScore!
+
+  """
+  Completed games (RALLY) or sets, each holding the games won in it (SETS). Empty for GOALS.
+  """
+  games: [GameScore!]!
+  innings: Innings
+  kind: ScoringKind!
+  matchOver: Boolean!
+
+  """SETS only — the tiebreak being played replaces the deciding set."""
+  matchTiebreak: Boolean!
+
+  """
+  GOALS only — the period being played, 1-based. Beyond the rule’s `periods` it is extra time.
+  """
+  period: Int
+
+  """SETS only — points in the current game or tiebreak."""
+  points: GameScore
+
+  """The `expectedSeq` the next write must carry (scoring R1)."""
+  seq: Int!
+
+  """Null for a family with no serve."""
+  serving: MatchSide
+  shootout: Shootout
+  tiebreak: Boolean!
+  winner: MatchSide
+}
+
+"""
+The scoring family. RALLY: points within games (pickleball, badminton, table tennis, volleyball, squash). SETS: points within games within sets (tennis, padel). GOALS: a running score over periods (football, basketball, kabaddi). INNINGS: runs and wickets over a number of balls, one innings a side (cricket). SERIES: a race of units — frames, racks, games, maps (snooker, pool, billiards, carrom, chess, esports). BOUTS: rounds between two fighters, on judges’ cards or on points (boxing, MMA, wrestling, karate, taekwondo).
+"""
+enum ScoringKind {
+  BOUTS
+  GOALS
+  INNINGS
+  RALLY
+  SERIES
+  SETS
+}
+
+"""
+scoring R4 — what a point means, from the sport module. Clients count with it; they never branch on the sport.
+"""
+type ScoringRule {
+  """
+  The rule document as JSON, discriminated by `kind`. Its shape is the sport module’s `scoringRuleSchema`.
+  """
+  definition: String!
+  kind: ScoringKind!
+}
+
+input SelectOnboardingSportsInput {
+  sportIds: [ID!]!
+}
+
+input SendMessageInput {
+  body: String!
+  playerId: ID!
+}
+
+type SendMessagePayload {
+  conversation: Conversation
+  message: Message
+  userError: UserError
+}
+
+type Session {
+  accessToken: String!
+  isNewUser: Boolean!
+  refreshToken: String!
+}
+
+type SessionPayload {
+  session: Session
+  userError: UserError
+}
+
+"""Kicks taken, in order: true scored, false missed."""
+type Shootout {
+  a: [Boolean!]!
+  b: [Boolean!]!
+
+  """Who kicked first (the coin toss). Null before the first kick."""
+  first: MatchSide
+
+  """
+  Who kicks next. Null before the first kick (either side may) and once decided.
+  """
+  next: MatchSide
+}
+
+"""
+A self-declared skill tier, defined per sport (sport R2). Pickleball uses the DUPR-style 2.5–5.0+ ladder; another sport will not, and no client may assume it.
+"""
+type SkillBand {
+  id: ID!
+  key: String!
+  label: String!
+  lowerBound: Float
+  sortOrder: Int!
+  upperBound: Float
+}
+
+type Sport {
+  formats: [Format!]!
+  id: ID!
+  name: String!
+  skillBands: [SkillBand!]!
+  slug: String!
+}
+
+type StaffRefundPayload {
+  refundId: ID
+  userError: UserError
+}
+
+type StaffSupportMessage {
+  authorName: String!
+  body: String!
+  createdAt: DateTime!
+  fromSupport: Boolean!
+  id: ID!
+  internal: Boolean!
+}
+
+type StaffSupportTicket {
+  assignedToName: String
+  createdAt: DateTime!
+  firstResponseAt: DateTime
+  id: ID!
+  linkedId: ID
+  linkedType: SupportTicketLink
+  messages: [StaffSupportMessage!]!
+  requestId: String
+  status: SupportTicketStatus!
+  subject: String!
+  updatedAt: DateTime!
+  userId: ID!
+  userName: String!
+}
+
+type StaffSupportTicketPage {
+  hasNextPage: Boolean!
+  nodes: [StaffSupportTicket!]!
+}
+
+type StaffSupportTicketPayload {
+  ticket: StaffSupportTicket
+  userError: UserError
+}
+
+"""
+Standard competition ranking across both brackets: an entry that went further in the Championship finishes above one that did not, and the first-round losers are separated by how far they went in the Plate.
+"""
+type StandingRow {
+  bracket: BracketType!
+  eliminatedInRound: Int
+  losses: Int!
+
+  """Joint places share a number."""
+  place: Int!
+  registration: Registration
+  seed: Int!
+  wins: Int!
+}
+
+"""profile R8 — one sport's record, materialised on match completion."""
+type StatsSnapshot {
+  bestFinish: String
+  currentStreak: Int!
+  losses: Int!
+  matchesPlayed: Int!
+  sport: Sport!
+  tournamentsPlayed: Int!
+  updatedAt: DateTime
+
+  """0-1. Zero when nothing has been played."""
+  winRate: Float!
+  wins: Int!
+}
+
+"""
+A result entered rather than tapped. PLAYED is checked against the sport’s rule; the others need `winner` and no score (R10).
+"""
+input SubmitMatchResultInput {
+  games: [GameScoreInput!]
+  matchId: ID!
+  outcome: MatchOutcome!
+
+  """
+  The shootout that decided a level goals match. Required then; refused otherwise.
+  """
+  penalties: GameScoreInput
+  winner: MatchSide
+}
+
+type SupportMessage {
+  body: String!
+  createdAt: DateTime!
+
+  """
+  True for PL4Y staff; the app shows them as "PL4Y support", never by name.
+  """
+  fromSupport: Boolean!
+  id: ID!
+}
+
+"""
+admin R7 — a person’s ticket, as they see it. Internal notes are never here.
+"""
+type SupportTicket {
+  createdAt: DateTime!
+  id: ID!
+  linkedId: ID
+  linkedType: SupportTicketLink
+  messages: [SupportMessage!]!
+  status: SupportTicketStatus!
+  subject: String!
+  updatedAt: DateTime!
+}
+
+input SupportTicketInput {
+  body: String!
+  linkedId: ID
+  linkedType: SupportTicketLink
+
+  """R7 — the last requestId the app saw, so support can trace the call."""
+  requestId: String
+  subject: String!
+}
+
+enum SupportTicketLink {
+  BOOKING
+  EVENT
+  PAYMENT
+  PAYOUT
+  REGISTRATION
+}
+
+type SupportTicketPage {
+  hasNextPage: Boolean!
+  nodes: [SupportTicket!]!
+}
+
+type SupportTicketPayload {
+  ticket: SupportTicket
+  userError: UserError
+}
+
+enum SupportTicketStatus {
+  CLOSED
+  OPEN
+  PENDING_USER
+  RESOLVED
+}
+
+type Team {
+  id: ID!
+  members: [TeamMember!]!
+}
+
+type TeamMember {
+  """The captain pays for the whole team (registration R6)."""
+  isCaptain: Boolean!
+  userId: ID!
+}
+
+"""
+A generated draw. One per event category, and the unique constraint behind that is what makes two simultaneous generations collide rather than interleave two half-brackets.
+"""
+type Tournament {
+  """For a league or group stage: the number of entries."""
+  bracketSize: Int!
+  category: EventCategory!
+  championship: [BracketRound!]!
+  completedAt: DateTime
+  courtAssignments: [CourtAssignment!]!
+
+  """single_elim_with_plate | single_elim | league | groups_knockout"""
+  drawType: String!
+  drawnAt: DateTime!
+
+  """League and group matches, by matchday."""
+  fixtures: [Match!]!
+  id: ID!
+
+  """The league table, or one table per group. Empty for a knockout draw."""
+  league: [LeagueGroup!]!
+  liveMatches: [Match!]!
+  plate: [BracketRound!]!
+
+  """Sized to the number of first-round losers, not to half the draw (R5)."""
+  plateSize: Int!
+  standings: [StandingRow!]!
+
+  """F23 — the match for third, when this knockout has one."""
+  thirdPlace: Match
+}
+
+input UndoPointInput {
+  expectedSeq: Int!
+  matchId: ID!
+}
+
+input UpdateCourtInput {
+  """Retiring a court with scheduled matches fails with COURT_IN_USE."""
+  active: Boolean
+  indoor: Boolean
+  kind: PlayingAreaKind
+  name: String
+  sportIds: [ID!]
+  surface: String
+}
+
+input UpdateEventCategoryInput {
+  ageMax: Int
+  ageMin: Int
+  capacity: Int
+  drawType: String
+  entryFeePaise: Int
+  matchMinutes: Int
+
+  """
+  F16 — may go down at any time before close; up only before anyone enters.
+  """
+  minEntries: Int
+  name: String
+  prizes: String
+  rulesNote: String
+  skillMax: Float
+  skillMin: Float
+  thirdPlace: Boolean
+  tweaks: RuleTweaksInput
+}
+
+"""
+Only the fields present are written. After people have entered, a change of dates or place is allowed until a draw is made: entrants are told and may withdraw in full for 48 hours (F18).
+"""
+input UpdateEventInput {
+  acceptHostTerms: Boolean
+  cancellationCutoffAt: DateTime
+  city: String
+  contactPhone: String
+  description: String
+  endsAt: DateTime
+  location: GeoPointInput
+  locationNote: String
+  refundPolicy: RefundPolicy
+  registrationClosesAt: DateTime
+  startsAt: DateTime
+  timezone: String
+  title: String
+  venueId: ID
+}
+
+"""
+profile R15 — only the fields present are written. A blank bio clears it.
+"""
+input UpdateProfileDetailsInput {
+  """At most 160 characters."""
+  bio: String
+
+  """2-40 characters."""
+  displayName: String
+}
+
+input UpdateProfileLocationInput {
+  city: String
+  lat: Float
+  lng: Float
+}
+
+"""Replaces the whole selection. An empty list clears it."""
+input UpdateProfileSportsInput {
+  sports: [PlayerSportInput!]!
+}
+
+"""Only the fields present are written."""
+input UpdateVenueInput {
+  address: String
+  amenities: [String!]
+  city: String
+  contactPhone: String
+  description: String
+  location: GeoPointInput
+  name: String
+
+  """Replaces the whole week."""
+  openingHours: [OpeningHoursInput!]
+  photoPublicIds: [String!]
+}
+
+"""
+An expected failure the player can act on. The client switches on `code`, never on `message`.
+"""
+type UserError {
+  code: String!
+  message: String!
+  retryAfterSeconds: Int
+}
+
+type Venue {
+  address: String!
+  amenities: [String!]!
+
+  """
+  bookings — Gap G15. True when the venue takes court bookings; the app shows "Book a court" only then.
+  """
+  bookable: Boolean!
+  city: String!
+  contactPhone: String
+  courts: [Court!]!
+  description: String
+
+  """Distance from the search centre. Null unless `near` was given."""
+  distanceKm: Float
+  id: ID!
+  location: GeoPoint!
+  name: String!
+  openingHours: [OpeningHours!]!
+  photoUrls: [String!]!
+
+  """venues R7 — the average of visible reviews. Null until there are 3."""
+  rating: Float
+  reviewCount: Int!
+
+  """Newest first. Forward pagination only."""
+  reviews(after: String, before: String, first: Int, last: Int): VenueReviewConnection!
+
+  """The union over this venue’s active courts."""
+  sports: [Sport!]!
+
+  """
+  venues R6 — you played here in the last 12 months. False when signed out.
+  """
+  viewerCanReview: Boolean!
+
+  """You may edit this venue and reply to its reviews (venues R3, R8)."""
+  viewerManages: Boolean!
+
+  """Your own review, to edit. One per player per venue."""
+  viewerReview: VenueReview
+}
+
+type VenueBookingPolicy {
+  advanceDays: Int!
+  bookable: Boolean!
+  fullRefundHours: Int!
+  minSlotMinutes: Int!
+  partialRefundBps: Int!
+  partialRefundHours: Int!
+  platformFeePaise: Int!
+  taxBps: Int!
+}
+
+input VenueBookingPolicyInput {
+  advanceDays: Int
+  bookable: Boolean
+  fullRefundHours: Int
+  minSlotMinutes: Int
+  partialRefundBps: Int
+  partialRefundHours: Int
+  platformFeePaise: Int
+  taxBps: Int
+}
+
+type VenueBookingSetup {
+  myRole: VenueRole!
+  policy: VenueBookingPolicy!
+  rules: [CourtAvailabilityRule!]!
+  upcomingBlackouts: [CourtBlackout!]!
+  venue: Venue!
+}
+
+type VenueBookingSetupPayload {
+  setup: VenueBookingSetup
+  userError: UserError
+}
+
+type VenueConnection {
+  edges: [VenueEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+bookings R7, R8 — occupancy and money. Offline money never enters the ledger and is shown apart.
+"""
+type VenueDashboard {
+  bookedHours: Float!
+  bookings: Int!
+  cancelled: Int!
+  from: String!
+  noShows: Int!
+
+  """0 to 1."""
+  occupancy: Float!
+  offlinePaise: Int!
+  onlinePaise: Int!
+  openHours: Float!
+  to: String!
+}
+
+type VenueEdge {
+  cursor: String!
+  node: Venue!
+}
+
+type VenuePayload {
+  userError: UserError
+  venue: Venue
+}
+
+"""venues R6–R8 — one player’s review of a venue they played at."""
+type VenueReview {
+  author: VenueReviewAuthor
+  body: String
+  createdAt: DateTime!
+  id: ID!
+  repliedAt: DateTime
+
+  """R8 — the venue’s one public answer."""
+  reply: String
+  stars: Int!
+  updatedAt: DateTime!
+}
+
+"""
+The reviewer, by player profile id — open it with `playerProfile(id:)`.
+"""
+type VenueReviewAuthor {
+  avatarUrl: String
+  displayName: String!
+  id: ID!
+}
+
+type VenueReviewConnection {
+  edges: [VenueReviewEdge!]!
+  pageInfo: PageInfo!
+}
+
+type VenueReviewEdge {
+  cursor: String!
+  node: VenueReview!
+}
+
+type VenueReviewPayload {
+  review: VenueReview
+  userError: UserError
+}
+
+enum VenueRole {
+  DESK
+  MANAGER
+  OWNER
+}
+
+"""bookings R7 — the desk’s day."""
+type VenueSchedule {
+  blackouts: [CourtBlackout!]!
+  bookings: [CourtBooking!]!
+  courts: [Court!]!
+  date: String!
+  rules: [CourtAvailabilityRule!]!
+}
+
+type VenueStaffMember {
+  name: String!
+  role: VenueRole!
+  since: DateTime!
+  userId: ID!
+}
+
+type VenueStaffPayload {
+  staff: [VenueStaffMember!]
+  userError: UserError
+}
+
+"""The signed-in user."""
+type Viewer {
+  contactPhone: String
+  createdAt: DateTime!
+  displayName: String!
+  email: String!
+
+  """
+  hosting R3, R4 — everything waiting on the viewer across their running events, most urgent first.
+  """
+  hostingNeedsYou: [HostingNeedsYouItem!]!
+  id: ID!
+
+  """hosting R1 — whether the app shows the Hosting tab."""
+  isHosting: Boolean!
+
+  """
+  org R6 — the organisations the viewer belongs to, for “Host as” and the Hosting tab.
+  """
+  organisations: [OrganisationMembership!]!
+
+  """
+  admin, support or finance for PL4Y staff; null for everyone else. The admin portal reads it to decide what to show (portal R1).
+  """
+  platformRole: String
+}
+
+type ViewerPayload {
+  userError: UserError
+  viewer: Viewer
+}
+
+input WalkInBookingInput {
+  courtId: ID!
+  endsAt: DateTime!
+  name: String!
+  payment: WalkInPayment!
+  phone: String
+  startsAt: DateTime!
+}
+
+enum WalkInPayment {
+  COMP
+  OFFLINE
+}

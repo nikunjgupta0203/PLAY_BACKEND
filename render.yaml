@@ -1,0 +1,93 @@
+# Render Blueprint — PL4Y backend, FREE plan.
+#
+# The free plan has no background workers and no preDeployCommand, so:
+#   · the API and the worker run in ONE process (src/all.ts, `pnpm start:all`).
+#     The worker is NOT optional — without it holds never expire, refunds never
+#     run and notifications never send.
+#   · migrations run at the end of the build (`pnpm db:deploy`).
+#   · a free web service sleeps after 15 idle minutes, and a sleeping service
+#     runs no jobs. Point an external pinger (cron-job.org, UptimeRobot) at
+#     GET /healthz every 10 minutes to keep it awake.
+#   · jobs, schedules and rate limits live in Postgres (the `jobs`,
+#     `job_schedules` and `rate_limit_hits` tables), so a restart or a sleep
+#     loses none of them. There is no Redis.
+#
+# Upgrading: set the plans to `starter`, split `pl4y-api` back into a web
+# service running `pnpm start` and a worker running `pnpm start:worker`, and
+# move `pnpm db:deploy` into a `preDeployCommand`.
+#
+# Postgres is Neon (ADR 0001), not Render: set DATABASE_URL (pooled) and
+# DIRECT_DATABASE_URL (direct) in the `pl4y-shared` group after the first sync.
+# Every `sync: false` value is asked for in the dashboard on first deploy.
+#
+# NODE_ENV=production is set at build time too, which makes pnpm skip
+# devDependencies — hence `--prod=false`: the build needs tsc and prisma.
+
+envVarGroups:
+  - name: pl4y-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: LOG_LEVEL
+        value: info
+      # ── Database (Neon) ────────────────────────────────────────────────────
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_DATABASE_URL
+        sync: false
+      # ── Auth — RS256 PEM pair, base64 or with literal \n ───────────────────
+      - key: JWT_PRIVATE_KEY
+        sync: false
+      - key: JWT_PUBLIC_KEY
+        sync: false
+      - key: CHECKIN_TOKEN_SECRET
+        generateValue: true
+      # ── Email — Resend ─────────────────────────────────────────────────────
+      - key: EMAIL_TRANSPORT
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        value: "PL4Y <support@getpl4y.com>"
+      - key: RESEND_WEBHOOK_SECRET
+        sync: false
+      # ── Push — Expo ────────────────────────────────────────────────────────
+      - key: PUSH_TRANSPORT
+        value: expo
+      # ── Realtime — Pusher ──────────────────────────────────────────────────
+      - key: PUSHER_APP_ID
+        sync: false
+      - key: PUSHER_KEY
+        sync: false
+      - key: PUSHER_SECRET
+        sync: false
+      - key: PUSHER_CLUSTER
+        value: ap2
+      # ── Media — Cloudinary ─────────────────────────────────────────────────
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_UPLOAD_PRESET
+        sync: false
+
+services:
+  - type: web
+    name: pl4y-api
+    runtime: node
+    plan: free
+    region: singapore
+    # Migrations run against DIRECT_DATABASE_URL at the end of every build;
+    # `migrate deploy` applies only what is new, so a no-op build is harmless.
+    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm build && pnpm db:deploy
+    startCommand: pnpm start:all
+    healthCheckPath: /healthz
+    envVars:
+      - fromGroup: pl4y-shared
+      # Comma-separated frontend origins. Empty means ANY origin is allowed.
+      - key: CORS_ORIGINS
+        sync: false
