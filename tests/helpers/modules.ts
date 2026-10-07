@@ -616,7 +616,8 @@ export function buildModules(prisma: PrismaClient) {
     entries,
     media,
     organisations: {
-      forHosting: (organisationId: string, userId: string) => late.organisations!.forHosting(organisationId, userId),
+      forHosting: (organisationId: string, userId: string, opts?: { staff?: boolean }) =>
+        late.organisations!.forHosting(organisationId, userId, opts),
       syncEventGrants: (tx: Parameters<OrganisationService['syncEventGrants']>[0], organisationId: string, eventId: string) =>
         late.organisations!.syncEventGrants(tx, organisationId, eventId),
       isSuspended: async (organisationId: string) =>

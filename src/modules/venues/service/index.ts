@@ -72,6 +72,8 @@ export interface VenueReview {
 
 export interface Actor {
   userId: string;
+  /** PL4Y staff in the portal manage any venue as its owner would — set by the schema, never by a client. */
+  platformStaff?: boolean;
 }
 
 export interface Venue {
@@ -363,8 +365,11 @@ export function createVenueService(deps: VenueDeps) {
    * global organizer role (identity R10: a grant is per event), so any signed-in
    * player may add one and moderation is manual in Phase 1. That is acceptable
    * at this volume and should be revisited before it is not.
+   *
+   * `ownerId`: staff add a venue for the person who runs it, who then owns it
+   * (edits it, runs its desk) as if they had added it themselves.
    */
-  async function create(actor: Actor, input: CreateVenueInput): Promise<Venue> {
+  async function create(actor: Actor, input: CreateVenueInput, opts: { ownerId?: string } = {}): Promise<Venue> {
     if (!isValidPoint(input.location)) {
       throw new UserError(VenueCode.INVALID_LOCATION, 'That is not a point on Earth.');
     }
@@ -378,7 +383,7 @@ export function createVenueService(deps: VenueDeps) {
       location: input.location,
       amenities: input.amenities ?? [],
       photoPublicIds: input.photoPublicIds ?? [],
-      createdBy: actor.userId,
+      createdBy: opts.ownerId ?? actor.userId,
     });
 
     for (const court of input.courts ?? []) {
@@ -388,12 +393,13 @@ export function createVenueService(deps: VenueDeps) {
   }
 
   /**
-   * Only the venue's creator may edit it. Anything richer needs a venue-owner
-   * grant, and inventing a second grant table for Phase 1 buys nothing.
+   * Only the venue's creator may edit it, and PL4Y staff in the portal. Anything
+   * richer needs a venue-owner grant, and inventing a second grant table for
+   * Phase 1 buys nothing.
    */
   async function assertOwner(actor: Actor, venueId: string): Promise<Venue> {
     const venue = await byId(venueId);
-    if (venue.createdBy !== actor.userId) throw forbidden();
+    if (venue.createdBy !== actor.userId && !actor.platformStaff) throw forbidden();
     return venue;
   }
 

@@ -165,6 +165,11 @@ export type Availability = 'OPEN' | 'ALMOST_FULL' | 'FULL' | 'CLOSED';
 
 export interface Actor {
   userId: string;
+  /**
+   * PL4Y staff (admin or support) signed in to the portal. They run any event
+   * as its owner would — set by the schema, never by a client.
+   */
+  platformStaff?: boolean;
 }
 
 export interface Event {
@@ -400,8 +405,12 @@ export interface PublishGate {
  * imports `organizers`. Absent: nobody can host as an organisation.
  */
 export interface OrganisationsPort {
-  /** Throws a UserError when the person may not host as it. */
-  forHosting(organisationId: string, userId: string): Promise<{ ownerId: string; role: 'owner' | 'admin' | 'member' }>;
+  /** Throws a UserError when the person may not host as it. `staff`: PL4Y staff host for any organisation (role null). */
+  forHosting(
+    organisationId: string,
+    userId: string,
+    opts?: { staff?: boolean },
+  ): Promise<{ ownerId: string; role: 'owner' | 'admin' | 'member' | null }>;
   /** The organisation's owner and admins get their grants on a new event, in its transaction. */
   syncEventGrants(tx: Tx, organisationId: string, eventId: string): Promise<void>;
   /** R7 — a suspended organisation publishes nothing and takes no entries. */
@@ -730,6 +739,7 @@ export function createEventService(deps: EventDeps) {
   ): Promise<EventRow> {
     const row = await repo.byId(eventId);
     if (!row) throw notFound();
+    if (actor.platformStaff) return row;
     const grant = await identity.grantsFor(actor.userId, eventId);
     // FORBIDDEN never leaks whether the resource exists (conventions.md §3),
     // and by this point we already know it does.
@@ -756,11 +766,13 @@ export function createEventService(deps: EventDeps) {
    */
   async function assertCanCharge(
     actor: Actor,
-    event: { status: string; organizerProfileId?: string | null },
+    event: { status: string; organizerId: string; organizerProfileId?: string | null },
     feePaise: bigint,
   ): Promise<void> {
     if (event.status === 'draft' || feePaise <= 0n || !deps.publishGate) return;
-    const verdict = await deps.publishGate.canPublishPaid(actor.userId, event.organizerProfileId ?? null);
+    // Staff charge on the host's behalf: the host's payout account is the one that counts.
+    const payee = actor.platformStaff ? event.organizerId : actor.userId;
+    const verdict = await deps.publishGate.canPublishPaid(payee, event.organizerProfileId ?? null);
     if (!verdict.ok) {
       throw new UserError(
         EventCode.ORGANIZER_NOT_VERIFIED,
@@ -1092,7 +1104,9 @@ export function createEventService(deps: EventDeps) {
     if (organisationId && !deps.organisations) {
       throw new UserError(EventCode.INVALID_EVENT_FIELD, 'Hosting as an organisation is not available.');
     }
-    const host = organisationId ? await deps.organisations!.forHosting(organisationId, actor.userId) : null;
+    const host = organisationId
+      ? await deps.organisations!.forHosting(organisationId, actor.userId, { staff: actor.platformStaff })
+      : null;
 
     const id = newId();
     // Nothing can have been uploaded under an event that does not exist yet.
@@ -1372,7 +1386,9 @@ export function createEventService(deps: EventDeps) {
 
     // events R10 — free categories need nothing; a paid one needs the gate.
     if (deps.publishGate && categories.some((c) => c.entryFeePaise > 0n)) {
-      const verdict = await deps.publishGate.canPublishPaid(actor.userId, row.organizerProfileId ?? null);
+      // Staff publish for the host: the host's payout account is the one that counts.
+      const payee = actor.platformStaff ? row.organizerId : actor.userId;
+      const verdict = await deps.publishGate.canPublishPaid(payee, row.organizerProfileId ?? null);
       if (!verdict.ok) {
         throw new UserError(
           EventCode.ORGANIZER_NOT_VERIFIED,

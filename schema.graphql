@@ -1636,8 +1636,18 @@ type Mutation {
   adminAssignSupportTicket(ticketId: ID!, toMe: Boolean!): StaffSupportTicketPayload!
   adminCancelOrganisationInvite(inviteId: ID!, reason: String!): OrganisationOkPayload!
 
+  """
+  portal — PL4Y staff create a draft hosted by an organisation (required). Its draws, edits and publishing then go through the usual mutations, which staff may call on any event.
+  """
+  adminCreateEvent(input: CreateEventInput!, reason: String!): EventPayload!
+
   """org R1 — created verified, with its owner (or an invite to them)."""
   adminCreateOrganisation(input: CreateOrganisationInput!, reason: String!): CreateOrganisationPayload!
+
+  """
+  portal — PL4Y staff add a venue. With `ownerEmail`, that PL4Y account owns it: edits it and runs its desk from the app. Without, staff manage it from the portal.
+  """
+  adminCreateVenue(input: CreateVenueInput!, ownerEmail: String, reason: String!): VenuePayload!
   adminReinstateOrganisation(organisationId: ID!, reason: String!): OrganisationPayload!
   adminReinstateUser(reason: String!, userId: ID!): AdminUserPayload!
   adminRemoveOrganisationMember(organisationId: ID!, reason: String!, userId: ID!): OrganisationOkPayload!
@@ -1745,7 +1755,9 @@ type Mutation {
   """
   createBookingPaymentOrder(bookingId: ID!): CreatePaymentOrderPayload!
 
-  """Creates a draft. Publishing is the validation gate (events R1)."""
+  """
+  Creates a draft. Publishing is the validation gate (events R1). PL4Y staff use adminCreateEvent.
+  """
   createEvent(input: CreateEventInput!): EventPayload!
 
   """
@@ -2113,6 +2125,7 @@ enum NotificationKind {
   EVENT_CHANGED
   EVENT_REPORT_RESOLVED
   HOST_DRAW_CANCELLED
+  HOST_DRAW_MADE
   HOST_DRAW_SHORT
   HOST_EVENT_COMPLETED
   HOST_NEW_ENTRY

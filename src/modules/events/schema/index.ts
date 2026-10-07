@@ -17,11 +17,14 @@
  *   · `tournament` needs `tournament` (Sprint 8).
  */
 import { builder, clampFirst } from '../../../graphql/builder.js';
+import type { Ctx } from '../../../graphql/context.js';
 import { GeoPointInput, GeoPointRef } from '../../../graphql/geo.js';
-import { audited, requirePlatformStaff } from '../../../graphql/staff.js';
+import { audited, requirePlatformStaff, requireReason } from '../../../graphql/staff.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
+import { recordAudit } from '../../../platform/audit.js';
 import { cloudinary, TRANSFORMS } from '../../../platform/cloudinary.js';
+import { db } from '../../../platform/db.js';
 import { SystemError, UserError } from '../../../platform/errors/index.js';
 import { sport } from '../../sport/index.js';
 import { FormatRef, SportRef } from '../../sport/schema/index.js';
@@ -555,6 +558,38 @@ const CreateEventInput = builder.inputType('CreateEventInput', {
   }),
 });
 
+function createInputOf(i: typeof CreateEventInput.$inferInput): Parameters<typeof events.create>[1] {
+  return {
+    sportId: String(i.sportId),
+    title: i.title,
+    description: i.description ?? null,
+    city: i.city ?? null,
+    venueId: i.venueId ? String(i.venueId) : null,
+    location: i.location ? { lat: i.location.lat, lng: i.location.lng } : null,
+    timezone: i.timezone ?? undefined,
+    startsAt: i.startsAt,
+    endsAt: i.endsAt,
+    registrationClosesAt: i.registrationClosesAt,
+    cancellationCutoffAt: i.cancellationCutoffAt ?? null,
+    contactPhone: i.contactPhone ?? null,
+    locationNote: i.locationNote ?? null,
+    acceptHostTerms: i.acceptHostTerms ?? false,
+    refundPolicy: i.refundPolicy ?? undefined,
+    organisationId: i.organisationId ? String(i.organisationId) : null,
+  };
+}
+
+/**
+ * Portal staff (admin, support) run any event as its owner would (events
+ * Actor.platformStaff). Anyone else, and staff on their phone, is themselves.
+ */
+async function eventActor(ctx: Ctx) {
+  const actor = requireActor(ctx);
+  if (actor.client !== 'portal') return actor;
+  const role = await ctx.loaders.platformRole.load(actor.userId);
+  return { ...actor, platformStaff: role === 'admin' || role === 'support' };
+}
+
 const UpdateEventInput = builder.inputType('UpdateEventInput', {
   description:
     'Only the fields present are written. After people have entered, a change of dates or ' +
@@ -787,32 +822,46 @@ builder.mutationFields((t) => ({
 
   createEvent: t.field({
     type: EventPayload,
-    description: 'Creates a draft. Publishing is the validation gate (events R1).',
+    description: 'Creates a draft. Publishing is the validation gate (events R1). PL4Y staff use adminCreateEvent.',
     args: { input: t.arg({ type: CreateEventInput, required: true }) },
     resolve: async (_root, args, ctx) => {
       const actor = requireActor(ctx);
-      const { data, userError } = await attempt(() =>
-        events.create(actor, {
-          sportId: args.input.sportId,
-          title: args.input.title,
-          description: args.input.description ?? null,
-          city: args.input.city ?? null,
-          venueId: args.input.venueId ?? null,
-          location: args.input.location
-            ? { lat: args.input.location.lat, lng: args.input.location.lng }
-            : null,
-          timezone: args.input.timezone ?? undefined,
-          startsAt: args.input.startsAt,
-          endsAt: args.input.endsAt,
-          registrationClosesAt: args.input.registrationClosesAt,
-          cancellationCutoffAt: args.input.cancellationCutoffAt ?? null,
-          contactPhone: args.input.contactPhone ?? null,
-          locationNote: args.input.locationNote ?? null,
-          acceptHostTerms: args.input.acceptHostTerms ?? false,
-          refundPolicy: args.input.refundPolicy ?? undefined,
-          organisationId: args.input.organisationId ? String(args.input.organisationId) : null,
-        }),
-      );
+      const { data, userError } = await attempt(() => events.create(actor, createInputOf(args.input)));
+      return { event: data, userError };
+    },
+  }),
+
+  adminCreateEvent: t.field({
+    type: EventPayload,
+    description:
+      'portal — PL4Y staff create a draft hosted by an organisation (required). Its draws, ' +
+      'edits and publishing then go through the usual mutations, which staff may call on any event.',
+    args: {
+      input: t.arg({ type: CreateEventInput, required: true }),
+      reason: t.arg.string({ required: true }),
+    },
+    resolve: async (_root, args, ctx) => {
+      const staff = await requirePlatformStaff(ctx, ['admin', 'support']);
+      const { data, userError } = await attempt(async () => {
+        const reason = requireReason(args.reason);
+        if (!args.input.organisationId) {
+          throw new UserError(EventCode.INVALID_EVENT_FIELD, 'Choose the organisation that hosts it.');
+        }
+        const created = await events.create(
+          { userId: staff.userId, platformStaff: true },
+          createInputOf(args.input),
+        );
+        // Recorded against the id it was just given.
+        await recordAudit(db, {
+          actorUserId: staff.userId,
+          action: 'event.create',
+          targetType: 'event',
+          targetId: created.id,
+          reason,
+          details: { organisationId: String(args.input.organisationId), title: created.title },
+        });
+        return created;
+      });
       return { event: data, userError };
     },
   }),
@@ -824,7 +873,7 @@ builder.mutationFields((t) => ({
       input: t.arg({ type: UpdateEventInput, required: true }),
     },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await eventActor(ctx);
       const i = args.input;
       const { data, userError } = await attempt(() =>
         events.update(actor, args.eventId, {
@@ -876,7 +925,7 @@ builder.mutationFields((t) => ({
       'terms. A paid category also needs a verified host (ORGANIZER_NOT_VERIFIED).',
     args: { eventId: t.arg.id({ required: true }) },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await eventActor(ctx);
       const { data, userError } = await attempt(() => events.publish(actor, args.eventId));
       return { event: data, userError };
     },
@@ -907,7 +956,7 @@ builder.mutationFields((t) => ({
       input: t.arg({ type: EventCategoryInput, required: true }),
     },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await eventActor(ctx);
       const i = args.input;
       const { data, userError } = await attempt(() =>
         events.addCategory(actor, args.eventId, {
@@ -939,7 +988,7 @@ builder.mutationFields((t) => ({
       input: t.arg({ type: UpdateEventCategoryInput, required: true }),
     },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await eventActor(ctx);
       const i = args.input;
       const { data, userError } = await attempt(() =>
         events.updateCategory(actor, args.categoryId, {
@@ -1068,7 +1117,7 @@ builder.mutationFields((t) => ({
     description: 'F19 — deletes a draw nobody has entered. A published event keeps at least one.',
     args: { categoryId: t.arg.id({ required: true }) },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await eventActor(ctx);
       const { userError } = await attempt(() => events.removeCategory(actor, String(args.categoryId)));
       return { ok: userError === null, userError };
     },
@@ -1079,7 +1128,7 @@ builder.mutationFields((t) => ({
     description: 'F14 — a court the host has for this event ("Court 1"). The scheduler uses these first.',
     args: { eventId: t.arg.id({ required: true }), name: t.arg.string({ required: true }) },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await eventActor(ctx);
       const { data, userError } = await attempt(() => events.addCourt(actor, String(args.eventId), args.name));
       return { court: data, userError };
     },
@@ -1090,7 +1139,7 @@ builder.mutationFields((t) => ({
     description: 'F14 — retires one of the event’s courts. Matches already on it keep it.',
     args: { eventId: t.arg.id({ required: true }), courtId: t.arg.id({ required: true }) },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await eventActor(ctx);
       const { userError } = await attempt(() =>
         events.retireCourt(actor, String(args.eventId), String(args.courtId)),
       );

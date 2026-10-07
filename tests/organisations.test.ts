@@ -169,6 +169,27 @@ describe('organisations', () => {
     expect(await errorCode(() => draftAs(stranger, org.id))).toBe(OrgCode.NOT_A_MEMBER);
   });
 
+  it('portal: staff organise an event for an organisation they are not in, and run it to published', async () => {
+    const org = await makeOrg();
+    const portal = { ...staff, platformStaff: true };
+
+    const event = await draftAs(portal, org.id);
+    expect(event.organizerId).toBe(owner.userId);
+    expect(event.organizerProfileId).toBe(org.id);
+    expect(await grantOf(owner.userId, event.id)).toBe('owner');
+    // Staff act through the portal, not a grant: the event is not in their Hosting tab.
+    expect(await grantOf(staff.userId, event.id)).toBeNull();
+
+    await events.addCategory(portal, event.id, { name: 'Open', format: 'singles', capacity: 16, entryFeePaise: 0n });
+    expect((await events.publish(portal, event.id)).status).toBe('published');
+
+    // The same person outside the portal is nobody special.
+    expect(await errorCode(() => events.addCategory(staff, event.id, { name: 'B', format: 'singles', capacity: 8, entryFeePaise: 0n }))).toBe(
+      'FORBIDDEN',
+    );
+    expect(await errorCode(() => draftAs(staff, org.id))).toBe(OrgCode.NOT_A_MEMBER);
+  });
+
   it('org R5: grants follow membership — added, promoted and removed', async () => {
     const org = await makeOrg();
     const event = await draftAs(owner, org.id);

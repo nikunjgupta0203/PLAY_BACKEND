@@ -242,6 +242,23 @@ describe('venues', () => {
     expect(renamed.name).toBe('Indiranagar Sports Club');
   });
 
+  it('R3, portal: staff add a venue for its owner, and manage any venue', async () => {
+    const staff = { ...stranger, platformStaff: true };
+    const venue = await venues.create(
+      staff,
+      { name: 'Smash Arena', address: '80 Feet Road', city: 'Bengaluru', location: CENTRE, courts: [{ name: 'Court 1' }] },
+      { ownerId: owner.userId },
+    );
+    // The owner runs it as if they had added it.
+    expect(venue.createdBy).toBe(owner.userId);
+    await venues.update(owner, venue.id, { name: 'Smash Arena Indiranagar' });
+
+    await venues.addCourt(staff, venue.id, { name: 'Court 2' });
+    expect((await venues.courtsFor(venue.id)).map((c) => c.name)).toEqual(['Court 1', 'Court 2']);
+    // The same person outside the portal is nobody special.
+    expect(await errorCode(() => venues.addCourt(stranger, venue.id, { name: 'Court 3' }))).toBe('FORBIDDEN');
+  });
+
   // --- R4 --------------------------------------------------------------------
 
   it('R4: availability means "not assigned within THIS tournament", not booked', async () => {

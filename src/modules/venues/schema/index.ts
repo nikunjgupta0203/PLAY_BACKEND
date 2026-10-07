@@ -7,11 +7,16 @@
  * find through an event rather than a deep-link target of its own.
  */
 import { builder, clampFirst } from '../../../graphql/builder.js';
+import type { Ctx } from '../../../graphql/context.js';
 import { GeoPointInput, GeoPointRef } from '../../../graphql/geo.js';
+import { requirePlatformStaff, requireReason } from '../../../graphql/staff.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
+import { recordAudit } from '../../../platform/audit.js';
 import { cloudinary, TRANSFORMS } from '../../../platform/cloudinary.js';
-import { SystemError } from '../../../platform/errors/index.js';
+import { db } from '../../../platform/db.js';
+import { SystemError, UserError } from '../../../platform/errors/index.js';
+import { identity } from '../../identity/index.js';
 import { profile } from '../../profile/index.js';
 import { sport } from '../../sport/index.js';
 import { SportRef } from '../../sport/schema/index.js';
@@ -309,6 +314,36 @@ const CreateVenueInput = builder.inputType('CreateVenueInput', {
   }),
 });
 
+function createInputOf(i: typeof CreateVenueInput.$inferInput): Parameters<typeof venues.create>[1] {
+  return {
+    name: i.name,
+    address: i.address,
+    city: i.city,
+    location: { lat: i.location.lat, lng: i.location.lng },
+    amenities: i.amenities ?? undefined,
+    photoPublicIds: i.photoPublicIds ?? undefined,
+    courts:
+      i.courts?.map((c) => ({
+        name: c.name,
+        surface: c.surface ?? null,
+        indoor: c.indoor ?? false,
+        kind: c.kind ?? undefined,
+        sportIds: (c.sportIds ?? []).map(String),
+      })) ?? undefined,
+  };
+}
+
+/**
+ * Portal staff (admin, support) manage any venue as its owner would (venues
+ * Actor.platformStaff). Anyone else, and staff on their phone, is themselves.
+ */
+async function venueActor(ctx: Ctx) {
+  const actor = requireActor(ctx);
+  if (actor.client !== 'portal') return actor;
+  const role = await ctx.loaders.platformRole.load(actor.userId);
+  return { ...actor, platformStaff: role === 'admin' || role === 'support' };
+}
+
 const UpdateVenueInput = builder.inputType('UpdateVenueInput', {
   description: 'Only the fields present are written.',
   fields: (t) => ({
@@ -416,24 +451,49 @@ builder.mutationFields((t) => ({
     args: { input: t.arg({ type: CreateVenueInput, required: true }) },
     resolve: async (_root, args, ctx) => {
       const actor = requireActor(ctx);
-      const { data, userError } = await attempt(() =>
-        venues.create(actor, {
-          name: args.input.name,
-          address: args.input.address,
-          city: args.input.city,
-          location: { lat: args.input.location.lat, lng: args.input.location.lng },
-          amenities: args.input.amenities ?? undefined,
-          photoPublicIds: args.input.photoPublicIds ?? undefined,
-          courts:
-            args.input.courts?.map((c) => ({
-              name: c.name,
-              surface: c.surface ?? null,
-              indoor: c.indoor ?? false,
-              kind: c.kind ?? undefined,
-              sportIds: c.sportIds ?? [],
-            })) ?? undefined,
-        }),
-      );
+      const { data, userError } = await attempt(() => venues.create(actor, createInputOf(args.input)));
+      return { venue: data, userError };
+    },
+  }),
+
+  adminCreateVenue: t.field({
+    type: VenuePayload,
+    description:
+      'portal — PL4Y staff add a venue. With `ownerEmail`, that PL4Y account owns it: edits it ' +
+      'and runs its desk from the app. Without, staff manage it from the portal.',
+    args: {
+      input: t.arg({ type: CreateVenueInput, required: true }),
+      ownerEmail: t.arg.string(),
+      reason: t.arg.string({ required: true }),
+    },
+    resolve: async (_root, args, ctx) => {
+      const staff = await requirePlatformStaff(ctx, ['admin', 'support']);
+      const { data, userError } = await attempt(async () => {
+        const reason = requireReason(args.reason);
+        const email = args.ownerEmail?.trim() || null;
+        const owner = email ? await identity.findByEmail(email) : null;
+        if (email && !owner) {
+          throw new UserError(
+            'OWNER_NOT_FOUND',
+            'Nobody has a PL4Y account with that email. Ask them to sign up first, or leave it empty.',
+          );
+        }
+        const created = await venues.create(
+          { userId: staff.userId, platformStaff: true },
+          createInputOf(args.input),
+          { ownerId: owner?.id },
+        );
+        // Recorded against the id it was just given.
+        await recordAudit(db, {
+          actorUserId: staff.userId,
+          action: 'venue.create',
+          targetType: 'venue',
+          targetId: created.id,
+          reason,
+          details: { name: created.name, city: created.city, ownerEmail: email },
+        });
+        return created;
+      });
       return { venue: data, userError };
     },
   }),
@@ -445,7 +505,7 @@ builder.mutationFields((t) => ({
       input: t.arg({ type: UpdateVenueInput, required: true }),
     },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await venueActor(ctx);
       const { data, userError } = await attempt(() =>
         venues.update(actor, args.venueId, {
           name: args.input.name ?? undefined,
@@ -472,7 +532,7 @@ builder.mutationFields((t) => ({
       input: t.arg({ type: CourtInput, required: true }),
     },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await venueActor(ctx);
       const { data, userError } = await attempt(() =>
         venues.addCourt(actor, args.venueId, {
           name: args.input.name,
@@ -493,7 +553,7 @@ builder.mutationFields((t) => ({
       input: t.arg({ type: UpdateCourtInput, required: true }),
     },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await venueActor(ctx);
       const { data, userError } = await attempt(() =>
         venues.updateCourt(actor, args.courtId, {
           name: args.input.name ?? undefined,
@@ -515,7 +575,7 @@ builder.mutationFields((t) => ({
       'signature, then reports the public_id back through addVenuePhoto.',
     args: { venueId: t.arg.id({ required: true }) },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await venueActor(ctx);
       const { data, userError } = await attempt(() =>
         venues.photoUploadSignature(actor, args.venueId),
       );
@@ -530,7 +590,7 @@ builder.mutationFields((t) => ({
       publicId: t.arg.string({ required: true, description: 'Never a URL (ADR 0003 §C3).' }),
     },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await venueActor(ctx);
       const { data, userError } = await attempt(() =>
         venues.addPhoto(actor, args.venueId, args.publicId),
       );
@@ -574,7 +634,7 @@ builder.mutationFields((t) => ({
     description: 'venues R5 — soft delete. Completed tournaments keep resolving their venue.',
     args: { venueId: t.arg.id({ required: true }) },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await venueActor(ctx);
       const { userError } = await attempt(() => venues.remove(actor, args.venueId));
       return { venue: null, userError };
     },

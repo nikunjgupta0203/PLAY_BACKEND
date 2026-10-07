@@ -348,13 +348,18 @@ export function createOrganisationService(deps: OrganisationDeps) {
   /**
    * org R3 — may this person host an event as the organisation? Members may;
    * a suspended organisation hosts nothing (R7). Returns who the event's
-   * owner is: the organisation's.
+   * owner is: the organisation's. PL4Y staff in the portal host for any
+   * organisation; their role is null unless they happen to be a member.
    */
-  async function forHosting(organisationId: string, userId: string): Promise<{ ownerId: string; role: OrgRole }> {
+  async function forHosting(
+    organisationId: string,
+    userId: string,
+    opts: { staff?: boolean } = {},
+  ): Promise<{ ownerId: string; role: OrgRole | null }> {
     const org = await findById(organisationId);
     if (!org) throw notFound();
     const role = await roleOf(organisationId, userId);
-    if (!role) throw new UserError(OrgCode.NOT_A_MEMBER, 'You are not a member of that organisation.');
+    if (!role && !opts.staff) throw new UserError(OrgCode.NOT_A_MEMBER, 'You are not a member of that organisation.');
     if (org.verification === 'suspended') {
       throw new UserError(OrgCode.ORGANISATION_SUSPENDED, `${org.name} is suspended and cannot host events right now.`);
     }

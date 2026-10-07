@@ -93,9 +93,9 @@ const publishGate: PublishGate = {
 
 /** org R3, R5, R7 — reached lazily: organizers imports identity, which events also reaches lazily. */
 const organisationsPort: OrganisationsPort = {
-  async forHosting(organisationId, userId) {
+  async forHosting(organisationId, userId, opts) {
     const { organisations } = await import('../organizers/index.js');
-    return organisations.forHosting(organisationId, userId);
+    return organisations.forHosting(organisationId, userId, opts);
   },
   async syncEventGrants(tx, organisationId, eventId) {
     const { organisations } = await import('../organizers/index.js');
