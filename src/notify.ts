@@ -299,6 +299,18 @@ export const notify = {
     );
   },
 
+  /** The app made the draw itself (autoDraw.ts): the hosts are told, and where to change it. */
+  async hostDrawMade(payload: { categoryId: string; heats: number }): Promise<void> {
+    const category = await events.categoryById(payload.categoryId);
+    const event = await events.byId(category.eventId);
+    await notifications.emitBulk(
+      await runnersOf(event.id),
+      'host.draw_made',
+      { eventTitle: event.title, categoryName: category.name, heats: payload.heats },
+      organizerTarget(event),
+    );
+  },
+
   async hostEventCompleted(payload: Record<string, unknown>, payoutDueAt: Date | null): Promise<void> {
     const eventId = str(payload['eventId']);
     if (!eventId) return;

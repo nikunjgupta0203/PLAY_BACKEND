@@ -158,6 +158,19 @@ export function createFieldService(deps: FieldDeps) {
     input: { eventCategoryId: string; count: number; name?: string },
   ): Promise<HeatView[]> {
     await assertOrganizer(actor, input.eventCategoryId);
+    return drawHeats(input);
+  }
+
+  /**
+   * The app draws the heats itself when registration closes, `count` from the
+   * sport (lanes, flights). Null when the heats already exist.
+   */
+  async function autoHeats(eventCategoryId: string, count: number): Promise<HeatView[] | null> {
+    if ((await db.heat.count({ where: { eventCategoryId } })) > 0) return null;
+    return drawHeats({ eventCategoryId, count });
+  }
+
+  async function drawHeats(input: { eventCategoryId: string; count: number; name?: string }): Promise<HeatView[]> {
     const rule = await fieldRule(input.eventCategoryId);
     // gap #32 — like a bracket (gap #6): a heat drawn while registration is
     // open leaves out everyone who enters afterwards.
@@ -400,7 +413,7 @@ export function createFieldService(deps: FieldDeps) {
   }
 
   return {
-    scoredHeatCount, createHeat, createHeats, advance, byId, forCategory, recordFieldEvent, undoFieldEvent, access, finishCategory };
+    scoredHeatCount, createHeat, createHeats, autoHeats, advance, byId, forCategory, recordFieldEvent, undoFieldEvent, access, finishCategory };
 }
 
 export type FieldService = ReturnType<typeof createFieldService>;

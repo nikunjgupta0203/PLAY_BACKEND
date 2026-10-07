@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { configSchema } from './config.js';
+import { configSchema, silentTransports } from './config.js';
 
 const BASE = {
   DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
@@ -131,5 +131,19 @@ describe('config — the mock payment gateway', () => {
     expect(issuesFor({ NODE_ENV: 'production', PAYMENT_PROVIDER: 'mock', RAZORPAY_KEY_ID: '', PUBLIC_API_URL: '' })).toContain(
       'PAYMENT_PROVIDER',
     );
+  });
+});
+
+describe('config — silent transports in production', () => {
+  it('names push and email left on console in production', () => {
+    const off = silentTransports({ NODE_ENV: 'production', PUSH_TRANSPORT: 'console', EMAIL_TRANSPORT: 'console' });
+    expect(off).toHaveLength(2);
+    expect(off[0]).toContain('PUSH_TRANSPORT');
+    expect(off[1]).toContain('EMAIL_TRANSPORT');
+  });
+
+  it('is quiet when both deliver, and outside production', () => {
+    expect(silentTransports({ NODE_ENV: 'production', PUSH_TRANSPORT: 'expo', EMAIL_TRANSPORT: 'resend' })).toEqual([]);
+    expect(silentTransports({ NODE_ENV: 'development', PUSH_TRANSPORT: 'console', EMAIL_TRANSPORT: 'console' })).toEqual([]);
   });
 });

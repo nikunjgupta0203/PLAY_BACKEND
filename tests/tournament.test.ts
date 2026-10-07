@@ -419,6 +419,20 @@ describe('tournament — draw generation', () => {
     expect(placed).not.toContain(pending.id);
   });
 
+  it('the app makes the draw itself once registration closes — and only once', async () => {
+    const { categoryId } = await publishedCategory();
+    await fieldOf(categoryId, 4);
+    // Still open: nobody may draw it, the app included.
+    expect(await errorCode(() => tournament.autoDraw(categoryId))).toBe(TournamentCode.REGISTRATION_STILL_OPEN);
+
+    await prisma.eventCategory.update({ where: { id: categoryId }, data: { status: 'closed' } });
+    const draw = await tournament.autoDraw(categoryId);
+    expect(draw).not.toBeNull();
+    expect((await matchesOf(draw!.id)).filter((m) => m.bracket === 'championship' && m.round === 1)).toHaveLength(2);
+    // A retried job (or a host who drew first) leaves the draw alone.
+    expect(await tournament.autoDraw(categoryId)).toBeNull();
+  });
+
   it('R7: fewer entries than the category minimum is INSUFFICIENT_ENTRIES', async () => {
     const { categoryId } = await publishedCategory({ minEntries: 8 });
     await fieldOf(categoryId, 6);

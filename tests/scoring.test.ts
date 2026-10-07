@@ -1113,6 +1113,37 @@ describe('heats (plans 7, 8)', () => {
     expect((await field.access(organizer.userId, singles.categoryId)).isField).toBe(false);
   });
 
+  it('the app draws the heats itself once registration closes — and only once', async () => {
+    const { categoryId, entries } = await fieldCategory(RUNNING, 5);
+    await prisma.eventCategory.update({ where: { id: categoryId }, data: { status: 'closed' } });
+    const heats = await field.autoHeats(categoryId, 1);
+    expect(heats).toHaveLength(1);
+    expect([...heats![0]!.entries].sort()).toEqual([...entries].sort());
+    expect(await field.autoHeats(categoryId, 1)).toBeNull();
+  });
+
+  it('#13, #14: undo takes back the last write, reopens a heat made final, and never rewrites the log', async () => {
+    const { categoryId, entries: [e1, e2] } = await fieldCategory(RUNNING, 2);
+    const [heat] = await field.createHeats(organizer.actor, { eventCategoryId: categoryId, count: 1 });
+    const id = heat!.id;
+    await field.recordFieldEvent(organizer.actor, { heatId: id, expectedSeq: 0, event: { type: 'mark', entry: e1!, value: 61 } });
+    await field.recordFieldEvent(organizer.actor, { heatId: id, expectedSeq: 1, event: { type: 'status', entry: e2!, code: 'DNF' } });
+    await field.recordFieldEvent(organizer.actor, { heatId: id, expectedSeq: 2, event: { type: 'close' } });
+
+    // Reopen: the close is taken back.
+    let view = await field.undoFieldEvent(organizer.actor, { heatId: id, expectedSeq: 3 });
+    expect(view.status).toBe('live');
+    // The DNF next, then the mark — undos walk back past each other.
+    view = await field.undoFieldEvent(organizer.actor, { heatId: id, expectedSeq: 4 });
+    expect(view.state.entries[e2!]!.status).toBe('active');
+    view = await field.undoFieldEvent(organizer.actor, { heatId: id, expectedSeq: 5 });
+    expect(view.state.entries[e1!]!.marks).toEqual([]);
+    await expect(field.undoFieldEvent(organizer.actor, { heatId: id, expectedSeq: 6 })).rejects.toMatchObject({ code: 'NOTHING_TO_UNDO' });
+    // A stale seq is refused like any write.
+    await expect(field.undoFieldEvent(organizer.actor, { heatId: id, expectedSeq: 2 })).rejects.toMatchObject({ code: 'SCORE_STALE' });
+    expect(await prisma.heatScoreEvent.count({ where: { heatId: id } })).toBe(6);
+  });
+
   it('rounds: heats drawn once, serpentine; the top of each closed heat and the best of the rest make the final', async () => {
     const { categoryId, entries: [e1, e2, e3, e4, e5] } = await fieldCategory(RUNNING, 5);
     const [h1, h2] = await field.createHeats(organizer.actor, { eventCategoryId: categoryId, count: 2 });

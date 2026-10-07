@@ -4,6 +4,8 @@ import { createSportService } from './service/index.js';
 
 export const sport = createSportService({ db });
 
+export { heatCountFor, heatSizeFor } from './service/heatSize.js';
+
 export {
   SportCode,
   parseScoringRule,

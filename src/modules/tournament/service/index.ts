@@ -629,6 +629,19 @@ export function createTournamentService(deps: TournamentDeps) {
   }
 
   /**
+   * The app makes the draw itself when registration closes: same rules as a
+   * host's (closed, nobody still paying), seeded by settled rating, no staff
+   * check because nobody is acting. Null when the draw already exists — a
+   * host who drew by hand first, or a retried job.
+   */
+  async function autoDraw(eventCategoryId: string): Promise<Tournament | null> {
+    const category = await events.categoryById(eventCategoryId);
+    if (await repo.byCategory(db, eventCategoryId)) return null;
+    await assertDrawable(category);
+    return writeDraw(category, undefined, null);
+  }
+
+  /**
    * F1 — the draw as it would be made right now, written nowhere. The host
    * sees the seeds and who plays whom, may reorder the seeds, and then makes
    * it with the same order.
@@ -1767,6 +1780,7 @@ export function createTournamentService(deps: TournamentDeps) {
     markAwaitingConfirm,
     reopen,
     generateDraw,
+    autoDraw,
     regenerateDraw,
     drawPreview,
     setMatchTime,

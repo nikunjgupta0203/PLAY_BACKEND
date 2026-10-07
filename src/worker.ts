@@ -26,6 +26,7 @@ import { scoring } from './modules/scoring/index.js';
 import { tournament } from './modules/tournament/index.js';
 import { notifications } from './modules/notifications/index.js';
 import { notify } from './notify.js';
+import { AUTO_DRAW_RETRY_MS, autoDrawCategory } from './autoDraw.js';
 
 /** Registered by topic. Dispatch is at-least-once, so handlers are idempotent. */
 type OutboxHandler = (payload: Record<string, unknown>) => Promise<void>;
@@ -113,9 +114,14 @@ const handlers: Record<string, OutboxHandler> = {
   // still waiting for a partner, can no longer get a seat (gap #3).
   'category.closed': async (payload) => {
     const categoryId = String(payload['categoryId'] ?? '');
-    if (categoryId) await registration.closeOutClosed(categoryId);
-    // F12 — the host is asked to make the draw.
-    await notify.hostReadyToDraw(payload);
+    if (!categoryId) return;
+    await registration.closeOutClosed(categoryId);
+    // The draw makes itself (autoDraw.ts); the host is asked only if it cannot.
+    await queue(QUEUES.tournament).add(
+      'auto-draw',
+      { categoryId, attempt: 1 },
+      { ...defaultJobOptions, jobId: `auto-draw-${categoryId}-1` },
+    );
   },
   // F12 — a day before close, a draw is short of its minimum.
   'category.short': async (payload) => {
@@ -797,6 +803,24 @@ export async function startWorkers(): Promise<() => void> {
     QUEUES.tournament,
     async (job) => {
       switch (job.name) {
+        case 'auto-draw': {
+          const { categoryId, attempt } = job.data as { categoryId: string; attempt: number };
+          const outcome = await autoDrawCategory(categoryId, attempt);
+          logger.info({ categoryId, attempt, outcome }, 'auto draw');
+          if (outcome.kind === 'retry') {
+            await queue(QUEUES.tournament).add(
+              'auto-draw',
+              { categoryId, attempt: attempt + 1 },
+              { ...defaultJobOptions, delay: AUTO_DRAW_RETRY_MS, jobId: `auto-draw-${categoryId}-${attempt + 1}` },
+            );
+          } else if (outcome.kind === 'manual') {
+            // F12 — it could not make itself: the host is asked, as before.
+            await notify.hostReadyToDraw({ categoryId });
+          } else if (outcome.kind === 'drawn' || outcome.kind === 'heats') {
+            await notify.hostDrawMade({ categoryId, heats: outcome.kind === 'heats' ? outcome.count : 0 });
+          }
+          return;
+        }
         case 'schedule-courts': {
           // R11, R12 — greedy and idempotent: it places only what is ready and
           // unplaced, so a second run over the same draw writes nothing. A

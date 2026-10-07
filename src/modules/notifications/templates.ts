@@ -91,6 +91,8 @@ export interface TemplatePayloads {
   /** F12 — to the host: registration closed; make the draw. */
   /** `heats` — a race or a scorecard (N11): it is run as heats, there is no draw to make. */
   'host.ready_to_draw': { eventTitle: string; categoryName: string; heats?: boolean };
+  /** The app made the draw (or the heats) itself when registration closed. `heats`: how many; 0 for a draw. */
+  'host.draw_made': { eventTitle: string; categoryName: string; heats: number };
   /** F12 — to the host: the event is over; when the payout is due, if there is one. */
   'host.event_completed': { eventTitle: string; payoutDueAt: string | null };
   /** events R9 — one draw missed its minimum entries. */
@@ -295,8 +297,17 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
   'host.ready_to_draw': {
     render: (p) =>
       p.heats
-        ? { title: 'Set up the heats', body: `${p.eventTitle} · ${p.categoryName}. Registration is closed.` }
-        : { title: 'Make the draw', body: `${p.eventTitle} · ${p.categoryName}. Registration is closed.` },
+        ? { title: 'Set up the heats', body: `${p.eventTitle} · ${p.categoryName}. Registration is closed, but the heats couldn't be made by themselves — set them up in Draws & schedule.` }
+        : { title: 'Make the draw', body: `${p.eventTitle} · ${p.categoryName}. Registration is closed, but the draw couldn't be made by itself — make it in Draws & schedule.` },
+  },
+  'host.draw_made': {
+    render: (p) => ({
+      title: p.heats > 0 ? 'Your heats are ready' : 'Your draw is ready',
+      body:
+        p.heats > 0
+          ? `${p.eventTitle} · ${p.categoryName}. ${p.heats === 1 ? 'One heat' : `${p.heats} heats`} made from the entries. You can change them before scoring starts.`
+          : `${p.eventTitle} · ${p.categoryName}. Made from the entries and seeded by rating. You can redo it in Draws & schedule until the first match starts.`,
+    }),
   },
   'host.event_completed': {
     render: (p) => ({

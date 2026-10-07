@@ -242,6 +242,19 @@ export const isProd = config.NODE_ENV === 'production';
 export const isTest = config.NODE_ENV === 'test';
 
 /**
+ * Transports that default to "log and report success" — fine in dev, silent
+ * breakage in production (an unset variable on the host means nothing is
+ * ever delivered, and nothing errors). Startup warns about each one.
+ */
+export function silentTransports(c: Pick<Config, 'NODE_ENV' | 'PUSH_TRANSPORT' | 'EMAIL_TRANSPORT'> = config): string[] {
+  if (c.NODE_ENV !== 'production') return [];
+  const off: string[] = [];
+  if (c.PUSH_TRANSPORT === 'console') off.push('PUSH_TRANSPORT=console — push notifications are logged, never sent (set expo)');
+  if (c.EMAIL_TRANSPORT === 'console') off.push('EMAIL_TRANSPORT=console — emails and sign-in codes are logged, never sent (set resend)');
+  return off;
+}
+
+/**
  * Assert that a later-sprint integration has its keys before first use.
  * Keeps Sprint 1 booting without every provider's credentials while still failing
  * loudly the moment something actually reaches for them.
