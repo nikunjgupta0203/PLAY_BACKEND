@@ -279,6 +279,10 @@ export interface Capacity {
   remaining: number;
 }
 
+function toCapacity(category: { capacity: number }, taken: number, held: number): Capacity {
+  return { capacity: category.capacity, taken, held, remaining: Math.max(category.capacity - taken - held, 0) };
+}
+
 export interface EventMedia {
   id: string;
   publicId: string;
@@ -349,6 +353,8 @@ export interface EntriesPort {
   confirmedCount(categoryId: string): Promise<number>;
   /** Unexpired seat holds in this category. */
   liveHoldCount(categoryId: string): Promise<number>;
+  /** Speed — both counts for many categories in one round trip. Every id is in the map. */
+  seatCounts?(categoryIds: string[]): Promise<Map<string, { confirmed: number; held: number }>>;
   /** Whether this user holds a confirmed or checked-in seat at the event. */
   isSeatedEntrant(eventId: string, userId: string): Promise<boolean>;
   /** F3 — whether this user entered the event at all (refunded and withdrawn count). */
@@ -827,6 +833,12 @@ export function createEventService(deps: EventDeps) {
     return row ? toEvent(row) : null;
   }
 
+  /** Speed — many events in one query, for request-scoped loaders. Missing ids are absent. */
+  async function findByIds(eventIds: readonly string[]): Promise<Map<string, Event>> {
+    const rows = await repo.byIds([...new Set(eventIds)]);
+    return new Map(rows.map((r) => [r.id, toEvent(r)]));
+  }
+
   async function byId(eventId: string): Promise<Event> {
     const found = await findById(eventId);
     if (!found) throw notFound();
@@ -885,6 +897,15 @@ export function createEventService(deps: EventDeps) {
 
   async function categoriesFor(eventId: string): Promise<EventCategory[]> {
     return (await repo.categoriesFor([eventId])).map(toCategory);
+  }
+
+  /** Speed — every listed event's categories in one query. Every id is in the map. */
+  async function categoriesForEvents(eventIds: readonly string[]): Promise<Map<string, EventCategory[]>> {
+    const out = new Map<string, EventCategory[]>(eventIds.map((id) => [id, []]));
+    for (const row of await repo.categoriesFor([...new Set(eventIds)])) {
+      out.get(row.eventId)?.push(toCategory(row));
+    }
+    return out;
   }
 
   async function categoryById(categoryId: string): Promise<EventCategory> {
@@ -978,12 +999,21 @@ export function createEventService(deps: EventDeps) {
       entries.confirmedCount(categoryId),
       entries.liveHoldCount(categoryId),
     ]);
-    return {
-      capacity: category.capacity,
-      taken,
-      held,
-      remaining: Math.max(category.capacity - taken - held, 0),
-    };
+    return toCapacity(category, taken, held);
+  }
+
+  /** Speed — `capacityOf` for a whole list of categories in one round trip. Keyed by category id. */
+  async function capacitiesOf(categories: readonly EventCategory[]): Promise<Map<string, Capacity>> {
+    if (!entries.seatCounts) {
+      return new Map(await Promise.all(categories.map(async (c) => [c.id, await capacityOf(c.id, c)] as const)));
+    }
+    const counts = await entries.seatCounts([...new Set(categories.map((c) => c.id))]);
+    return new Map(
+      categories.map((c) => {
+        const n = counts.get(c.id) ?? { confirmed: 0, held: 0 };
+        return [c.id, toCapacity(c, n.confirmed, n.held)];
+      }),
+    );
   }
 
   /**
@@ -994,13 +1024,13 @@ export function createEventService(deps: EventDeps) {
     categoryId: string,
     // Speed — a list resolver already holds the category, and a request-scoped
     // loader the event; passing them saves two reads per category card.
-    loaded: { category?: EventCategory; event?: Promise<Event | null> } = {},
+    loaded: { category?: EventCategory; event?: Promise<Event | null>; capacity?: Promise<Capacity> } = {},
   ): Promise<{ availability: Availability; capacity: Capacity }> {
     const category = loaded.category ?? (await categoryById(categoryId));
     // Speed — the event and the counts are independent reads; the category is already in hand.
     const [found, capacity] = await Promise.all([
       loaded.event ?? findById(category.eventId),
-      capacityOf(categoryId, category),
+      loaded.capacity ?? capacityOf(categoryId, category),
     ]);
     if (!found) throw notFound();
     const event = found;
@@ -2202,16 +2232,19 @@ export function createEventService(deps: EventDeps) {
     search,
     byId,
     findById,
+    findByIds,
     bySlug,
     findBySlug,
     findBySlugForStaff,
     categoriesFor,
+    categoriesForEvents,
     hostedBy,
     canSeeContact,
     coverUploadSignature,
     categoryById,
     mediaFor,
     capacityOf,
+    capacitiesOf,
     availabilityOf,
     priceQuote,
     assertRegistrationOpen,

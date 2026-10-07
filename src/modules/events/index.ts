@@ -65,6 +65,10 @@ const entries: EntriesPort = {
     const { registration } = await import('../registration/index.js');
     return registration.entries.liveHoldCount(categoryId);
   },
+  async seatCounts(categoryIds) {
+    const { registration } = await import('../registration/index.js');
+    return registration.entries.seatCounts(categoryIds);
+  },
   async isSeatedEntrant(eventId, userId) {
     const { registration } = await import('../registration/index.js');
     return registration.entries.isSeatedEntrant(eventId, userId);

@@ -28,7 +28,6 @@ import { db } from '../../../platform/db.js';
 import { SystemError, UserError } from '../../../platform/errors/index.js';
 import { sport } from '../../sport/index.js';
 import { FormatRef, SportRef } from '../../sport/schema/index.js';
-import { venues } from '../../venues/index.js';
 import { MediaUploadPayload, VenueRef } from '../../venues/schema/index.js';
 import { EventCode, events } from '../index.js';
 import { hostEarnings, priceQuote as computeQuote } from '../service/priceQuote.js';
@@ -177,19 +176,24 @@ const EventCategoryRef = builder
       }),
       entriesRemaining: t.int({
         description: 'Subtracts live holds as well as confirmed entries (events R5).',
-        resolve: async (c) => (await events.capacityOf(c.id, c)).remaining,
+        resolve: async (c, _args, ctx) => (await ctx.loaders.capacity.load(c)).remaining,
       }),
       capacityDetail: t.field({
         type: CapacityRef,
-        resolve: (c) => events.capacityOf(c.id, c),
+        resolve: (c, _args, ctx) => ctx.loaders.capacity.load(c),
       }),
       availability: t.field({
         type: AvailabilityEnum,
-        // Speed — every card lists its categories; the category is in hand and the
-        // event is read once per request, not once per category.
+        // Speed — every card lists its categories; the category is in hand, and the
+        // event and the seat counts are read once per request for every card together.
         resolve: async (c, _args, ctx) =>
-          (await events.availabilityOf(c.id, { category: c, event: ctx.loaders.event.load(c.eventId) }))
-            .availability,
+          (
+            await events.availabilityOf(c.id, {
+              category: c,
+              event: ctx.loaders.event.load(c.eventId),
+              capacity: ctx.loaders.capacity.load(c),
+            })
+          ).availability,
       }),
       // A pure function of the category's own prices — no read needed.
       priceQuote: t.field({ type: PriceQuoteRef, resolve: (c) => computeQuote(c) }),
@@ -362,7 +366,7 @@ builder.node(EventRef, {
     venue: t.field({
       type: VenueRef,
       nullable: true,
-      resolve: (e) => (e.venueId ? venues.findById(e.venueId) : null),
+      resolve: (e, _args, ctx) => (e.venueId ? ctx.loaders.venue.load(e.venueId) : null),
     }),
     city: t.exposeString('city'),
     timezone: t.exposeString('timezone', {
@@ -431,7 +435,11 @@ builder.node(EventRef, {
     }),
     categories: t.field({
       type: [EventCategoryRef],
-      resolve: (e) => events.categoriesFor(e.id),
+      resolve: (e, _args, ctx) => {
+        // The event is in hand — its categories' availability must not read it again.
+        ctx.loaders.event.prime(e.id, e);
+        return ctx.loaders.categories.load(e.id);
+      },
     }),
     organizer: t.field({
       type: OrganizerSummaryRef,

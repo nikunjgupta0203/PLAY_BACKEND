@@ -99,30 +99,34 @@ export function createHomeService<
     args: { city?: string | null; sportId?: string | null },
   ): Promise<HomeFeed<E, R, S>> {
     const at = now();
-    const player = viewer ? await deps.profile.findByUserId(viewer.userId) : null;
+    const sportId = args.sportId ?? null;
+
+    // Speed — every database trip is a round trip to the server's region, so
+    // reads that do not depend on each other go out together: the profile with
+    // the viewer's entries, then the shelf with the entries' events and stats.
+    const [player, mine] = await Promise.all([
+      viewer ? deps.profile.findByUserId(viewer.userId) : null,
+      viewer
+        ? deps.registrations.committedForUser(viewer.userId)
+        : Promise.resolve({ committed: [] as R[], everEntered: false }),
+    ]);
 
     // home R2 — an explicit city wins; the profile's is the default. A viewer
     // browsing another city from the header is not editing their profile.
     const city = args.city?.trim() || player?.city || null;
-    const sportId = args.sportId ?? null;
-
-    const [mine, discoverable] = await Promise.all([
-      viewer
-        ? deps.registrations.committedForUser(viewer.userId)
-        : Promise.resolve({ committed: [] as R[], everEntered: false }),
-      // One over the shelf, because the hero may take the first.
-      deps.events.discoverable({ city, sportId, from: at }, FEATURED_LIMIT + 1),
-    ]);
 
     // home R4 — committed entries in events that have not finished. Each event
     // is read once even if the viewer holds two entries in it.
     const committed = mine.committed.filter((r) => COMMITTED.has(r.status));
     const eventById = new Map<string, E>();
-    await Promise.all(
-      [...new Set(committed.map((r) => r.eventId))].map(async (id) => {
+    const [discoverable, stats] = await Promise.all([
+      // One over the shelf, because the hero may take the first.
+      deps.events.discoverable({ city, sportId, from: at }, FEATURED_LIMIT + 1),
+      player ? statsFor(player, sportId) : null,
+      ...[...new Set(committed.map((r) => r.eventId))].map(async (id) => {
         eventById.set(id, await deps.events.byId(id));
       }),
-    );
+    ]);
     const entries: Entry<E, R>[] = committed
       .map((registration) => ({ registration, event: eventById.get(registration.eventId)! }))
       .filter(({ event }) => isOngoing(event, at) && (!sportId || event.sportId === sportId))
@@ -164,7 +168,7 @@ export function createHomeService<
       liveNow,
       upcoming,
       featured,
-      stats: player ? await statsFor(player, sportId) : null,
+      stats,
       firstRun: !mine.everEntered,
       city,
     };

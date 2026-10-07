@@ -350,6 +350,42 @@ export function createRegistrationRepo(db: Db) {
     return Number(rows[0]?.held ?? 0n);
   }
 
+  /**
+   * Speed — `countConfirmed` and `countLiveHoldSeats` for many categories in two
+   * queries, for list screens that show a card per event. Every id asked for is
+   * in the result; a category with nothing in it maps to 0.
+   */
+  async function countSeatsMany(
+    eventCategoryIds: string[],
+  ): Promise<Map<string, { confirmed: number; held: number }>> {
+    const out = new Map(eventCategoryIds.map((id) => [id, { confirmed: 0, held: 0 }]));
+    if (eventCategoryIds.length === 0) return out;
+    const [confirmed, held] = await Promise.all([
+      db.registration.groupBy({
+        by: ['eventCategoryId'],
+        where: { eventCategoryId: { in: eventCategoryIds }, status: { in: ['confirmed', 'checked_in'] } },
+        _count: { _all: true },
+      }),
+      db.$queryRaw<{ id: string; held: bigint }[]>`
+        SELECT event_category_id::text AS id, coalesce(sum(seats), 0)::bigint AS held
+          FROM seat_holds
+         WHERE event_category_id = ANY(${eventCategoryIds}::uuid[])
+           AND released_at IS NULL
+           AND expires_at > now()
+         GROUP BY event_category_id
+      `,
+    ]);
+    for (const row of confirmed) {
+      const c = out.get(row.eventCategoryId);
+      if (c) c.confirmed = row._count._all;
+    }
+    for (const row of held) {
+      const c = out.get(row.id);
+      if (c) c.held = Number(row.held);
+    }
+    return out;
+  }
+
   async function forUser(userId: string): Promise<RegistrationRow[]> {
     return db.registration.findMany({
       where: {
@@ -617,6 +653,7 @@ export function createRegistrationRepo(db: Db) {
     confirmedForCategory,
     countConfirmed,
     countLiveHoldSeats,
+    countSeatsMany,
     forUser,
     forEvent,
     rosterFor,

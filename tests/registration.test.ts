@@ -1313,6 +1313,32 @@ describe('registration — guards other modules rely on', () => {
     await payFor(player, reg.id);
     expect(await registration.hasUpcomingConfirmedEntry(player.userId)).toBe(true);
   });
+
+  it('events R5: batched seat counts match the per-category counts', async () => {
+    const a = await publishedCategory({ capacity: 8 });
+    const b = await publishedCategory({ capacity: 8 });
+    const empty = await publishedCategory({ capacity: 8 });
+
+    // In a: one confirmed entry and one live hold. In b: one live hold only.
+    const confirmed = await makePlayer('Confirmed');
+    await payFor(confirmed, (await registration.begin(confirmed.actor, { eventCategoryId: a.categoryId })).id);
+    const pendingA = await makePlayer('Pending A');
+    await registration.begin(pendingA.actor, { eventCategoryId: a.categoryId });
+    const pendingB = await makePlayer('Pending B');
+    await registration.begin(pendingB.actor, { eventCategoryId: b.categoryId });
+
+    const ids = [a.categoryId, b.categoryId, empty.categoryId];
+    const batched = await registration.entries.seatCounts(ids);
+    for (const id of ids) {
+      expect(batched.get(id)).toEqual({
+        confirmed: await registration.entries.confirmedCount(id),
+        held: await registration.entries.liveHoldCount(id),
+      });
+    }
+    expect(batched.get(a.categoryId)).toEqual({ confirmed: 1, held: 1 });
+    expect(batched.get(b.categoryId)).toEqual({ confirmed: 0, held: 1 });
+    expect(batched.get(empty.categoryId)).toEqual({ confirmed: 0, held: 0 });
+  });
 });
 
 describe('teams bigger than a pair (plan 3b)', () => {

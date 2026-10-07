@@ -1,20 +1,25 @@
-# Render Blueprint — PL4Y backend, FREE plan.
+# Render Blueprint — PL4Y backend, STARTER plan ($7/month), Singapore.
 #
-# The free plan has no background workers and no preDeployCommand, so:
+# Region: Singapore, the closest Render region to our players (India). Keep
+# Neon in the same region (aws-ap-southeast-1): every query is a round trip
+# from the API to the database, and a cross-ocean hop costs ~200 ms each.
+# Render cannot move a service between regions — a new region is a new service.
+#
 #   · the API and the worker run in ONE process (src/all.ts, `pnpm start:all`).
 #     The worker is NOT optional — without it holds never expire, refunds never
-#     run and notifications never send.
-#   · migrations run at the end of the build (`pnpm db:deploy`).
-#   · a free web service sleeps after 15 idle minutes, and a sleeping service
-#     runs no jobs. Point an external pinger (cron-job.org, UptimeRobot) at
-#     GET /healthz every 10 minutes to keep it awake.
+#     run and notifications never send. One process keeps this to one $7
+#     service; job work shares the CPU with requests, which is fine at today's
+#     traffic.
+#   · migrations run in the preDeployCommand (`pnpm db:deploy`): a failed
+#     migration stops the deploy and the running version keeps serving.
+#   · a starter service never sleeps, so no external pinger is needed.
 #   · jobs, schedules and rate limits live in Postgres (the `jobs`,
-#     `job_schedules` and `rate_limit_hits` tables), so a restart or a sleep
-#     loses none of them. There is no Redis.
+#     `job_schedules` and `rate_limit_hits` tables), so a restart loses none
+#     of them. There is no Redis.
 #
-# Upgrading: set the plans to `starter`, split `pl4y-api` back into a web
-# service running `pnpm start` and a worker running `pnpm start:worker`, and
-# move `pnpm db:deploy` into a `preDeployCommand`.
+# Scaling up: split `pl4y-api` into a web service running `pnpm start` and a
+# `type: worker` service running `pnpm start:worker` (a second $7 service), so
+# job work no longer competes with request latency (architecture.md §1).
 #
 # Postgres is Neon (ADR 0001), not Render: set DATABASE_URL (pooled) and
 # DIRECT_DATABASE_URL (direct) in the `pl4y-shared` group after the first sync.
@@ -79,11 +84,13 @@ services:
   - type: web
     name: pl4y-api
     runtime: node
-    plan: free
+    plan: starter
     region: singapore
-    # Migrations run against DIRECT_DATABASE_URL at the end of every build;
-    # `migrate deploy` applies only what is new, so a no-op build is harmless.
-    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm build && pnpm db:deploy
+    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm build
+    # Migrations run against DIRECT_DATABASE_URL after the build and before the
+    # new version takes traffic; `migrate deploy` applies only what is new, so
+    # a deploy with no new migration is a no-op.
+    preDeployCommand: pnpm db:deploy
     startCommand: pnpm start:all
     healthCheckPath: /healthz
     envVars:

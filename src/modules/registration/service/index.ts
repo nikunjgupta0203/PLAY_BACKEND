@@ -1955,6 +1955,8 @@ export function createRegistrationService(deps: RegistrationDeps) {
   const entries = {
     confirmedCount: (categoryId: string) => repo.countConfirmed(categoryId),
     liveHoldCount: (categoryId: string) => repo.countLiveHoldSeats(categoryId),
+    /** Speed — both counts for many categories at once. */
+    seatCounts: (categoryIds: string[]) => repo.countSeatsMany(categoryIds),
     isSeatedEntrant: async (eventId: string, userId: string) =>
       (await repo.forUser(userId)).some(
         (r) => r.eventId === eventId && (r.status === 'confirmed' || r.status === 'checked_in'),
