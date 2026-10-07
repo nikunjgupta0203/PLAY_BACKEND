@@ -167,6 +167,16 @@ describe('home — rules', () => {
     expect((await profile.findByUserId(player.userId))?.city).toBe('Pune');
   });
 
+  it('R2: a city with nothing on falls back to events from every city', async () => {
+    const player = await makePlayer('Mira', 'Egyara');
+    const elsewhere = await publishedEvent({ city: 'Ahmedabad' });
+
+    const feed = await home.feed(player.actor, {});
+
+    expect(feed.city).toBe('Egyara');
+    expect(feed.hero?.event.id).toBe(elsewhere.eventId);
+  });
+
   it('R2: a city under another spelling is the same city', async () => {
     const player = await makePlayer('Dev', 'bangalore ');
     const blr = await publishedEvent({ city: 'Bengaluru' });

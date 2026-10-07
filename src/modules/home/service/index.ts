@@ -134,9 +134,14 @@ export function createHomeService<
 
     // Featured never repeats an event the viewer has already entered.
     const entered = new Set(entries.map((e) => e.event.id));
-    const cityEvents = discoverable
-      .filter((e) => isOngoing(e, at) && !entered.has(e.id))
-      .sort(byStart);
+    const shelf = (events: E[]) =>
+      events.filter((e) => isOngoing(e, at) && !entered.has(e.id)).sort(byStart);
+    let cityEvents = shelf(discoverable);
+    // A city with nothing on yet (or one typed oddly) falls back to every
+    // city: an empty Home reads as a broken app, not as a quiet town.
+    if (cityEvents.length === 0 && city) {
+      cityEvents = shelf(await deps.events.discoverable({ city: null, sportId, from: at }, FEATURED_LIMIT + 1));
+    }
 
     // home R3 — the hero is the next commitment, else the city's headline event.
     const hero: Hero<E, R> | null = ahead[0]
