@@ -167,6 +167,15 @@ describe('home — rules', () => {
     expect((await profile.findByUserId(player.userId))?.city).toBe('Pune');
   });
 
+  it('R2: a city under another spelling is the same city', async () => {
+    const player = await makePlayer('Dev', 'bangalore ');
+    const blr = await publishedEvent({ city: 'Bengaluru' });
+
+    const feed = await home.feed(player.actor, {});
+
+    expect(feed.hero?.event.id).toBe(blr.eventId);
+  });
+
   it('R3: with no entry, the hero is the city\'s soonest event and it is not repeated in featured', async () => {
     const player = await makePlayer('Meera');
     const first = await publishedEvent({ startsInDays: 2 });

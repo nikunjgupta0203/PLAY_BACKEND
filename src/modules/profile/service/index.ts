@@ -15,6 +15,7 @@ import { newId } from '../../../platform/ids.js';
 import { UserError } from '../../../platform/errors/index.js';
 import { write as outboxWrite } from '../../../platform/outbox.js';
 import type { UploadSignature } from '../../../platform/cloudinary.js';
+import { cityVariants } from '../../../platform/city.js';
 
 export const ProfileCode = {
   /** Also what a private profile returns: R4 — not distinguishable from missing. */
@@ -998,7 +999,7 @@ export function createProfileService(deps: ProfileDeps) {
       where: {
         visibility: { in: visible },
         ...(viewer ? { id: { not: viewer.id } } : {}),
-        ...(opts.city ? { city: opts.city } : {}),
+        ...(opts.city ? { city: { in: cityVariants(opts.city), mode: 'insensitive' as const } } : {}),
         ...(opts.sportId ? { sports: { some: { sportId: opts.sportId } } } : {}),
       },
       include: { sports: true },

@@ -15,6 +15,7 @@ import { Prisma } from '@prisma/client';
 import type { Db, Tx } from '../../../platform/db.js';
 import type { GeoPoint } from '../../../platform/geo.js';
 import { kmToMetres } from '../../../platform/geo.js';
+import { cityVariants } from '../../../platform/city.js';
 
 /** The statuses discovery reads. Matches the partial index exactly (R6). */
 export const DISCOVERABLE = ['published', 'live'] as const;
@@ -107,7 +108,8 @@ export function createEventRepo(db: Db) {
     ];
 
     if (filter.sportId) where.push(Prisma.sql`e.sport_id = ${filter.sportId}::uuid`);
-    if (filter.city) where.push(Prisma.sql`e.city ILIKE ${filter.city}`);
+    // One city under any of its spellings (platform/city.ts).
+    if (filter.city) where.push(Prisma.sql`lower(btrim(e.city)) IN (${Prisma.join(cityVariants(filter.city))})`);
     if (filter.from) where.push(Prisma.sql`e.starts_at >= ${filter.from}`);
     // gap #31 — with no date asked for, an event that has already ended is not
     // something to discover; oldest-first ordering would put it at the top.

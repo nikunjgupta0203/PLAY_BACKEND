@@ -12,6 +12,7 @@ import { Prisma } from '@prisma/client';
 import type { Db } from '../../../platform/db.js';
 import type { GeoPoint } from '../../../platform/geo.js';
 import { kmToMetres } from '../../../platform/geo.js';
+import { cityVariants } from '../../../platform/city.js';
 
 export interface VenueRow {
   id: string;
@@ -204,7 +205,7 @@ export function createVenueRepo(db: Db) {
         )}::double precision)`,
       );
     }
-    if (opts.city) where.push(Prisma.sql`v.city ILIKE ${opts.city}`);
+    if (opts.city) where.push(Prisma.sql`lower(btrim(v.city)) IN (${Prisma.join(cityVariants(opts.city))})`);
     if (opts.textPattern) {
       where.push(Prisma.sql`(v.name ILIKE ${opts.textPattern} OR v.address ILIKE ${opts.textPattern})`);
     }
