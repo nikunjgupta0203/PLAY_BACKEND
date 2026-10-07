@@ -19,7 +19,7 @@ export const home = createHomeService<Event, Registration, StatsSnapshot>({
     byId: (eventId) => events.byId(eventId),
   },
   registrations: {
-    listForUser: (userId) => registration.listForUser(userId),
+    committedForUser: (userId) => registration.committedForUser(userId),
   },
   profile: {
     async findByUserId(userId) {

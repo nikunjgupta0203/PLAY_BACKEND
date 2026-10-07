@@ -39,7 +39,8 @@ export interface EventsPort<E extends FeedEvent> {
 }
 
 export interface RegistrationsPort<R extends FeedRegistration> {
-  listForUser(userId: string): Promise<R[]>;
+  /** The viewer's seated entries, and whether they have ever entered anything (R6). */
+  committedForUser(userId: string): Promise<{ committed: R[]; everEntered: boolean }>;
 }
 
 export interface ProfilePort<S extends FeedStats> {
@@ -106,14 +107,16 @@ export function createHomeService<
     const sportId = args.sportId ?? null;
 
     const [mine, discoverable] = await Promise.all([
-      viewer ? deps.registrations.listForUser(viewer.userId) : Promise.resolve([] as R[]),
+      viewer
+        ? deps.registrations.committedForUser(viewer.userId)
+        : Promise.resolve({ committed: [] as R[], everEntered: false }),
       // One over the shelf, because the hero may take the first.
       deps.events.discoverable({ city, sportId, from: at }, FEATURED_LIMIT + 1),
     ]);
 
     // home R4 — committed entries in events that have not finished. Each event
     // is read once even if the viewer holds two entries in it.
-    const committed = mine.filter((r) => COMMITTED.has(r.status));
+    const committed = mine.committed.filter((r) => COMMITTED.has(r.status));
     const eventById = new Map<string, E>();
     await Promise.all(
       [...new Set(committed.map((r) => r.eventId))].map(async (id) => {
@@ -142,7 +145,10 @@ export function createHomeService<
         ? { event: cityEvents[0], registration: null }
         : null;
 
-    const upcoming = (hero?.registration ? ahead.slice(1) : ahead).slice(0, UPCOMING_LIMIT);
+    // Every commitment is listed, the hero's included: the slider is a shop
+    // window that pages away, and a player with one entry must still find it
+    // under Upcoming.
+    const upcoming = ahead.slice(0, UPCOMING_LIMIT);
     const featured = (hero && !hero.registration ? cityEvents.slice(1) : cityEvents).slice(
       0,
       FEATURED_LIMIT,
@@ -154,7 +160,7 @@ export function createHomeService<
       upcoming,
       featured,
       stats: player ? await statsFor(player, sportId) : null,
-      firstRun: mine.length === 0,
+      firstRun: !mine.everEntered,
       city,
     };
   }

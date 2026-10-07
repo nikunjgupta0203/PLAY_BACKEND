@@ -107,7 +107,7 @@ beforeAll(async () => {
       },
       byId: (id) => events.byId(id),
     },
-    registrations: { listForUser: (userId) => registration.listForUser(userId) },
+    registrations: { committedForUser: (userId) => registration.committedForUser(userId) },
     profile: {
       async findByUserId(userId) {
         const p = await profile.findByUserId(userId);
@@ -144,7 +144,7 @@ describe('home — Done when: one query fills every region', () => {
 
     expect(feed.hero?.event.id).toBe(next.eventId);
     expect(feed.liveNow.map((e) => e.id)).toEqual([live.eventId]);
-    expect(feed.upcoming.map((u) => u.event.id)).toEqual([later.eventId]);
+    expect(feed.upcoming.map((u) => u.event.id)).toEqual([next.eventId, later.eventId]);
     expect(feed.featured.map((e) => e.id)).toEqual([shelf.eventId]);
     expect(feed.stats).toBeNull();
     expect(feed.firstRun).toBe(false);
@@ -190,6 +190,19 @@ describe('home — rules', () => {
     expect(feed.hero?.event.id).toBe(mine.eventId);
     expect(feed.hero?.registration?.id).toBe(reg.id);
     expect(feed.featured.map((e) => e.id)).toEqual([headline.eventId]);
+  });
+
+  it('R4: a single entry is the hero and is still listed under upcoming', async () => {
+    const player = await makePlayer('Tara');
+    const first = await publishedEvent({ startsInDays: 2 });
+    const second = await publishedEvent({ startsInDays: 4 });
+    await enter(player, first.categoryId);
+    await enter(player, second.categoryId);
+
+    const feed = await home.feed(player.actor, {});
+
+    expect(feed.hero?.event.id).toBe(first.eventId);
+    expect(feed.upcoming.map((u) => u.event.id)).toEqual([first.eventId, second.eventId]);
   });
 
   it('R4: a pending payment is not a commitment and does not reach hero or upcoming', async () => {

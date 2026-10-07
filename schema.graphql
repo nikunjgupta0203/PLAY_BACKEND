@@ -1172,7 +1172,7 @@ type HomeFeed {
   stats: StatsSnapshot
 
   """
-  home R4 — confirmed entries, soonest first, excluding the hero and live ones.
+  home R4 — confirmed entries, soonest first, hero included; live ones sit in liveNow.
   """
   upcoming: [HomeEntry!]!
 }

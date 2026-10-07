@@ -10,6 +10,7 @@ import { verifyAccessToken } from '../platform/auth/tokens.js';
 import { SharedCode, SystemError } from '../platform/errors/index.js';
 import { identity } from '../modules/identity/index.js';
 import type { Grant, PlatformRole } from '../modules/identity/index.js';
+import type { Event } from '../modules/events/index.js';
 import { logger } from '../platform/logging/index.js';
 
 export interface Loaders {
@@ -17,6 +18,8 @@ export interface Loaders {
   grant: DataLoader<{ userId: string; eventId: string }, Grant | null, string>;
   /** identity R15 — read per request, never a JWT claim. */
   platformRole: DataLoader<string, PlatformRole | null>;
+  /** Speed — a feed of cards reads each event once, however many categories it lists. */
+  event: DataLoader<string, Event | null>;
 }
 
 export interface Ctx {
@@ -37,6 +40,10 @@ function buildLoaders(): Loaders {
     platformRole: new DataLoader(async (userIds) =>
       Promise.all(userIds.map((userId) => identity.platformRoleFor(userId))),
     ),
+    event: new DataLoader(async (eventIds) => {
+      const { events } = await import('../modules/events/index.js');
+      return Promise.all(eventIds.map((id) => events.findById(id)));
+    }),
   };
 }
 

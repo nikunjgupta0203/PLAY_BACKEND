@@ -54,7 +54,7 @@ const HomeFeedRef = builder.objectRef<Feed>('HomeFeed').implement({
     }),
     upcoming: t.field({
       type: [HomeEntryRef],
-      description: 'home R4 — confirmed entries, soonest first, excluding the hero and live ones.',
+      description: 'home R4 — confirmed entries, soonest first, hero included; live ones sit in liveNow.',
       resolve: (f) => f.upcoming,
     }),
     featured: t.field({

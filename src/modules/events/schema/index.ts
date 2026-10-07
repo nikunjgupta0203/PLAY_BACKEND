@@ -28,7 +28,7 @@ import { FormatRef, SportRef } from '../../sport/schema/index.js';
 import { venues } from '../../venues/index.js';
 import { MediaUploadPayload, VenueRef } from '../../venues/schema/index.js';
 import { EventCode, events } from '../index.js';
-import { hostEarnings } from '../service/priceQuote.js';
+import { hostEarnings, priceQuote as computeQuote } from '../service/priceQuote.js';
 import type {
   Availability,
   Capacity,
@@ -182,9 +182,14 @@ const EventCategoryRef = builder
       }),
       availability: t.field({
         type: AvailabilityEnum,
-        resolve: async (c) => (await events.availabilityOf(c.id)).availability,
+        // Speed — every card lists its categories; the category is in hand and the
+        // event is read once per request, not once per category.
+        resolve: async (c, _args, ctx) =>
+          (await events.availabilityOf(c.id, { category: c, event: ctx.loaders.event.load(c.eventId) }))
+            .availability,
       }),
-      priceQuote: t.field({ type: PriceQuoteRef, resolve: (c) => events.priceQuote(c.id) }),
+      // A pure function of the category's own prices — no read needed.
+      priceQuote: t.field({ type: PriceQuoteRef, resolve: (c) => computeQuote(c) }),
       commissionBps: t.exposeInt('commissionBps', {
         description: "The platform's share of the entry fee, server-set. 1000 = 10%.",
       }),

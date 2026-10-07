@@ -980,10 +980,18 @@ export function createEventService(deps: EventDeps) {
    */
   async function availabilityOf(
     categoryId: string,
+    // Speed — a list resolver already holds the category, and a request-scoped
+    // loader the event; passing them saves two reads per category card.
+    loaded: { category?: EventCategory; event?: Promise<Event | null> } = {},
   ): Promise<{ availability: Availability; capacity: Capacity }> {
-    const category = await categoryById(categoryId);
+    const category = loaded.category ?? (await categoryById(categoryId));
     // Speed — the event and the counts are independent reads; the category is already in hand.
-    const [event, capacity] = await Promise.all([byId(category.eventId), capacityOf(categoryId, category)]);
+    const [found, capacity] = await Promise.all([
+      loaded.event ?? findById(category.eventId),
+      capacityOf(categoryId, category),
+    ]);
+    if (!found) throw notFound();
+    const event = found;
 
     const closed =
       event.status === 'cancelled' ||

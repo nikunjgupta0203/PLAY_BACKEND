@@ -1565,6 +1565,17 @@ export function createRegistrationService(deps: RegistrationDeps) {
     return Promise.all(rows.map(hydrate));
   }
 
+  /**
+   * home R4/R6 — seated entries only, and whether the user ever entered at all.
+   * Speed: history is counted, not hydrated (a hold read per row), so an
+   * account with a long record opens Home as fast as a new one.
+   */
+  async function committedForUser(userId: string): Promise<{ committed: Registration[]; everEntered: boolean }> {
+    const rows = await repo.forUser(userId);
+    const seated = rows.filter((r) => r.status === 'confirmed' || r.status === 'checked_in');
+    return { committed: await Promise.all(seated.map(hydrate)), everEntered: rows.length > 0 };
+  }
+
   /** Organizer view. Gated on the event's staff grant, freshly read. */
   async function listForEvent(
     actor: Actor,
@@ -2016,6 +2027,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
     findById,
     listForEvent,
     listForUser,
+    committedForUser,
     confirmedForCategory,
     applySeeds,
     teamNameFor,
