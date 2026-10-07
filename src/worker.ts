@@ -13,6 +13,7 @@ import { claimBatch, markFailed, markProcessed } from './platform/outbox.js';
 import { pruneRateLimits } from './platform/rateLimit.js';
 import { registrationNotifier } from './platform/realtime/registrationUpdates.js';
 import { matchNotifier, supersededScores } from './platform/realtime/matchUpdates.js';
+import { drawNotifier } from './platform/realtime/drawUpdates.js';
 import { realtime } from './platform/pusher.js';
 import { events } from './modules/events/index.js';
 import { identity } from './modules/identity/index.js';
@@ -296,6 +297,7 @@ const handlers: Record<string, OutboxHandler> = {
       { tournamentId },
       { ...defaultJobOptions, jobId: `schedule-courts-${tournamentId}-drawn` },
     );
+    await drawNotifier.changed('draw.generated', payload);
     await notify.drawGenerated(payload);
   },
 
@@ -308,6 +310,7 @@ const handlers: Record<string, OutboxHandler> = {
       { tournamentId },
       { ...defaultJobOptions, jobId: `schedule-courts-${tournamentId}-knockout` },
     );
+    await drawNotifier.changed('knockout.drawn', payload);
   },
 
   /**
@@ -326,6 +329,7 @@ const handlers: Record<string, OutboxHandler> = {
       { ...defaultJobOptions, jobId: `schedule-courts-${tournamentId}-${matchId}` },
     );
     await matchNotifier.status('match.ready', payload);
+    await notify.matchReady(payload);
   },
 
   /**
@@ -346,6 +350,8 @@ const handlers: Record<string, OutboxHandler> = {
         jobId: `notify-starting-soon-${matchId}`,
       },
     );
+    // N1 — the schedule screen shows the new time without a manual refresh.
+    await drawNotifier.changed('match.scheduled', payload);
   },
 
   'match.live': async (payload) => {

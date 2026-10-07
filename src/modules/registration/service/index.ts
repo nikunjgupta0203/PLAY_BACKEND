@@ -1613,6 +1613,13 @@ export function createRegistrationService(deps: RegistrationDeps) {
     }
   }
 
+  /** N14 — a team's own name ("Thunder FC"), when it was given one. */
+  async function teamNameFor(registrationId: string): Promise<string | null> {
+    const row = await repo.byId(registrationId);
+    if (!row?.teamId) return null;
+    return (await db.team.findUnique({ where: { id: row.teamId }, select: { name: true } }))?.name ?? null;
+  }
+
   async function teamFor(registrationId: string): Promise<{ userId: string; isCaptain: boolean }[]> {
     const row = await repo.byId(registrationId);
     if (!row?.teamId) return [];
@@ -1833,15 +1840,25 @@ export function createRegistrationService(deps: RegistrationDeps) {
       /** F20 — the second player of a doubles walk-in. */
       partnerEmail?: string | null;
       partnerName?: string | null;
+      /** N14 — a team walk-in (5-a-side, cricket…): its name, and any teammates known at the desk. */
+      teamName?: string | null;
+      /** Each an account email, or just a name. The captain is `email`/`guestName`. */
+      teammates?: string[] | null;
       mode: 'offline' | 'comp';
     },
   ): Promise<Registration> {
     const category = await events.categoryById(input.eventCategoryId);
     await events.assertStaff(actor, category.eventId);
-    if (category.teamSize > 2) {
+    const team = category.teamSize > 2;
+    const teamName = input.teamName?.trim() || null;
+    if (teamName && teamName.length > 40) {
+      throw new UserError(RegistrationCode.WALK_IN_INCOMPLETE, 'A team name is 40 letters at most.');
+    }
+    const teammates = (input.teammates ?? []).map((t) => t.trim()).filter(Boolean);
+    if (team && teammates.length > category.teamSize - 1) {
       throw new UserError(
-        RegistrationCode.OFFLINE_ENTRY_SINGLES_ONLY,
-        'Walk-ins can be added to singles and doubles draws.',
+        RegistrationCode.WALK_IN_INCOMPLETE,
+        `A team here has ${category.teamSize} players: the captain and up to ${category.teamSize - 1} more.`,
       );
     }
     // F20 — walk-ins arrive on the morning, after registration has closed and
@@ -1858,7 +1875,17 @@ export function createRegistrationService(deps: RegistrationDeps) {
     if (partnerId === userId) {
       throw new UserError(RegistrationCode.WALK_IN_INCOMPLETE, 'The two players must be different people.');
     }
-    for (const id of [userId, partnerId]) {
+    // N14 — a team's other players: an email finds their account, anything else is a guest by name.
+    const otherIds: string[] = [];
+    if (team) {
+      for (const t of teammates) {
+        otherIds.push(await walkInUser(t.includes('@') ? { email: t } : { name: t }));
+      }
+      if (new Set([userId, ...otherIds]).size !== otherIds.length + 1) {
+        throw new UserError(RegistrationCode.WALK_IN_INCOMPLETE, 'Each player on the team must be a different person.');
+      }
+    }
+    for (const id of [userId, partnerId, ...otherIds]) {
       if (id && (await repo.playerHasLiveEntry(id, category.id, LIVE_STATUSES))) {
         throw new UserError(RegistrationCode.ALREADY_REGISTERED, 'That player is already entered in this draw.');
       }
@@ -1868,7 +1895,15 @@ export function createRegistrationService(deps: RegistrationDeps) {
     await db.$transaction(async (tx) => {
       await repo.lockCategory(tx, category.id);
       let teamId: string | null = null;
-      if (partnerId) {
+      if (team) {
+        teamId = newId();
+        await repo.createTeam(tx, {
+          id: teamId,
+          eventCategoryId: category.id,
+          name: teamName,
+          members: [{ userId, isCaptain: true }, ...otherIds.map((id) => ({ userId: id, isCaptain: false }))],
+        });
+      } else if (partnerId) {
         teamId = newId();
         await repo.createTeam(tx, {
           id: teamId,
@@ -1983,6 +2018,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
     listForUser,
     confirmedForCategory,
     applySeeds,
+    teamNameFor,
     teamFor,
     areTeammates,
     invitesFor,

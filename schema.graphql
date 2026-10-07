@@ -546,6 +546,7 @@ R10 — non-entity screens. Closed: a new route is a reviewed schema change.
 enum DeepLinkRoute {
   CONVERSATION
   COURT_BOOKING
+  EVENT_DRAW
   ORGANISATION
   ORGANIZER_DASHBOARD
   ORGANIZER_PAYOUTS
@@ -638,6 +639,11 @@ type Event implements Node {
   payout: Payout
   refundPolicy: RefundPolicy!
   registrationClosesAt: DateTime!
+
+  """
+  Courts the scheduler can put this event’s matches on: its own, else its host’s venue’s. Zero — no match gets a time, and nobody gets the 30-minute reminder.
+  """
+  scheduleCourtCount: Int!
 
   """
   Permanent once published — it is a deep link that outlives us (events R8).
@@ -1179,6 +1185,12 @@ type HomeHero {
   registration: Registration
 }
 
+type HostRepaymentPayload {
+  """What the host still owes after this repayment."""
+  openPaise: Int
+  userError: UserError
+}
+
 """hosting R3 — one thing waiting on the host, on one event."""
 type HostingNeedsYouItem {
   count: Int!
@@ -1284,11 +1296,17 @@ type MarkReadPayload {
 
 type Match implements Node {
   bracket: BracketType!
+  category: EventCategory
   completedAt: DateTime
   court: Court
 
   """Null until the match is started."""
   currentScore: ScoreState
+
+  """
+  The event this match belongs to — a match opened from a notification needs its timezone and a way back to the draw.
+  """
+  event: Event
 
   """Which group, from 1 — group-stage matches only."""
   group: Int
@@ -1584,9 +1602,24 @@ type Mutation {
   addEventStaff(email: String!, eventId: ID!, role: EventStaffRole!): EventStaffPayload!
 
   """
-  Owner or manager. Seats a player who paid at the desk (OFFLINE) or plays free (COMP), until the draw is made. F20 — by account email, or by name with no account (a guest); a doubles walk-in names both players. No money moves through PL4Y for it.
+  Owner or manager. Seats a player who paid at the desk (OFFLINE) or plays free (COMP), until the draw is made. F20 — by account email, or by name with no account (a guest); a doubles walk-in names both players; a team walk-in names its captain, and optionally its name and teammates (N14). No money moves through PL4Y for it.
   """
-  addOfflineRegistration(email: String, eventCategoryId: ID!, guestName: String, mode: PaymentMode!, partnerEmail: String, partnerName: String): RegistrationPayload!
+  addOfflineRegistration(
+    email: String
+    eventCategoryId: ID!
+    guestName: String
+    mode: PaymentMode!
+    partnerEmail: String
+    partnerName: String
+
+    """N14 — a team walk-in: the team’s name (optional)."""
+    teamName: String
+
+    """
+    N14 — a team walk-in: the other players, each an account email or a name. Up to team size − 1.
+    """
+    teammates: [String!]
+  ): RegistrationPayload!
 
   """
   The owner adds admins and members; an admin adds members. No account yet: they are emailed an invite.
@@ -1813,6 +1846,11 @@ type Mutation {
   recordFieldEvent(input: RecordFieldEventInput!): HeatPayload!
 
   """
+  gap #16 — a host who owes PL4Y (a refund after they were paid) paid it back by bank transfer. Up to what they owe; the UTR goes in the audit log.
+  """
+  recordHostRepayment(amountPaise: Int!, payoutAccountId: ID!, utr: String!): HostRepaymentPayload!
+
+  """
   R1 — rejected with SCORE_STALE when `expectedSeq` is not the server’s; the payload then carries the server’s match. The last point of a match submits its result (R6).
   """
   recordPoint(input: RecordPointInput!): MatchPayload!
@@ -1972,6 +2010,11 @@ type Mutation {
   unblockPlayer(playerId: ID!): BlockPayload!
 
   """
+  Takes back the heat’s last write — a mistyped mark, a wrong DNF, or a heat made final too soon. Carries expectedSeq like any write (scoring R1).
+  """
+  undoFieldEvent(expectedSeq: Int!, heatId: ID!): HeatPayload!
+
+  """
   R2 — an appended event, never a delete. Takes back the last point standing.
   """
   undoPoint(input: UndoPointInput!): MatchPayload!
@@ -2074,6 +2117,7 @@ enum NotificationKind {
   HOST_EVENT_COMPLETED
   HOST_NEW_ENTRY
   HOST_READY_TO_DRAW
+  MATCH_READY
   MATCH_RESULT
   MATCH_RESULTS_WAITING
   MATCH_RESULT_DISPUTED
@@ -2138,6 +2182,8 @@ type OkPayload {
 }
 
 type OpenReceivable {
+  """Whose debt it is, masked."""
+  account: PayoutAccount
   openPaise: Int!
   payoutAccountId: ID!
   userId: ID!
@@ -2558,6 +2604,11 @@ type PlayerProfile implements Node {
   profile R12 — every completed match, newest first. Forward pagination only.
   """
   matchHistory(after: String, before: String, first: Int, last: Int, sportId: ID): MatchHistoryConnection!
+
+  """
+  P1 — the owner only: true while the name is still the one made from their email (the part before the @). Onboarding asks for a real name then. False for anyone else.
+  """
+  nameIsPlaceholder: Boolean!
   nodeId: ID!
 
   """
@@ -3457,12 +3508,16 @@ type StatsSnapshot {
 A result entered rather than tapped. PLAYED is checked against the sport’s rule; the others need `winner` and no score (R10).
 """
 input SubmitMatchResultInput {
+  """
+  A bout won early — one of the sport’s finishes (ko, tko, submission, fall…). Needs `winner`.
+  """
+  finish: String
   games: [GameScoreInput!]
   matchId: ID!
   outcome: MatchOutcome!
 
   """
-  The shootout that decided a level goals match. Required then; refused otherwise.
+  The tiebreaker that decided a level knockout: a goals match’s shootout, or a cricket match’s super over (runs). Required then; refused otherwise.
   """
   penalties: GameScoreInput
   winner: MatchSide

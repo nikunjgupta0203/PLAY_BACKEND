@@ -138,6 +138,22 @@ builder.node(MatchRef, {
       resolve: (m) => m.scoreSeq,
     }),
     completedAt: t.field({ type: 'DateTime', nullable: true, resolve: (m) => m.completedAt }),
+    category: t.field({
+      type: EventCategoryRef,
+      nullable: true,
+      resolve: (m) => events.categoryById(m.eventCategoryId).catch(() => null),
+    }),
+    event: t.field({
+      type: EventRef,
+      nullable: true,
+      description:
+        'The event this match belongs to — a match opened from a notification ' +
+        'needs its timezone and a way back to the draw.',
+      resolve: async (m) => {
+        const category = await events.categoryById(m.eventCategoryId).catch(() => null);
+        return category ? events.byId(category.eventId).catch(() => null) : null;
+      },
+    }),
   }),
 });
 
@@ -374,6 +390,15 @@ builder.objectField(EventRef, 'liveMatches', (t) =>
       'What is on court right now, across every draw in this event. This is ' +
       'the Live Mode screen.',
     resolve: (event) => tournament.liveMatches(event.id),
+  }),
+);
+
+builder.objectField(EventRef, 'scheduleCourtCount', (t) =>
+  t.int({
+    description:
+      'Courts the scheduler can put this event’s matches on: its own, else its host’s venue’s. ' +
+      'Zero — no match gets a time, and nobody gets the 30-minute reminder.',
+    resolve: (event) => tournament.scheduleCourtCount(event.id),
   }),
 );
 

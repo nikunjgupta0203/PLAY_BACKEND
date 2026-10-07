@@ -99,6 +99,10 @@ export const MIN_REST_MINUTES = 20;
 
 const MINUTE = 60_000;
 
+/** F14, N12 — the host's match length, else the format's typical one, else 45. */
+export const minutesOf = (c: { matchMinutes?: number | null; typicalMatchMinutes?: number }): number =>
+  c.matchMinutes ?? c.typicalMatchMinutes ?? MATCH_MINUTES;
+
 // --- domain ------------------------------------------------------------------
 
 export interface Actor {
@@ -242,8 +246,12 @@ export interface EventsPort {
     status: string;
     /** F23 */
     thirdPlace?: boolean;
-    /** F14 — null means MATCH_MINUTES. */
+    /** F14 — null means the format's typical length (N12), else MATCH_MINUTES. */
     matchMinutes?: number | null;
+    /** N12 — how long this format's match usually runs, from its scoring rule. */
+    typicalMatchMinutes?: number;
+    /** N11 — how the draw is scored; a race or a scorecard is run as heats, never drawn. */
+    ruleKind?: string;
   }>;
   assertStaff(actor: Actor, eventId: string, roles?: string[]): Promise<unknown>;
   /** R6 — the draw and the category's status are one write, or neither. */
@@ -663,7 +671,14 @@ export function createTournamentService(deps: TournamentDeps) {
    * is over. Made earlier, anyone who pays afterwards is confirmed into a
    * draw that has no match for them.
    */
-  async function assertDrawable(category: { id: string; status: string }): Promise<void> {
+  async function assertDrawable(category: { id: string; status: string; ruleKind?: string }): Promise<void> {
+    // N11 — a race, a lift or a scorecard has no opponents to draw: it is run as heats.
+    if (category.ruleKind === 'performance' || category.ruleKind === 'scorecard') {
+      throw new UserError(
+        TournamentCode.CATEGORY_NOT_DRAWABLE,
+        'This category is a race or a scored round, so it has no draw. Run it as heats from its category.',
+      );
+    }
     if (category.status === 'open' || category.status === 'full') {
       throw new UserError(
         TournamentCode.REGISTRATION_STILL_OPEN,
@@ -1400,7 +1415,7 @@ export function createTournamentService(deps: TournamentDeps) {
     const from = new Date(Math.max(now().getTime(), event.startsAt.getTime()));
     // F14 — the host's match length for this draw, not one number for every sport.
     const category = await events.categoryById(tournament.eventCategoryId);
-    const duration = (category.matchMinutes ?? MATCH_MINUTES) * MINUTE;
+    const duration = minutesOf(category) * MINUTE;
     const rest = MIN_REST_MINUTES * MINUTE;
 
     // Everything already on these courts, from any draw at this venue.
@@ -1520,6 +1535,18 @@ export function createTournamentService(deps: TournamentDeps) {
     return courts.forVenue(event.venueId);
   }
 
+  /**
+   * #3 — how many courts the scheduler can place this event's matches on: the
+   * event's own, else (for a host's own venue) the venue's. Zero means no
+   * match gets a time and nobody gets a reminder.
+   */
+  async function scheduleCourtCount(eventId: string): Promise<number> {
+    const event = await events.byId(eventId);
+    return (await schedulableCourts(event)).filter(
+      (court) => court.active && (court.sportIds.length === 0 || court.sportIds.includes(event.sportId)),
+    ).length;
+  }
+
   /** Every court a person may put a match on by hand: the event's own and the venue's. */
   async function assignableCourts(event: { id: string; venueId: string | null }) {
     const declared = courts.forEvent ? await courts.forEvent(event.id) : [];
@@ -1598,7 +1625,7 @@ export function createTournamentService(deps: TournamentDeps) {
 
     const category = await events.categoryById(match.eventCategoryId);
     const endsAt =
-      input.endsAt ?? new Date(input.startsAt.getTime() + (category.matchMinutes ?? MATCH_MINUTES) * MINUTE);
+      input.endsAt ?? new Date(input.startsAt.getTime() + minutesOf(category) * MINUTE);
     try {
       await db.$transaction(async (tx) => {
         await repo.assignCourt(tx, {
@@ -1756,6 +1783,7 @@ export function createTournamentService(deps: TournamentDeps) {
     standingsFor,
     leagueTableFor,
     liveMatches,
+    scheduleCourtCount,
     matchById,
     matchesFor,
     byId,

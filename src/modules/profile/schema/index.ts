@@ -18,6 +18,7 @@ import type { UserErrorShape } from '../../../graphql/userError.js';
 import { cloudinary, TRANSFORMS } from '../../../platform/cloudinary.js';
 import { SystemError } from '../../../platform/errors/index.js';
 import { events } from '../../events/index.js';
+import { identity } from '../../identity/index.js';
 import { EventRef } from '../../events/schema/index.js';
 import { sport } from '../../sport/index.js';
 import { SportRef } from '../../sport/schema/index.js';
@@ -209,6 +210,18 @@ builder.node(PlayerProfileRef, {
     sports: t.field({ type: [PlayerSportRef], resolve: (p) => p.sports }),
     achievements: t.field({ type: [AchievementRef], resolve: (p) => p.achievements }),
     visibility: t.field({ type: ProfileVisibility, resolve: (p) => p.visibility }),
+    nameIsPlaceholder: t.boolean({
+      description:
+        'P1 — the owner only: true while the name is still the one made from their email ' +
+        '(the part before the @). Onboarding asks for a real name then. False for anyone else.',
+      resolve: async (p, _args, ctx) => {
+        const userId = ctx.actor?.userId;
+        if (!userId || (await profile.findByUserId(userId))?.id !== p.id) return false;
+        const [user] = await identity.contactsByIds([userId]);
+        if (!user?.email) return false;
+        return p.displayName === user.email.slice(0, user.email.indexOf('@'));
+      },
+    }),
     onboardingPendingSportIds: t.idList({
       description: 'Sports selected but not yet skill-rated. Empty for anyone but the owner.',
       resolve: (p) => p.onboardingPendingSportIds,

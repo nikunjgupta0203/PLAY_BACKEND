@@ -443,7 +443,12 @@ const SubmitMatchResultInput = builder.inputType('SubmitMatchResultInput', {
     penalties: t.field({
       type: GameScoreInput,
       required: false,
-      description: 'The shootout that decided a level goals match. Required then; refused otherwise.',
+      description:
+        'The tiebreaker that decided a level knockout: a goals match’s shootout, or a cricket match’s super over (runs). Required then; refused otherwise.',
+    }),
+    finish: t.string({
+      required: false,
+      description: 'A bout won early — one of the sport’s finishes (ko, tko, submission, fall…). Needs `winner`.',
     }),
   }),
 });
@@ -666,6 +671,7 @@ builder.mutationFields((t) => ({
           games: (args.input.games ?? []).map((g) => ({ a: g.a, b: g.b })),
           winner: args.input.winner ?? null,
           penalties: args.input.penalties ? { a: args.input.penalties.a, b: args.input.penalties.b } : null,
+          finish: args.input.finish ?? null,
         }),
       );
     },
@@ -698,6 +704,7 @@ builder.mutationFields((t) => ({
               games: (args.input?.games ?? []).map((g) => ({ a: g.a, b: g.b })),
               winner: args.input?.winner ?? null,
               penalties: args.input?.penalties ? { a: args.input.penalties.a, b: args.input.penalties.b } : null,
+              finish: args.input?.finish ?? null,
             }),
         ),
       );
@@ -743,6 +750,7 @@ builder.mutationFields((t) => ({
           games: (args.input.games ?? []).map((g) => ({ a: g.a, b: g.b })),
           winner: args.input.winner ?? null,
           penalties: args.input.penalties ? { a: args.input.penalties.a, b: args.input.penalties.b } : null,
+          finish: args.input.finish ?? null,
         }),
       );
     },

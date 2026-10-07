@@ -3,6 +3,7 @@ import { db } from '../../platform/db.js';
 import { events } from '../events/index.js';
 import { profile } from '../profile/index.js';
 import { rating } from '../rating/index.js';
+import { sport, typicalMatchMinutes } from '../sport/index.js';
 import { registration } from '../registration/index.js';
 import { venues } from '../venues/index.js';
 import { createTournamentRepo } from './repo/index.js';
@@ -70,7 +71,10 @@ export const tournament = createTournamentService({
     },
     categoryById: async (categoryId) => {
       const category = await events.categoryById(categoryId);
+      const rule = await sport.ruleForCategory(category);
       return {
+        ruleKind: rule.kind,
+        typicalMatchMinutes: typicalMatchMinutes(rule),
         id: category.id,
         eventId: category.eventId,
         sportId: category.sportId,

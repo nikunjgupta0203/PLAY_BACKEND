@@ -98,6 +98,17 @@ export const DRAW_MIN_ENTRIES: Record<string, number> = {
  */
 export const DRAW_TYPES = ['single_elim_with_plate', 'single_elim', 'league', 'groups_knockout'] as const;
 
+/**
+ * N11 — a race, a lift or a scorecard is run as heats (scoring field), never
+ * as a draw of matches, so a draw's minimum means nothing for it: two
+ * entrants make a race.
+ */
+export const FIELD_MIN_ENTRIES = 2;
+const isFieldRule = (rule: unknown): boolean => {
+  const kind = (rule as { kind?: unknown } | null)?.kind;
+  return kind === 'performance' || kind === 'scorecard';
+};
+
 function assertDrawType(drawType: string | undefined | null): void {
   if (drawType != null && !(DRAW_TYPES as readonly string[]).includes(drawType)) {
     throw new UserError(EventCode.INVALID_DRAW_TYPE, `Draw type is one of ${DRAW_TYPES.join(', ')}.`);
@@ -627,6 +638,8 @@ const invalidCategory = (message: string) => new UserError(EventCode.INVALID_CAT
 function assertCategoryShape(c: {
   name: string;
   drawType: string;
+  /** N11 — run as heats; the draw's floor does not apply. */
+  field?: boolean;
   capacity: number;
   minEntries: number;
   entryFeePaise: bigint;
@@ -641,7 +654,7 @@ function assertCategoryShape(c: {
   if (!Number.isInteger(c.capacity) || c.capacity <= 0) {
     throw new UserError(EventCode.INVALID_EVENT_WINDOW, 'Capacity must be at least one.');
   }
-  const floor = DRAW_MIN_ENTRIES[c.drawType] ?? 1;
+  const floor = c.field ? FIELD_MIN_ENTRIES : (DRAW_MIN_ENTRIES[c.drawType] ?? 1);
   if (c.capacity < floor) throw invalidCategory(`This draw needs room for at least ${floor} entries.`);
   if (!Number.isInteger(c.minEntries) || c.minEntries < floor) {
     throw invalidCategory(`The minimum number of entries for this draw is ${floor}.`);
@@ -946,8 +959,9 @@ export function createEventService(deps: EventDeps) {
    * becomes "shows full briefly, then reopens" instead of "took money, then
    * refunded".
    */
-  async function capacityOf(categoryId: string): Promise<Capacity> {
-    const category = await categoryById(categoryId);
+  async function capacityOf(categoryId: string, loaded?: EventCategory): Promise<Capacity> {
+    // Speed — a caller that already read the category passes it, saving a query per category.
+    const category = loaded ?? (await categoryById(categoryId));
     const [taken, held] = await Promise.all([
       entries.confirmedCount(categoryId),
       entries.liveHoldCount(categoryId),
@@ -968,8 +982,8 @@ export function createEventService(deps: EventDeps) {
     categoryId: string,
   ): Promise<{ availability: Availability; capacity: Capacity }> {
     const category = await categoryById(categoryId);
-    const event = await byId(category.eventId);
-    const capacity = await capacityOf(categoryId);
+    // Speed — the event and the counts are independent reads; the category is already in hand.
+    const [event, capacity] = await Promise.all([byId(category.eventId), capacityOf(categoryId, category)]);
 
     const closed =
       event.status === 'cancelled' ||
@@ -1465,13 +1479,14 @@ export function createEventService(deps: EventDeps) {
     }
     assertDrawType(input.drawType);
     const drawType = input.drawType ?? 'single_elim_with_plate';
-    const floor = DRAW_MIN_ENTRIES[drawType] ?? 1;
+    const field = deps.rules ? isFieldRule(await deps.rules.defaultFor(row.sportId, format.key)) : false;
+    const floor = field ? FIELD_MIN_ENTRIES : (DRAW_MIN_ENTRIES[drawType] ?? 1);
     const shape = {
       name: input.name.trim(),
       drawType,
       capacity: input.capacity,
       // The default never asks for more entries than the draw has room for.
-      minEntries: input.minEntries ?? Math.min(input.capacity, Math.max(4, floor)),
+      minEntries: input.minEntries ?? Math.min(input.capacity, field ? floor : Math.max(4, floor)),
       entryFeePaise: input.entryFeePaise,
       // gap #7 — PL4Y's numbers, not the host's.
       platformFeePaise:
@@ -1482,7 +1497,7 @@ export function createEventService(deps: EventDeps) {
       ageMin: input.ageMin ?? null,
       ageMax: input.ageMax ?? null,
     };
-    assertCategoryShape(shape);
+    assertCategoryShape({ ...shape, field });
     assertCategoryExtras(input);
     await assertCanCharge(actor, row, shape.entryFeePaise);
     // F21 — the host's format, frozen now; otherwise frozen at publish (F22),
@@ -1553,6 +1568,9 @@ export function createEventService(deps: EventDeps) {
     assertCategoryShape({
       name: patch.name ?? existing.name,
       drawType: patch.drawType ?? existing.drawType,
+      field: isFieldRule(
+        existing.scoringRule ?? (deps.rules ? await deps.rules.defaultFor(existing.sportId, existing.format) : null),
+      ),
       capacity: patch.capacity ?? existing.capacity,
       minEntries: patch.minEntries ?? existing.minEntries,
       entryFeePaise: patch.entryFeePaise ?? existing.entryFeePaise,

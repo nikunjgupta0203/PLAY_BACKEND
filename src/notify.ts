@@ -290,7 +290,11 @@ export const notify = {
     await notifications.emitBulk(
       await runnersOf(event.id),
       'host.ready_to_draw',
-      { eventTitle: event.title, categoryName: category.name },
+      {
+        eventTitle: event.title,
+        categoryName: category.name,
+        heats: ['performance', 'scorecard'].includes((await sport.ruleForCategory(category)).kind),
+      },
       organizerTarget(event),
     );
   },
@@ -353,7 +357,8 @@ export const notify = {
       recipients,
       'draw.generated',
       { eventTitle: event.title, categoryName: category.name },
-      eventTarget(event),
+      // N2 — "See who you play" opens the draw itself, not the event page.
+      { kind: 'route', route: 'event_draw', id: event.slug },
     );
   },
 
@@ -420,6 +425,34 @@ export const notify = {
       },
       { kind: 'match', id: match.id },
     );
+  },
+
+  /**
+   * A knockout match just got its second side: tell both who they play next.
+   * Matches that are ready the moment a draw is made (round 1, every league
+   * and group match) are skipped — `draw.generated` already told everyone.
+   */
+  async matchReady(payload: Record<string, unknown>): Promise<void> {
+    const bracket = str(payload['bracket']);
+    const round = Number(payload['round'] ?? 0);
+    if (bracket === 'league' || bracket === 'group') return;
+    if (bracket === 'championship' && round <= 1) return;
+    const match = await tournament.matchById(str(payload['matchId']) ?? '').catch(() => null);
+    if (!match?.sideARegistrationId || !match.sideBRegistrationId) return;
+    const event = await events.byId((await tournament.byId(match.tournamentId)).eventId);
+    const sides = [
+      [match.sideARegistrationId, match.sideBRegistrationId],
+      [match.sideBRegistrationId, match.sideARegistrationId],
+    ] as const;
+    for (const [mine, theirs] of sides) {
+      const opponentName = (await registration.teamNameFor(theirs)) ?? (await entryName(theirs));
+      await notifications.emitBulk(
+        await membersOf(mine),
+        'match.ready',
+        { eventTitle: event.title, opponentName },
+        { kind: 'match', id: match.id },
+      );
+    }
   },
 
   /** scoring R6, R11 — the side that did NOT submit is asked to confirm, and told when it confirms itself. */

@@ -294,4 +294,20 @@ builder.mutationFields((t) => ({
       return { heat: data ?? (await field.byId(heatId)), userError };
     },
   }),
+
+  undoFieldEvent: t.field({
+    type: HeatPayload,
+    description:
+      'Takes back the heat’s last write — a mistyped mark, a wrong DNF, or a heat made final too soon. ' +
+      'Carries expectedSeq like any write (scoring R1).',
+    args: { heatId: t.arg.id({ required: true }), expectedSeq: t.arg.int({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const heatId = String(args.heatId);
+      const { data, userError } = await attempt(() =>
+        field.undoFieldEvent(actor, { heatId, expectedSeq: args.expectedSeq }),
+      );
+      return { heat: data ?? (await field.byId(heatId)), userError };
+    },
+  }),
 }));

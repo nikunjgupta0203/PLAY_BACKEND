@@ -174,11 +174,11 @@ const EventCategoryRef = builder
       }),
       entriesRemaining: t.int({
         description: 'Subtracts live holds as well as confirmed entries (events R5).',
-        resolve: async (c) => (await events.capacityOf(c.id)).remaining,
+        resolve: async (c) => (await events.capacityOf(c.id, c)).remaining,
       }),
       capacityDetail: t.field({
         type: CapacityRef,
-        resolve: (c) => events.capacityOf(c.id),
+        resolve: (c) => events.capacityOf(c.id, c),
       }),
       availability: t.field({
         type: AvailabilityEnum,

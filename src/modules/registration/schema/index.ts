@@ -89,6 +89,9 @@ builder.objectType(RegistrationRef, {
     displayName: t.string({
       description: 'How the entry reads on a bracket or standings: "Asha", "Asha & Meera", "Asha + 4".',
       resolve: async (r) => {
+        // N14 — a named team reads as its name on the draw.
+        const named = r.teamId ? await registration.teamNameFor(r.id) : null;
+        if (named) return named;
         const team = await registration.teamFor(r.id);
         const ids = team.length > 0
           ? [...team].sort((x, y) => Number(y.isCaptain) - Number(x.isCaptain)).map((m) => m.userId)
@@ -428,13 +431,18 @@ builder.mutationFields((t) => ({
     description:
       'Owner or manager. Seats a player who paid at the desk (OFFLINE) or plays free (COMP), ' +
       'until the draw is made. F20 — by account email, or by name with no account (a guest); ' +
-      'a doubles walk-in names both players. No money moves through PL4Y for it.',
+      'a doubles walk-in names both players; a team walk-in names its captain, and optionally ' +
+      'its name and teammates (N14). No money moves through PL4Y for it.',
     args: {
       eventCategoryId: t.arg.id({ required: true }),
       email: t.arg.string(),
       guestName: t.arg.string(),
       partnerEmail: t.arg.string(),
       partnerName: t.arg.string(),
+      teamName: t.arg.string({ description: 'N14 — a team walk-in: the team’s name (optional).' }),
+      teammates: t.arg.stringList({
+        description: 'N14 — a team walk-in: the other players, each an account email or a name. Up to team size − 1.',
+      }),
       mode: t.arg({ type: PaymentModeEnum, required: true }),
     },
     resolve: async (_root, args, ctx) => {
@@ -449,6 +457,8 @@ builder.mutationFields((t) => ({
           guestName: args.guestName ?? null,
           partnerEmail: args.partnerEmail ?? null,
           partnerName: args.partnerName ?? null,
+          teamName: args.teamName ?? null,
+          teammates: args.teammates ?? null,
           mode: args.mode,
         });
       });

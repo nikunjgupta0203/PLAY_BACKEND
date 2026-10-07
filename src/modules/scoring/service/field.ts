@@ -300,6 +300,68 @@ export function createFieldService(deps: FieldDeps) {
     return byId(input.heatId) as Promise<HeatView>;
   }
 
+  /**
+   * #13, #14 — take back the heat's last write: a mistyped time, a DNF on the
+   * wrong runner, or "Make standings final" tapped too soon. The log is never
+   * rewritten (scoring R2): the undo is a new event whose state is the one
+   * before the last. Reopening a final heat is refused once the next round,
+   * or the category's finish, has been built on it.
+   */
+  async function undoFieldEvent(actor: Actor, input: { heatId: string; expectedSeq: number }): Promise<HeatView> {
+    const found = await db.heat.findUnique({ where: { id: input.heatId } });
+    if (!found) throw notFound();
+    const eventId = await deps.eventOf(found.eventCategoryId);
+    if (!(await deps.roleOn(actor.userId, eventId))) throw forbidden();
+    const rule = await fieldRule(found.eventCategoryId);
+    if (found.status === 'closed') {
+      const later = await db.heat.findFirst({
+        where: { eventCategoryId: found.eventCategoryId, round: { gt: found.round } },
+      });
+      const done = deps.categoryStatus ? (await deps.categoryStatus(found.eventCategoryId)) === 'completed' : false;
+      if (later || done) {
+        throw new UserError(
+          FieldCode.ROUND_NOT_CLOSED,
+          later ? 'The next round is already drawn from this heat, so it stays final.' : 'This category is finished.',
+        );
+      }
+    }
+
+    await db.$transaction(async (tx: Tx) => {
+      const rows = await tx.$queryRaw<{ score_seq: number; current_state: unknown }[]>`
+        SELECT score_seq, current_state FROM heats WHERE id = ${input.heatId}::uuid FOR UPDATE
+      `;
+      const head = rows[0];
+      if (!head) throw notFound();
+      if (input.expectedSeq !== head.score_seq) {
+        throw new UserError(ScoringCode.SCORE_STALE, 'Somebody else scored this heat first. Check the standings.', {
+          details: { seq: head.score_seq, state: head.current_state },
+        });
+      }
+      // Walk back past earlier undos: the state to restore is the one before the newest real write.
+      const log = await tx.heatScoreEvent.findMany({ where: { heatId: input.heatId }, orderBy: { seq: 'asc' } });
+      const live: { stateAfter: unknown }[] = [];
+      for (const row of log) {
+        if ((row.event as { type?: string }).type === 'undo') live.pop();
+        else live.push(row);
+      }
+      if (live.length === 0) throw new UserError(ScoringCode.NOTHING_TO_UNDO, 'There is nothing to undo in this heat.');
+      live.pop();
+      const current = head.current_state as FieldState;
+      const state: FieldState =
+        (live[live.length - 1]?.stateAfter as FieldState | undefined) ?? initialFieldState(rule, Object.keys(current.entries));
+      const seq = head.score_seq + 1;
+      await tx.heatScoreEvent.create({
+        data: { heatId: input.heatId, seq, event: { type: 'undo' }, stateAfter: state as object, recordedBy: actor.userId },
+      });
+      await tx.heat.update({
+        where: { id: input.heatId },
+        data: { scoreSeq: seq, currentState: state as object, status: state.closed ? 'closed' : 'live' },
+      });
+      await outboxWrite(tx, { topic: 'heat.score', payload: { heatId: input.heatId, eventId, seq } });
+    });
+    return byId(input.heatId) as Promise<HeatView>;
+  }
+
   /** What a viewer may do with a category's heats: is it a field sport, may they open heats, may they score. */
   async function access(
     userId: string | null,
@@ -338,7 +400,7 @@ export function createFieldService(deps: FieldDeps) {
   }
 
   return {
-    scoredHeatCount, createHeat, createHeats, advance, byId, forCategory, recordFieldEvent, access, finishCategory };
+    scoredHeatCount, createHeat, createHeats, advance, byId, forCategory, recordFieldEvent, undoFieldEvent, access, finishCategory };
 }
 
 export type FieldService = ReturnType<typeof createFieldService>;

@@ -4,7 +4,15 @@ import { createSportService } from './service/index.js';
 
 export const sport = createSportService({ db });
 
-export { SportCode, parseScoringRule, RuleTweakError, scoringRuleSchema, TWEAK_LIMITS, tweakRule } from './service/index.js';
+export {
+  SportCode,
+  parseScoringRule,
+  RuleTweakError,
+  scoringRuleSchema,
+  TWEAK_LIMITS,
+  tweakRule,
+  typicalMatchMinutes,
+} from './service/index.js';
 export type {
   Format,
   RuleTweaks,

@@ -924,6 +924,8 @@ export function buildModules(prisma: PrismaClient) {
   const scoring = createScoringService({
     db,
     repo: createScoringRepo(db),
+    // Fixture events start weeks out; scoring them is the point of these tests.
+    startOpensBeforeMs: Number.POSITIVE_INFINITY,
     matches: {
       async byId(matchId) {
         const match = await tournament.matchById(matchId).catch(() => null);

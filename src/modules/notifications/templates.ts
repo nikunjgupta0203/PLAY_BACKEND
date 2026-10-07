@@ -26,6 +26,8 @@ export const DEEP_LINK_ROUTES = [
   'organisation',
   /** bookings — `id` is the court booking. */
   'court_booking',
+  /** N2 — an event's draw and schedule; `id` is the event's slug. */
+  'event_draw',
 ] as const;
 export type DeepLinkRoute = (typeof DEEP_LINK_ROUTES)[number];
 
@@ -43,6 +45,8 @@ export interface TemplatePayloads {
   /** The captain hears that the invited partner said no. */
   'partner.declined': { eventTitle: string; categoryName: string };
   'match.starting_soon': { eventTitle: string; courtName: string | null; startsAt: string };
+  /** A later-round match now has both sides: the player's next opponent is known. */
+  'match.ready': { eventTitle: string; opponentName: string };
   /** The other side is asked to confirm (scoring R6). Null minutes: a person must confirm (R12). */
   'match.result_pending': { eventTitle: string; autoConfirmMinutes?: number | null };
   /** scoring R14 — sent once, half-way through the window. */
@@ -85,7 +89,8 @@ export interface TemplatePayloads {
   /** F12 — to the host: a draw missed its minimum and was cancelled and refunded. */
   'host.draw_cancelled': { eventTitle: string; categoryName: string };
   /** F12 — to the host: registration closed; make the draw. */
-  'host.ready_to_draw': { eventTitle: string; categoryName: string };
+  /** `heats` — a race or a scorecard (N11): it is run as heats, there is no draw to make. */
+  'host.ready_to_draw': { eventTitle: string; categoryName: string; heats?: boolean };
   /** F12 — to the host: the event is over; when the payout is due, if there is one. */
   'host.event_completed': { eventTitle: string; payoutDueAt: string | null };
   /** events R9 — one draw missed its minimum entries. */
@@ -160,6 +165,12 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
     render: (p) => ({
       title: 'Your match starts soon',
       body: p.courtName ? `${p.eventTitle} · ${p.courtName}` : p.eventTitle,
+    }),
+  },
+  'match.ready': {
+    render: (p) => ({
+      title: 'Your next match is set',
+      body: `${p.eventTitle}. You play ${p.opponentName} next — we'll tell you the court and time.`,
     }),
   },
   'match.result_pending': {
@@ -282,7 +293,10 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
     }),
   },
   'host.ready_to_draw': {
-    render: (p) => ({ title: 'Make the draw', body: `${p.eventTitle} · ${p.categoryName}. Registration is closed.` }),
+    render: (p) =>
+      p.heats
+        ? { title: 'Set up the heats', body: `${p.eventTitle} · ${p.categoryName}. Registration is closed.` }
+        : { title: 'Make the draw', body: `${p.eventTitle} · ${p.categoryName}. Registration is closed.` },
   },
   'host.event_completed': {
     render: (p) => ({

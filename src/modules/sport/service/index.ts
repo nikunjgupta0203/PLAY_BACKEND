@@ -14,6 +14,7 @@ import { parseScoringRule, type ScoringRule } from './scoringRule.js';
 
 export { parseScoringRule, RuleTweakError, scoringRuleSchema, TWEAK_LIMITS, tweakRule } from './scoringRule.js';
 export type { RuleTweaks, ScoringRule } from './scoringRule.js';
+export { FALLBACK_MATCH_MINUTES, typicalMatchMinutes } from './matchLength.js';
 
 export const SportCode = {
   SPORT_NOT_FOUND: 'SPORT_NOT_FOUND',
@@ -208,6 +209,16 @@ export function createSportService(deps: SportDeps) {
     return rule;
   }
 
+  /**
+   * The rule a draw is played under: the one frozen on the category (F21, F22),
+   * else its format's, else the sport's.
+   */
+  async function ruleForCategory(c: { sportId: string; format: string; scoringRule?: unknown }): Promise<ScoringRule> {
+    if (c.scoringRule) return parseScoringRule(c.scoringRule);
+    const format = (await formatsFor(c.sportId)).find((f) => f.key === c.format);
+    return scoringRuleFor(c.sportId, format?.id);
+  }
+
   return {
     list,
     bySlug,
@@ -217,6 +228,7 @@ export function createSportService(deps: SportDeps) {
     skillBandsFor,
     hasSkillBand,
     scoringRuleFor,
+    ruleForCategory,
     refresh,
   };
 }

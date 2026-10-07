@@ -34,10 +34,13 @@ export const REGISTRATION_UPDATE_TOPICS: readonly string[] = [
 ];
 
 export const REGISTRATION_UPDATED_EVENT = 'registration.updated';
+/** N1 — on presence-event-{id}: the entry list or the counts moved; the host's screens and the event page refetch. */
+export const ENTRIES_CHANGED_EVENT = 'entries.changed';
 
 export interface RegistrationEntry {
   captainUserId: string;
   team: { members: { userId: string }[] } | null;
+  eventId?: string;
 }
 
 export function recipientsOf(entry: RegistrationEntry): string[] {
@@ -69,6 +72,10 @@ export function createRegistrationNotifier(deps: {
           REGISTRATION_UPDATED_EVENT,
           { registrationId, topic },
         );
+        // The host never had a channel for this: entries arrived only on a manual refresh.
+        if (entry.eventId) {
+          await deps.publisher.publish([`presence-event-${entry.eventId}`], ENTRIES_CHANGED_EVENT, { topic });
+        }
       } catch (err) {
         logger.warn({ topic, registrationId, err }, 'realtime publish failed — dropped, never retried');
       }
@@ -81,6 +88,6 @@ export const registrationNotifier = createRegistrationNotifier({
   loadEntry: (registrationId) =>
     db.registration.findUnique({
       where: { id: registrationId },
-      select: { captainUserId: true, team: { select: { members: { select: { userId: true } } } } },
+      select: { captainUserId: true, eventId: true, team: { select: { members: { select: { userId: true } } } } },
     }),
 });

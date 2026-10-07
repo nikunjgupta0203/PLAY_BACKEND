@@ -55,6 +55,8 @@ export const ScoringCode = {
   MATCH_NOT_LIVE: 'MATCH_NOT_LIVE',
   /** Both sides of the match are not yet known. */
   MATCH_NOT_READY: 'MATCH_NOT_READY',
+  /** Scoring opens an hour before the event; `details.opensAt` says when. */
+  MATCH_TOO_EARLY: 'MATCH_TOO_EARLY',
   NOTHING_TO_UNDO: 'NOTHING_TO_UNDO',
   /** A scoreline that is not a finished match under the sport's rule. */
   INVALID_RESULT: 'INVALID_RESULT',
@@ -181,8 +183,17 @@ export interface ScoringDeps {
   checkedIn?(registrationId: string): Promise<boolean>;
   /** F4 — everyone with a grant on the event, to tell whether anyone neutral can settle a dispute. */
   staffOf?(eventId: string): Promise<{ userId: string; role: string }[]>;
+  /**
+   * How long before the event starts a match may be started. Default an hour:
+   * a stray tap days early would score a match nobody is playing and flip the
+   * whole event to live.
+   */
+  startOpensBeforeMs?: number;
   now?: () => Date;
 }
+
+/** A match may be started from an hour before its event begins. */
+export const START_OPENS_BEFORE_MS = 60 * 60_000;
 
 export interface Access {
   /** The side the viewer plays on, if they play in this match. */
@@ -233,6 +244,7 @@ function tallies(result: ResultRow): { tallyA: number | null; tallyB: number | n
 export function createScoringService(deps: ScoringDeps) {
   const { db, repo, matches } = deps;
   const now = deps.now ?? (() => new Date());
+  const startOpensBeforeMs = deps.startOpensBeforeMs ?? START_OPENS_BEFORE_MS;
 
   // --- reads ---------------------------------------------------------------
 
@@ -308,6 +320,17 @@ export function createScoringService(deps: ScoringDeps) {
     }
   }
 
+  /** Scoring opens an hour before the event — never days early. */
+  function assertStartable(match: MatchInfo): void {
+    if (!match.eventStartsAt || match.status === 'live') return;
+    const opensAt = match.eventStartsAt.getTime() - startOpensBeforeMs;
+    if (now().getTime() < opensAt) {
+      throw new UserError(ScoringCode.MATCH_TOO_EARLY, 'This match can be started from an hour before the event begins.', {
+        details: { opensAt: new Date(opensAt).toISOString() },
+      });
+    }
+  }
+
   /** R1 — the loser of a race is told what the winner wrote. */
   function stale(head: { scoreSeq: number; currentScore: ScoreState | null }): UserError {
     return new UserError(
@@ -333,6 +356,7 @@ export function createScoringService(deps: ScoringDeps) {
     if (!match.sideARegistrationId || !match.sideBRegistrationId) {
       throw new UserError(ScoringCode.MATCH_NOT_READY, 'Both sides of this match are not known yet.');
     }
+    assertStartable(match);
     const rule = await ruleOf(match);
 
     return db.$transaction(async (tx) => {
@@ -577,23 +601,42 @@ export function createScoringService(deps: ScoringDeps) {
    */
   async function judge(
     match: MatchInfo,
-    input: { outcome: Outcome; games: GameScore[]; winner?: Side | null; penalties?: GameScore | null },
+    input: {
+      outcome: Outcome;
+      games: GameScore[];
+      winner?: Side | null;
+      penalties?: GameScore | null;
+      /** A bout ended early — one of the rule's `finishes` (ko, tko, submission…). */
+      finish?: string | null;
+    },
   ): Promise<{ winner: Side | null; detail: { method: string | null; margin: string | null } }> {
     const rule = await ruleOf(match);
     let winner: Side | null;
     let detail: { method: string | null; margin: string | null } = { method: null, margin: null };
-    if (input.penalties) {
+    const wholeNumbers = (ns: number[]) => ns.every((n) => Number.isInteger(n) && n >= 0);
+    if (input.finish) {
+      if (input.outcome !== 'played' || rule.kind !== 'bouts') throw invalid('Only a bout can end by a stoppage.');
+      if (!rule.finishes.includes(input.finish)) throw invalid(`This sport does not end by ${input.finish}.`);
+      if (!input.winner) throw invalid('Say which side won by stoppage.');
+      if (!wholeNumbers(input.games.flatMap((g) => [g.a, g.b]))) throw invalid('Scores are whole numbers, never negative.');
+      winner = input.winner;
+      detail = { method: input.finish, margin: null };
+    } else if (input.penalties) {
+      // A level knockout: a goals match goes to a shootout, a cricket match to a super over.
       const p = input.penalties;
       const total = input.games.reduce((t, g) => ({ a: t.a + g.a, b: t.b + g.b }), { a: 0, b: 0 });
-      if (input.outcome !== 'played' || rule.kind !== 'goals') throw invalid('Penalties only decide a played goals match.');
-      if (input.games.length === 0 || total.a !== total.b) throw invalid('Penalties only decide a level score.');
-      if (![p.a, p.b, ...input.games.flatMap((g) => [g.a, g.b])].every((n) => Number.isInteger(n) && n >= 0)) {
+      const decider = rule.kind === 'innings' ? 'super over' : 'penalties';
+      if (input.outcome !== 'played' || (rule.kind !== 'goals' && rule.kind !== 'innings')) {
+        throw invalid('A tiebreaker only decides a played goals or cricket match.');
+      }
+      if (input.games.length === 0 || total.a !== total.b) throw invalid(`The ${decider} only decide a level score.`);
+      if (!wholeNumbers([p.a, p.b, ...input.games.flatMap((g) => [g.a, g.b])])) {
         throw invalid('Scores are whole numbers, never negative.');
       }
-      if (p.a === p.b) throw invalid('The penalties have no winner.');
+      if (p.a === p.b) throw invalid(`The ${decider} has no winner.`);
       winner = p.a > p.b ? 'a' : 'b';
-      detail = { method: 'shootout', margin: `${p.a}–${p.b}` };
-      if (input.winner && input.winner !== winner) throw invalid('The penalties say the other side won.');
+      detail = { method: rule.kind === 'innings' ? 'super_over' : 'shootout', margin: `${p.a}–${p.b}` };
+      if (input.winner && input.winner !== winner) throw invalid(`The ${decider} says the other side won.`);
     } else if (input.outcome === 'played') {
       try {
         winner = winnerOf(input.games, rule);
@@ -632,8 +675,10 @@ export function createScoringService(deps: ScoringDeps) {
       outcome: Outcome;
       games: GameScore[];
       winner?: Side | null;
-      /** Plan 3 — the shootout that decided a level goals match: required then, refused otherwise. */
+      /** Plan 3 — the shootout (or super over) that decided a level knockout: required then, refused otherwise. */
       penalties?: GameScore | null;
+      /** A bout won early: ko, tko, submission… */
+      finish?: string | null;
     },
   ): Promise<ResultRow> {
     const match = await matchOrThrow(input.matchId);
@@ -1037,6 +1082,7 @@ export function createScoringService(deps: ScoringDeps) {
       games: GameScore[];
       winner?: Side | null;
       penalties?: GameScore | null;
+      finish?: string | null;
     },
   ): Promise<ResultRow> {
     const match = await matchOrThrow(input.matchId);
@@ -1115,6 +1161,7 @@ export function createScoringService(deps: ScoringDeps) {
       games?: GameScore[];
       winner?: Side | null;
       penalties?: GameScore | null;
+      finish?: string | null;
     },
   ): Promise<ResultRow> {
     const match = await matchOrThrow(input.matchId);
@@ -1125,6 +1172,7 @@ export function createScoringService(deps: ScoringDeps) {
           games: input.games ?? [],
           winner: input.winner,
           penalties: input.penalties,
+          finish: input.finish,
         });
     return db.$transaction(async (tx) => {
       await repo.lockHead(tx, input.matchId);
