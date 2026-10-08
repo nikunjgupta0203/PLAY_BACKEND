@@ -9,7 +9,6 @@ import { builder, clampFirst } from '../../../graphql/builder.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { SystemError } from '../../../platform/errors/index.js';
-import { profile } from '../../profile/index.js';
 import { PlayerProfileRef } from '../../profile/schema/index.js';
 import { chat } from '../index.js';
 import type { ChatMessage, ConversationView, Messaging } from '../index.js';
@@ -48,7 +47,7 @@ const ConversationRef = builder.objectRef<ConversationView>('Conversation').impl
     other: t.field({
       type: PlayerProfileRef,
       nullable: true,
-      resolve: (c, _args, ctx) => profile.publicView(ctx.actor?.userId ?? null, c.otherId),
+      resolve: (c, _args, ctx) => ctx.loaders.publicProfile.load(c.otherId),
     }),
     status: t.field({ type: ConversationStatusEnum, resolve: (c) => c.status }),
     isIncomingRequest: t.exposeBoolean('isIncomingRequest', {
@@ -61,12 +60,12 @@ const ConversationRef = builder.objectRef<ConversationView>('Conversation').impl
       description: 'chat R10 — when you may send a new request after a decline. Null otherwise.',
       resolve: (c) => c.canResendAt,
     }),
-    unreadCount: t.int({ resolve: (c) => chat.unreadIn(c) }),
+    unreadCount: t.int({ resolve: (c, _args, ctx) => ctx.loaders.chatUnread.load(c) }),
     lastMessage: t.field({
       type: MessageRef,
       nullable: true,
-      resolve: async (c) => {
-        const m = await chat.lastMessage(c.id);
+      resolve: async (c, _args, ctx) => {
+        const m = await ctx.loaders.chatLastMessage.load(c.id);
         return m ? { ...m, viewerId: c.viewerId } : null;
       },
     }),
@@ -79,8 +78,9 @@ const ConversationRef = builder.objectRef<ConversationView>('Conversation').impl
           if (args.last != null || args.before != null) {
             throw new SystemError('BAD_USER_INPUT', 'messages supports forward pagination only');
           }
-          const actor = requireActor(ctx);
-          const page = await chat.messages(actor.userId, c.id, {
+          requireActor(ctx);
+          // The view already proves the viewer may read it — no second check.
+          const page = await chat.messagesIn(c, {
             first: clampFirst(args.first, 30),
             after: args.after ?? null,
           });

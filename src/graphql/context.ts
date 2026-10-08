@@ -12,6 +12,8 @@ import { identity } from '../modules/identity/index.js';
 import type { Grant, PlatformRole } from '../modules/identity/index.js';
 import type { Capacity, Event, EventCategory } from '../modules/events/index.js';
 import type { Venue } from '../modules/venues/index.js';
+import type { PublicProfile } from '../modules/profile/index.js';
+import type { ChatMessage, ConversationView } from '../modules/chat/index.js';
 import { logger } from '../platform/logging/index.js';
 
 export interface Loaders {
@@ -27,6 +29,12 @@ export interface Loaders {
   capacity: DataLoader<EventCategory, Capacity, string>;
   /** Speed — every card's venue in one query. */
   venue: DataLoader<string, Venue | null>;
+  /** Speed — every player on screen (an inbox row each) in a fixed number of queries. */
+  publicProfile: DataLoader<string, PublicProfile | null>;
+  /** Speed — an inbox page's last messages in one query. */
+  chatLastMessage: DataLoader<string, ChatMessage | null>;
+  /** Speed — an inbox page's unread counts in one query. */
+  chatUnread: DataLoader<ConversationView, number, string>;
 }
 
 export interface Ctx {
@@ -37,7 +45,7 @@ export interface Ctx {
   loaders: Loaders;
 }
 
-function buildLoaders(): Loaders {
+function buildLoaders(actor: Actor | null): Loaders {
   return {
     grant: new DataLoader(
       async (keys) =>
@@ -70,6 +78,24 @@ function buildLoaders(): Loaders {
       const found = new Map((await venues.byIds([...venueIds])).map((v) => [v.id, v]));
       return venueIds.map((id) => found.get(id) ?? null);
     }),
+    publicProfile: new DataLoader(async (playerIds) => {
+      const { profile } = await import('../modules/profile/index.js');
+      const found = await profile.publicViews(actor?.userId ?? null, playerIds);
+      return playerIds.map((id) => found.get(id) ?? null);
+    }),
+    chatLastMessage: new DataLoader(async (conversationIds) => {
+      const { chat } = await import('../modules/chat/index.js');
+      const found = await chat.lastMessages(conversationIds);
+      return conversationIds.map((id) => found.get(id) ?? null);
+    }),
+    chatUnread: new DataLoader(
+      async (views) => {
+        const { chat } = await import('../modules/chat/index.js');
+        const found = await chat.unreadCounts(views);
+        return views.map((v) => found.get(v.id) ?? 0);
+      },
+      { cacheKeyFn: (v) => `${v.viewerId}:${v.id}` },
+    ),
   };
 }
 
@@ -96,5 +122,5 @@ export async function buildContext({ req }: { req: Request }): Promise<Ctx> {
     }
   }
 
-  return { requestId, ip: req.ip ?? 'unknown', actor, loaders: buildLoaders() };
+  return { requestId, ip: req.ip ?? 'unknown', actor, loaders: buildLoaders(actor) };
 }

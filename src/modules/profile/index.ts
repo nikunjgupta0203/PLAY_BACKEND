@@ -91,6 +91,7 @@ export type {
   PlayedWith,
   PlayerProfile,
   PlayerSport,
+  ProfileBrief,
   ProfileService,
   PublicProfile,
   StatsSnapshot,

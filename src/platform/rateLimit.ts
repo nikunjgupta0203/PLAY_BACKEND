@@ -31,22 +31,13 @@ export function createRateLimiter(db: Db) {
    * is already full, so a rejected attempt does not extend the lockout.
    */
   async function consume(key: string, window: Window, now = Date.now()): Promise<LimitResult> {
-    const cutoff = new Date(now - window.seconds * 1000);
-    return db.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`rl:${key}`}))`;
-      await tx.rateLimitHit.deleteMany({ where: { key, at: { lte: cutoff } } });
-      const count = await tx.rateLimitHit.count({ where: { key } });
-
-      if (count >= window.max) {
-        const oldest = await tx.rateLimitHit.findFirst({ where: { key }, orderBy: { at: 'asc' } });
-        const oldestMs = oldest?.at.getTime() ?? now;
-        const retryAfterSeconds = Math.max(1, Math.ceil((oldestMs + window.seconds * 1000 - now) / 1000));
-        return { allowed: false, retryAfterSeconds, remaining: 0 };
-      }
-
-      await tx.rateLimitHit.create({ data: { key, at: new Date(now) } });
-      return { allowed: true, retryAfterSeconds: 0, remaining: window.max - count - 1 };
-    });
+    // Speed — one round trip: lock, prune, count and insert run inside the
+    // rate_limit_consume function (migration 039), not as six statements.
+    const rows = await db.$queryRaw<{ allowed: boolean; retry_after_seconds: number; remaining: number }[]>`
+      SELECT allowed, retry_after_seconds, remaining
+        FROM rate_limit_consume(${key}, ${new Date(now)}::timestamptz, ${window.seconds}::int, ${window.max}::int)`;
+    const r = rows[0]!;
+    return { allowed: r.allowed, retryAfterSeconds: r.retry_after_seconds, remaining: r.remaining };
   }
 
   /** Consume across several windows; the first rejection wins. */

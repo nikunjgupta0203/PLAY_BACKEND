@@ -384,6 +384,39 @@ describe('read state and notifications (R7, R8)', () => {
     expect(await chat.unreadConversationCount(asha.userId)).toBe(0);
   });
 
+  it('R7, R9: the batched inbox reads agree with the one-at-a-time ones', async () => {
+    const ravi = await makePlayer('Ravi');
+    const asha = await makePlayer('Asha');
+    const meera = await makePlayer('Meera');
+    const dev = await makePlayer('Dev');
+    shared.add(key(ravi.playerId, asha.playerId));
+    shared.add(key(meera.playerId, asha.playerId));
+    await chat.send(ravi.actor, { playerId: asha.playerId, body: 'one' });
+    tick();
+    await chat.send(ravi.actor, { playerId: asha.playerId, body: 'two' });
+    tick();
+    await chat.send(meera.actor, { playerId: asha.playerId, body: 'hi' });
+    tick();
+    await chat.send(asha.actor, { playerId: meera.playerId, body: 'hello' });
+    tick();
+    await chat.send(asha.actor, { playerId: dev.playerId, body: 'only mine' }); // a request Asha sent
+
+    const inbox = (await chat.list(asha.userId, { first: 10 })).nodes;
+    expect(inbox).toHaveLength(3);
+    const counts = await chat.unreadCounts(inbox);
+    const lasts = await chat.lastMessages(inbox.map((c) => c.id));
+    for (const c of inbox) {
+      expect(counts.get(c.id)).toBe(await chat.unreadIn(c));
+      expect(lasts.get(c.id)).toEqual(await chat.lastMessage(c.id));
+    }
+    expect([...counts.values()].sort()).toEqual([0, 0, 2]);
+    expect(await chat.lastMessages([])).toEqual(new Map());
+
+    const views = await profile.publicViews(asha.userId, [ravi.playerId, meera.playerId, newId()]);
+    expect(views.size).toBe(2);
+    expect(views.get(ravi.playerId)).toEqual(await profile.publicView(asha.userId, ravi.playerId));
+  });
+
   it('R8: a request notifies; after that only the first unread message does', async () => {
     const ravi = await makePlayer('Ravi');
     const asha = await makePlayer('Asha');

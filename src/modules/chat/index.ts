@@ -2,24 +2,24 @@
 import { db } from '../../platform/db.js';
 import { consume } from '../../platform/rateLimit.js';
 import { profile } from '../profile/index.js';
-import { createChatService, type ChatProfile } from './service/index.js';
-
-const asChatProfile = (p: { id: string; userId: string; visibility: ChatProfile['visibility'] } | null) =>
-  p ? { id: p.id, userId: p.userId, visibility: p.visibility } : null;
+import { createChatService } from './service/index.js';
 
 export const chat = createChatService({
   db,
+  // Speed — chat needs only id, userId and visibility: one query, not three.
   profiles: {
-    findByUserId: async (userId) => asChatProfile(await profile.findByUserId(userId)),
-    findById: async (playerId) => asChatProfile(await profile.findById(playerId)),
+    findByUserId: (userId) => profile.briefByUserId(userId),
+    findById: (playerId) => profile.briefById(playerId),
   },
   sharedPlay: {
     // chat R2. registration imports profile, which chat imports, so it is
-    // reached lazily like every other cross-module port.
+    // reached lazily like every other cross-module port. Both asked at once.
     async sharePlay(a, b) {
-      if (await profile.havePlayedTogether(a.id, b.id)) return true;
-      const { registration } = await import('../registration/index.js');
-      return registration.areTeammates(a.userId, b.userId);
+      const [played, teammates] = await Promise.all([
+        profile.havePlayedTogether(a.id, b.id),
+        import('../registration/index.js').then(({ registration }) => registration.areTeammates(a.userId, b.userId)),
+      ]);
+      return played || teammates;
     },
   },
   limiter: { consume },

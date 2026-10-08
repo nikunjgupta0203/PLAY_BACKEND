@@ -226,6 +226,24 @@ const toPlayerSport = (r: PlayerSportRow): PlayerSport => ({
   matchesPlayed: r.matchesPlayed,
 });
 
+interface AchievementRow {
+  id: string;
+  playerId: string;
+  key: string;
+  sportId: string | null;
+  eventId: string | null;
+  earnedAt: Date;
+}
+
+/** Who a profile belongs to and who may see it — all chat reads about a player. */
+export interface ProfileBrief {
+  id: string;
+  userId: string;
+  visibility: Visibility;
+}
+
+const BRIEF = { id: true, userId: true, visibility: true } as const;
+
 const notFound = () =>
   new UserError(ProfileCode.PROFILE_NOT_FOUND, 'That player could not be found.');
 
@@ -362,16 +380,54 @@ export function createProfileService(deps: ProfileDeps) {
     return viewOf(target, viewer);
   }
 
+  /**
+   * Speed — `publicView` for many players in a fixed number of queries
+   * (a chat inbox shows one per row). Missing players are absent from the map.
+   */
+  async function publicViews(
+    viewerUserId: string | null,
+    playerIds: readonly string[],
+  ): Promise<Map<string, PublicProfile>> {
+    const ids = [...new Set(playerIds)];
+    if (ids.length === 0) return new Map();
+    const [rows, viewer, achievements] = await Promise.all([
+      db.playerProfile.findMany({ where: { id: { in: ids } }, include: { sports: true } }),
+      // Only the viewer's id matters below, so the one-query lookup does.
+      viewerUserId ? briefByUserId(viewerUserId) : null,
+      db.achievement.findMany({ where: { playerId: { in: ids } }, orderBy: { earnedAt: 'desc' } }),
+    ]);
+    const byPlayer = new Map<string, AchievementRow[]>();
+    for (const a of achievements) byPlayer.set(a.playerId, [...(byPlayer.get(a.playerId) ?? []), a]);
+    const targets = await hydrate(rows);
+    return new Map(targets.map((t) => [t.id, toPublic(t, viewer, byPlayer.get(t.id) ?? [])]));
+  }
+
+  /** Speed — the three columns chat needs, in one query instead of three. */
+  async function briefByUserId(userId: string): Promise<ProfileBrief | null> {
+    return db.playerProfile.findUnique({ where: { userId }, select: BRIEF }) as Promise<ProfileBrief | null>;
+  }
+
+  async function briefById(playerId: string): Promise<ProfileBrief | null> {
+    return db.playerProfile.findUnique({ where: { id: playerId }, select: BRIEF }) as Promise<ProfileBrief | null>;
+  }
+
   async function viewOf(
     target: PlayerProfile,
     viewer: PlayerProfile | null,
   ): Promise<PublicProfile> {
-    const isOwner = viewer?.id === target.id;
-
     const achievements = await db.achievement.findMany({
       where: { playerId: target.id },
       orderBy: { earnedAt: 'desc' },
     });
+    return toPublic(target, viewer, achievements);
+  }
+
+  function toPublic(
+    target: PlayerProfile,
+    viewer: { id: string } | null,
+    achievements: AchievementRow[],
+  ): PublicProfile {
+    const isOwner = viewer?.id === target.id;
 
     const detailsVisible =
       isOwner ||
@@ -1043,6 +1099,9 @@ export function createProfileService(deps: ProfileDeps) {
     byUserId,
     findByUserId,
     publicView,
+    publicViews,
+    briefById,
+    briefByUserId,
     assertHasSport,
     updateSports,
     selectOnboardingSports,

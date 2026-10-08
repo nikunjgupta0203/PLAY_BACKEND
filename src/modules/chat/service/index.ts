@@ -230,15 +230,16 @@ export function createChatService(deps: ChatDeps) {
   /** What a profile shows about messaging `playerId`. Null on your own profile or signed out. */
   async function messagingWith(viewerUserId: string | null, playerId: string): Promise<Messaging | null> {
     if (!viewerUserId) return null;
-    const viewer = await profiles.findByUserId(viewerUserId);
-    const other = await profiles.findById(playerId);
+    const [viewer, other] = await Promise.all([profiles.findByUserId(viewerUserId), profiles.findById(playerId)]);
     if (!viewer || !other || viewer.id === other.id) return null;
 
-    const [viewerBlocked, otherBlocked] = await blocksBetween(viewer.id, other.id);
     const [low, high] = pair(viewer.id, other.id);
-    const row = await db.conversation.findUnique({
-      where: { playerLowId_playerHighId: { playerLowId: low, playerHighId: high } },
-    });
+    const [[viewerBlocked, otherBlocked], row] = await Promise.all([
+      blocksBetween(viewer.id, other.id),
+      db.conversation.findUnique({
+        where: { playerLowId_playerHighId: { playerLowId: low, playerHighId: high } },
+      }),
+    ]);
     // A request the viewer declined is not a conversation they can see.
     const visible = row && !(row.status === 'declined' && row.initiatorId !== viewer.id) ? row : null;
     const declined = visible?.status === 'declined' && visible.initiatorId === viewer.id;
@@ -287,14 +288,12 @@ export function createChatService(deps: ChatDeps) {
     const viewer = await profiles.findByUserId(viewerUserId);
     if (!viewer) return empty;
     const first = Math.min(Math.max(opts.first, 1), 50);
-    const blocked = (
-      await db.playerBlock.findMany({ where: { blockerId: viewer.id }, select: { blockedId: true } })
-    ).map((b) => b.blockedId);
-    const blockedBy = new Set(
-      (await db.playerBlock.findMany({ where: { blockedId: viewer.id }, select: { blockerId: true } })).map(
-        (b) => b.blockerId,
-      ),
-    );
+    const blocks = await db.playerBlock.findMany({
+      where: { OR: [{ blockerId: viewer.id }, { blockedId: viewer.id }] },
+      select: { blockerId: true, blockedId: true },
+    });
+    const blocked = blocks.filter((b) => b.blockerId === viewer.id).map((b) => b.blockedId);
+    const blockedBy = new Set(blocks.filter((b) => b.blockedId === viewer.id).map((b) => b.blockerId));
     const cursor = opts.after ? decodeCursor(opts.after) : null;
 
     const rows = await db.conversation.findMany({
@@ -343,6 +342,24 @@ export function createChatService(deps: ChatDeps) {
     const empty = { nodes: [], cursors: [], hasNextPage: false, endCursor: null };
     const viewer = await profiles.findByUserId(viewerUserId);
     if (!viewer || !(await visibleRow(viewer.id, conversationId))) return empty;
+    return pageOf(conversationId, opts);
+  }
+
+  /**
+   * `messages` for a view this service already handed out — the view is the
+   * proof the viewer may read it, so the visibility check is not repeated.
+   */
+  async function messagesIn(
+    c: ConversationView,
+    opts: { first: number; after?: string | null },
+  ): Promise<Page<ChatMessage>> {
+    return pageOf(c.id, opts);
+  }
+
+  async function pageOf(
+    conversationId: string,
+    opts: { first: number; after?: string | null },
+  ): Promise<Page<ChatMessage>> {
     const first = Math.min(Math.max(opts.first, 1), 100);
     const cursor = opts.after ? decodeCursor(opts.after) : null;
     const rows = await db.message.findMany({
@@ -362,6 +379,46 @@ export function createChatService(deps: ChatDeps) {
 
   async function lastMessage(conversationId: string): Promise<ChatMessage | null> {
     return db.message.findFirst({ where: { conversationId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+  }
+
+  /** Speed — `lastMessage` for a page of conversations in one query. */
+  async function lastMessages(conversationIds: readonly string[]): Promise<Map<string, ChatMessage>> {
+    if (conversationIds.length === 0) return new Map();
+    const rows = await db.$queryRaw<ChatMessage[]>`
+      SELECT m.id, m.conversation_id AS "conversationId", m.sender_id AS "senderId", m.body,
+             m.created_at AS "createdAt"
+        FROM unnest(${[...conversationIds]}::uuid[]) AS c(id)
+        CROSS JOIN LATERAL (
+          SELECT * FROM messages
+           WHERE conversation_id = c.id
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1) m`;
+    return new Map(rows.map((m) => [m.conversationId, m]));
+  }
+
+  /** Speed — `unreadIn` for a page of one viewer's conversations in one query. */
+  async function unreadCounts(views: readonly ConversationView[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>(views.map((v) => [v.id, 0]));
+    const byViewer = new Map<string, string[]>();
+    for (const v of views) byViewer.set(v.viewerId, [...(byViewer.get(v.viewerId) ?? []), v.id]);
+    await Promise.all(
+      [...byViewer].map(async ([viewerId, ids]) => {
+        const rows = await db.$queryRaw<{ id: string; n: number }[]>`
+          SELECT c.id, count(m.id)::int AS n
+            FROM conversations c
+            JOIN messages m
+              ON m.conversation_id = c.id
+             AND m.sender_id <> ${viewerId}::uuid
+             AND m.created_at > COALESCE(
+                   CASE WHEN c.player_low_id = ${viewerId}::uuid
+                        THEN c.low_last_read_at ELSE c.high_last_read_at END,
+                   '-infinity'::timestamptz)
+           WHERE c.id = ANY(${ids}::uuid[])
+           GROUP BY c.id`;
+        for (const r of rows) out.set(r.id, r.n);
+      }),
+    );
+    return out;
   }
 
   /** R7 — messages from the other side the viewer has not read. */
@@ -414,27 +471,31 @@ export function createChatService(deps: ChatDeps) {
     if (body.length < 1 || body.length > MESSAGE_MAX) {
       throw new UserError(ChatCode.INVALID_MESSAGE, `A message is 1 to ${MESSAGE_MAX} characters.`);
     }
-    const sender = await me(actor);
-    if (sender.id === input.playerId) throw cannotMessage();
-    const recipient = await profiles.findById(input.playerId);
-    if (!recipient) throw cannotMessage();
-    if ((await blocksBetween(sender.id, recipient.id)).some(Boolean)) throw cannotMessage();
+    // Speed — the reads in each group are independent, so each group costs one
+    // round trip rather than one per lookup.
+    const [sender, recipient] = await Promise.all([me(actor), profiles.findById(input.playerId)]);
+    if (sender.id === input.playerId || !recipient) throw cannotMessage();
 
-    const perMinute = await limiter.consume(`chat:msg:${sender.id}`, MESSAGE_WINDOW);
+    const [low, high] = pair(sender.id, recipient.id);
+    const [blocks, existing] = await Promise.all([
+      blocksBetween(sender.id, recipient.id),
+      db.conversation.findUnique({
+        where: { playerLowId_playerHighId: { playerLowId: low, playerHighId: high } },
+      }),
+    ]);
+    if (blocks.some(Boolean)) throw cannotMessage();
+
+    // Shared play is only worth asking when it could change the answer.
+    const needsShared = !existing || (existing.status === 'request' && existing.initiatorId === sender.id);
+    const [perMinute, shared] = await Promise.all([
+      limiter.consume(`chat:msg:${sender.id}`, MESSAGE_WINDOW),
+      needsShared ? sharedPlay.sharePlay(sender, recipient) : false,
+    ]);
     if (!perMinute.allowed) {
       throw new UserError(ChatCode.MESSAGE_LIMIT, 'You’re sending messages too quickly.', {
         retryAfterSeconds: perMinute.retryAfterSeconds,
       });
     }
-
-    const [low, high] = pair(sender.id, recipient.id);
-    const existing = await db.conversation.findUnique({
-      where: { playerLowId_playerHighId: { playerLowId: low, playerHighId: high } },
-    });
-
-    // Shared play is only worth asking when it could change the answer.
-    const needsShared = !existing || (existing.status === 'request' && existing.initiatorId === sender.id);
-    const shared = needsShared ? await sharedPlay.sharePlay(sender, recipient) : false;
 
     // R10 — a declined sender may ask again once the wait is over.
     const askingAgain = existing?.status === 'declined' && existing.initiatorId === sender.id;
@@ -462,12 +523,17 @@ export function createChatService(deps: ChatDeps) {
     return db.$transaction(async (tx: Tx) => {
       // One pair, one writer: two first messages racing must not both open it.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`chat:${low}:${high}`}))`;
-      let row = await tx.conversation.findUnique({
+      const found = await tx.conversation.findUnique({
         where: { playerLowId_playerHighId: { playerLowId: low, playerHighId: high } },
       });
+      // The sender has read their own message. Each path writes the
+      // conversation once: status, last-message time and read mark together.
+      const senderRead = low === sender.id ? ('lowLastReadAt' as const) : ('highLastReadAt' as const);
       let notify: 'request' | 'message' | null;
+      let row: Row;
+      let message: ChatMessage;
 
-      if (!row) {
+      if (!found) {
         row = await tx.conversation.create({
           data: {
             id: newId(),
@@ -476,42 +542,41 @@ export function createChatService(deps: ChatDeps) {
             initiatorId: sender.id,
             status: shared ? 'active' : 'request',
             createdAt: at,
+            lastMessageAt: at,
+            [senderRead]: at,
           },
         });
         notify = shared ? 'message' : 'request';
+        message = await tx.message.create({
+          data: { id: newId(), conversationId: row.id, senderId: sender.id, body, createdAt: at },
+        });
       } else {
-        const senderIsInitiator = row.initiatorId === sender.id;
-        let status = row.status as ConversationStatus;
+        const senderIsInitiator = found.initiatorId === sender.id;
+        const status = found.status as ConversationStatus;
+        let change: { status: ConversationStatus; declinedAt: null } | null = null;
         if (status === 'request' && senderIsInitiator && !shared) throw cannotMessage(); // R3 — one until accepted
         if (status === 'declined' && senderIsInitiator) {
           // R10 — re-checked under the pair lock: another device may have asked first,
           // or the recipient declined again since the check above.
-          const openAt = resendAt(row);
+          const openAt = resendAt(found);
           if (!openAt || at < openAt) throw cannotMessage();
-          row = await tx.conversation.update({
-            where: { id: row.id },
-            data: { status: 'request', declinedAt: null },
-          });
+          change = { status: 'request', declinedAt: null };
           notify = 'request';
         } else {
           // Replying accepts (R3); shared play since the request opens it too (R2).
-          if (status !== 'active') status = 'active';
-          const recipientRead = readAtOf(row, recipient.id);
+          if (status !== 'active') change = { status: 'active', declinedAt: null };
+          const recipientRead = readAtOf(found, recipient.id);
           // R8 — push only the first unread message.
-          notify = !row.lastMessageAt || (recipientRead && recipientRead >= row.lastMessageAt) ? 'message' : null;
-          if (status !== row.status) {
-            row = await tx.conversation.update({ where: { id: row.id }, data: { status, declinedAt: null } });
-          }
+          notify = !found.lastMessageAt || (recipientRead && recipientRead >= found.lastMessageAt) ? 'message' : null;
         }
+        message = await tx.message.create({
+          data: { id: newId(), conversationId: found.id, senderId: sender.id, body, createdAt: at },
+        });
+        row = await tx.conversation.update({
+          where: { id: found.id },
+          data: { ...change, lastMessageAt: at, [senderRead]: at },
+        });
       }
-
-      const message = await tx.message.create({
-        data: { id: newId(), conversationId: row.id, senderId: sender.id, body, createdAt: at },
-      });
-      row = await tx.conversation.update({
-        where: { id: row.id },
-        data: { lastMessageAt: at, [readColumn(row, sender.id)]: at },
-      });
       await outboxWrite(tx, {
         topic: 'chat.message.sent',
         payload: {
@@ -585,8 +650,11 @@ export function createChatService(deps: ChatDeps) {
     list,
     byId,
     messages,
+    messagesIn,
     lastMessage,
+    lastMessages,
     unreadIn,
+    unreadCounts,
     unreadConversationCount,
     send,
     accept,
