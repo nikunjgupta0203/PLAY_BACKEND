@@ -1492,12 +1492,29 @@ type MediaUploadPayload {
 }
 
 """
-chat R9 — append-only. `body` is the sender’s own words: render as text, never markup.
+chat R9 — `body` is the sender’s own words: render as text, never markup. R11 — the sender may edit it for 15 minutes; R12 — or delete it for everyone.
 """
 type Message {
+  """Empty once deleted (R12)."""
   body: String!
+
+  """R12 — deleted for everyone."""
+  deleted: Boolean!
+
+  """
+  R11 — your own message, not deleted: when editing closes. Null otherwise.
+  """
+  editableUntil: DateTime
+
+  """
+  R11 — when the sender last edited it. Null when never edited, and once deleted.
+  """
+  editedAt: DateTime
   fromViewer: Boolean!
   id: ID!
+
+  """R13 — the message this one answers."""
+  replyTo: QuotedMessage
   sentAt: DateTime!
 }
 
@@ -1513,6 +1530,11 @@ type MessageEdge {
 
 type MessageEventPlayersPayload {
   ok: Boolean!
+  userError: UserError
+}
+
+type MessagePayload {
+  message: Message
   userError: UserError
 }
 
@@ -1788,10 +1810,20 @@ type Mutation {
   declinePartnerInvite(token: String!): RegistrationPayload!
 
   """
+  chat R12 — deletes your own message for everyone. It shows as deleted in the thread.
+  """
+  deleteMessage(messageId: ID!): MessagePayload!
+
+  """
   venues R5 — soft delete. Completed tournaments keep resolving their venue.
   """
   deleteVenue(venueId: ID!): VenuePayload!
   disputeMatchResult(input: DisputeMatchResultInput!): MatchResultPayload!
+
+  """
+  chat R11 — your own message, within 15 minutes of sending. The other side is not notified.
+  """
+  editMessage(body: String!, messageId: ID!): MessagePayload!
 
   """
   ADR 0003 §C2 — upload the cover straight to Cloudinary under this signature, then report `folder/publicId` through addEventMedia(kind: COVER).
@@ -1988,6 +2020,11 @@ type Mutation {
   setMatchTime(matchId: ID!, startsAt: DateTime): MatchPayload!
   setNotificationPreferences(input: NotificationPreferencesInput!): PreferencesPayload!
   setProfileVisibility(visibility: ProfileVisibility!): ProfilePayload!
+
+  """
+  chat R14 — you are typing in this conversation; the other side sees "typing…" for a few seconds. Best-effort and silent: always true. Send at most every 3 seconds.
+  """
+  setTyping(conversationId: ID!): Boolean!
   setVenueBookingPolicy(input: VenueBookingPolicyInput!, venueId: ID!): VenueBookingSetupPayload!
 
   """
@@ -2944,6 +2981,15 @@ type QueryRatingHistoryConnectionEdge {
   node: RatingEvent!
 }
 
+"""chat R13 — what a reply shows of the message it answers."""
+type QuotedMessage {
+  """Empty once deleted (R12)."""
+  body: String!
+  deleted: Boolean!
+  fromViewer: Boolean!
+  id: ID!
+}
+
 """
 One place on a leaderboard. `rank` is dense — two players on the same rating share a place — and `movement` is stored rather than computed, so the up/down arrow costs no second query (rating R11).
 """
@@ -3394,6 +3440,9 @@ input SelectOnboardingSportsInput {
 input SendMessageInput {
   body: String!
   playerId: ID!
+
+  """chat R13 — a message of this conversation to answer."""
+  replyToId: ID
 }
 
 type SendMessagePayload {

@@ -18,6 +18,8 @@ let profile: ProfileService;
 let chat: ChatService;
 let clock: Date;
 const shared = new Set<string>();
+/** R14 — what the typing signal sent on the live channel. */
+const published: { channels: string[]; event: string; data: Record<string, unknown> }[] = [];
 const key = (a: string, b: string) => [a, b].sort().join('|');
 
 interface Player {
@@ -52,6 +54,7 @@ beforeAll(async () => {
     },
     sharedPlay: { sharePlay: async (a, b) => shared.has(key(a.id, b.id)) },
     limiter: { consume: (k, w) => limiter.consume(k, w, clock.getTime()) },
+    realtime: { publish: async (channels, event, data) => void published.push({ channels, event, data }) },
     now: () => clock,
   });
 });
@@ -63,6 +66,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await truncateAll(prisma);
   shared.clear();
+  published.length = 0;
   clock = new Date('2026-09-29T10:00:00Z');
 });
 
@@ -490,5 +494,181 @@ describe('inbox (R9)', () => {
     ]);
     expect(await prisma.conversation.count()).toBe(1);
     expect(await prisma.message.count()).toBe(2);
+  });
+});
+
+describe('editing and deleting your own messages (R11, R12)', () => {
+  async function chatting() {
+    const ravi = await makePlayer('Ravi');
+    const asha = await makePlayer('Asha');
+    shared.add(key(ravi.playerId, asha.playerId));
+    const { conversation, message } = await chat.send(ravi.actor, { playerId: asha.playerId, body: 'Doubles at 8?' });
+    return { ravi, asha, conversation, message };
+  }
+
+  it('R11: the sender edits within 15 minutes; both sides see the new body', async () => {
+    const { ravi, asha, conversation, message } = await chatting();
+    tick(14 * 60_000);
+    const edited = await chat.edit(ravi.actor, { messageId: message.id, body: '  Doubles at 9?  ' });
+    expect(edited).toMatchObject({ body: 'Doubles at 9?', editedAt: clock });
+    const page = await chat.messages(asha.userId, conversation.id, { first: 10 });
+    expect(page.nodes[0]).toMatchObject({ body: 'Doubles at 9?', editedAt: clock });
+  });
+
+  it('R11: after 15 minutes the message is final', async () => {
+    const { ravi, message } = await chatting();
+    tick(15 * 60_000 + 1);
+    await expect(chat.edit(ravi.actor, { messageId: message.id, body: 'late' })).rejects.toMatchObject({
+      code: 'EDIT_WINDOW_CLOSED',
+    });
+  });
+
+  it('R11, R12: only your own message — the other side and strangers get not found', async () => {
+    const { asha, message } = await chatting();
+    const eve = await makePlayer('Eve');
+    for (const actor of [asha.actor, eve.actor]) {
+      await expect(chat.edit(actor, { messageId: message.id, body: 'x' })).rejects.toMatchObject({
+        code: 'MESSAGE_NOT_FOUND',
+      });
+      await expect(chat.remove(actor, message.id)).rejects.toMatchObject({ code: 'MESSAGE_NOT_FOUND' });
+    }
+  });
+
+  it('R11, R5: an edit is 1 to 2,000 characters once trimmed', async () => {
+    const { ravi, message } = await chatting();
+    await expect(chat.edit(ravi.actor, { messageId: message.id, body: '   ' })).rejects.toMatchObject({
+      code: 'INVALID_MESSAGE',
+    });
+  });
+
+  it('R12: delete is for everyone, idempotent, and a deleted message cannot be edited', async () => {
+    const { ravi, asha, conversation, message } = await chatting();
+    tick();
+    const gone = await chat.remove(ravi.actor, message.id);
+    expect(gone.deletedAt).toEqual(clock);
+    expect((await chat.remove(ravi.actor, message.id)).deletedAt).toEqual(clock);
+    await expect(chat.edit(ravi.actor, { messageId: message.id, body: 'x' })).rejects.toMatchObject({
+      code: 'MESSAGE_NOT_FOUND',
+    });
+    // The row stays (the thread shows a placeholder; a report keeps its evidence).
+    const page = await chat.messages(asha.userId, conversation.id, { first: 10 });
+    expect(page.nodes).toHaveLength(1);
+    expect(page.nodes[0]!.deletedAt).toEqual(clock);
+    expect((await chat.lastMessages([conversation.id])).get(conversation.id)?.deletedAt).toEqual(clock);
+  });
+
+  it('R12, R7: a deleted message is no longer unread', async () => {
+    const { ravi, asha, conversation, message } = await chatting();
+    await chat.remove(ravi.actor, message.id);
+    const seen = (await chat.byId(asha.userId, conversation.id))!;
+    expect(await chat.unreadIn(seen)).toBe(0);
+    expect((await chat.unreadCounts([seen])).get(conversation.id)).toBe(0);
+    expect(await chat.unreadConversationCount(asha.userId)).toBe(0);
+  });
+
+  it('R11, R12: an edit or delete nudges the other side, never notifies', async () => {
+    const { ravi, asha, conversation, message } = await chatting();
+    await chat.edit(ravi.actor, { messageId: message.id, body: 'Doubles at 9?' });
+    await chat.remove(ravi.actor, message.id);
+    const rows = await prisma.outbox.findMany({ where: { topic: 'chat.message.changed' }, orderBy: { id: 'asc' } });
+    expect(rows.map((r) => r.payload)).toEqual([
+      { conversationId: conversation.id, recipientUserId: asha.userId },
+      { conversationId: conversation.id, recipientUserId: asha.userId },
+    ]);
+    // An unchanged edit writes nothing.
+    tick();
+    const { message: second } = await chat.send(ravi.actor, { playerId: asha.playerId, body: 'same' });
+    await chat.edit(ravi.actor, { messageId: second.id, body: 'same' });
+    expect(await prisma.outbox.count({ where: { topic: 'chat.message.changed' } })).toBe(2);
+  });
+});
+
+describe('replying to a message (R13)', () => {
+  it('R13: a reply carries the message it answers, read back on both sides', async () => {
+    const ravi = await makePlayer('Ravi');
+    const asha = await makePlayer('Asha');
+    shared.add(key(ravi.playerId, asha.playerId));
+    const { conversation, message: question } = await chat.send(ravi.actor, { playerId: asha.playerId, body: '8am?' });
+    tick();
+    const { message: reply } = await chat.send(asha.actor, {
+      playerId: ravi.playerId,
+      body: 'Yes',
+      replyToId: question.id,
+    });
+    expect(reply.replyTo).toMatchObject({ id: question.id, senderId: question.senderId, body: '8am?' });
+    const page = await chat.messages(ravi.userId, conversation.id, { first: 10 });
+    expect(page.nodes[0]).toMatchObject({ body: 'Yes', replyToId: question.id, replyTo: { id: question.id, body: '8am?' } });
+    expect(page.nodes[1]!.replyTo).toBeNull();
+    expect(await chat.quoted(question.id)).toMatchObject({ id: question.id, body: '8am?' });
+  });
+
+  it('R13: only a live message of the same conversation can be answered', async () => {
+    const ravi = await makePlayer('Ravi');
+    const asha = await makePlayer('Asha');
+    const meera = await makePlayer('Meera');
+    shared.add(key(ravi.playerId, asha.playerId));
+    shared.add(key(ravi.playerId, meera.playerId));
+    const { message: toAsha } = await chat.send(ravi.actor, { playerId: asha.playerId, body: 'hi Asha' });
+    tick();
+    // Another conversation's message, an unknown id, and a deleted message are all not found.
+    await expect(
+      chat.send(ravi.actor, { playerId: meera.playerId, body: 'x', replyToId: toAsha.id }),
+    ).rejects.toMatchObject({ code: 'MESSAGE_NOT_FOUND' });
+    await expect(
+      chat.send(ravi.actor, { playerId: asha.playerId, body: 'x', replyToId: newId() }),
+    ).rejects.toMatchObject({ code: 'MESSAGE_NOT_FOUND' });
+    await chat.remove(ravi.actor, toAsha.id);
+    await expect(
+      chat.send(asha.actor, { playerId: ravi.playerId, body: 'x', replyToId: toAsha.id }),
+    ).rejects.toMatchObject({ code: 'MESSAGE_NOT_FOUND' });
+    expect(await prisma.message.count()).toBe(1);
+  });
+
+  it('R13, R12: deleting the answered message leaves the reply pointing at a deleted quote', async () => {
+    const ravi = await makePlayer('Ravi');
+    const asha = await makePlayer('Asha');
+    shared.add(key(ravi.playerId, asha.playerId));
+    const { conversation, message: question } = await chat.send(ravi.actor, { playerId: asha.playerId, body: '8am?' });
+    tick();
+    await chat.send(asha.actor, { playerId: ravi.playerId, body: 'Yes', replyToId: question.id });
+    tick();
+    await chat.remove(ravi.actor, question.id);
+    const page = await chat.messages(asha.userId, conversation.id, { first: 10 });
+    expect(page.nodes[0]!.replyTo).toMatchObject({ id: question.id, deletedAt: clock });
+  });
+});
+
+describe('typing (R14)', () => {
+  it('R14: typing reaches the other side only, on their private channel', async () => {
+    const ravi = await makePlayer('Ravi');
+    const asha = await makePlayer('Asha');
+    shared.add(key(ravi.playerId, asha.playerId));
+    const { conversation } = await chat.send(ravi.actor, { playerId: asha.playerId, body: 'hi' });
+    await chat.typing(asha.actor, conversation.id);
+    expect(published).toEqual([
+      { channels: [`private-user-${ravi.userId}`], event: 'chat.typing', data: { conversationId: conversation.id } },
+    ]);
+  });
+
+  it('R14, R6: silent for strangers, a blocked sender, and a sender waiting on a request', async () => {
+    const ravi = await makePlayer('Ravi');
+    const asha = await makePlayer('Asha');
+    const eve = await makePlayer('Eve');
+    // A request: the sender cannot send again until it is answered (R3).
+    const { conversation } = await chat.send(ravi.actor, { playerId: asha.playerId, body: 'hi' });
+    await chat.typing(ravi.actor, conversation.id);
+    await chat.typing(eve.actor, conversation.id);
+    await chat.block(asha.actor, ravi.playerId);
+    await chat.typing(ravi.actor, conversation.id);
+    expect(published).toEqual([]);
+  });
+
+  it('R14: thirty signals a minute, then silence', async () => {
+    const ravi = await makePlayer('Ravi');
+    const asha = await makePlayer('Asha');
+    shared.add(key(ravi.playerId, asha.playerId));
+    const { conversation } = await chat.send(ravi.actor, { playerId: asha.playerId, body: 'hi' });
+    for (let i = 0; i < 31; i++) await chat.typing(ravi.actor, conversation.id);
+    expect(published).toHaveLength(30);
   });
 });

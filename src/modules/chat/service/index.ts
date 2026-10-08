@@ -6,6 +6,11 @@
  *
  * Services never import GraphQL types (conventions.md §1). Profiles, shared
  * play and the rate limiter arrive as ports.
+ *
+ * R11 — a sender may edit their own message for 15 minutes; R12 — or delete it
+ * for everyone at any time. Neither sends a notification; the other side's app
+ * is nudged to refetch. R13 — a message may answer an earlier one in the same
+ * conversation. R14 — "typing…" is a best-effort live signal, never stored.
  */
 import { Prisma } from '@prisma/client';
 import type { Db, Tx } from '../../../platform/db.js';
@@ -25,6 +30,10 @@ export const ChatCode = {
   /** R5 — 1 to 2,000 characters once trimmed. */
   INVALID_MESSAGE: 'INVALID_MESSAGE',
   CONVERSATION_NOT_FOUND: 'CONVERSATION_NOT_FOUND',
+  /** R11, R12 — not a message of yours, or already deleted. */
+  MESSAGE_NOT_FOUND: 'MESSAGE_NOT_FOUND',
+  /** R11 — edits close 15 minutes after sending. */
+  EDIT_WINDOW_CLOSED: 'EDIT_WINDOW_CLOSED',
 } as const;
 
 export const MESSAGE_MAX = 2_000;
@@ -34,6 +43,12 @@ export const MESSAGE_WINDOW = { seconds: 60, max: 30 };
 export const PREVIEW_MAX = 80;
 /** R10 — how long after a decline the sender may ask again. */
 export const RESEND_AFTER_MS = 5 * 86_400_000;
+/** R11 — how long after sending a message may be edited. */
+export const EDIT_WINDOW_MS = 15 * 60_000;
+/** R14 — typing signals per minute. The app sends one every 3 s at most. */
+export const TYPING_WINDOW = { seconds: 60, max: 30 };
+/** R14 — the realtime event the other side's app listens for. */
+export const TYPING_EVENT = 'chat.typing';
 
 export type ConversationStatus = 'request' | 'active' | 'declined';
 
@@ -64,7 +79,25 @@ export interface ChatMessage {
   senderId: string;
   body: string;
   createdAt: Date;
+  /** R11 — set when the sender changed the body. */
+  editedAt: Date | null;
+  /** R12 — deleted for everyone. The body is kept for moderation; players never get it. */
+  deletedAt: Date | null;
+  /** R13 — the message this one answers. */
+  replyToId: string | null;
+  /** R13 — that message, when it was read alongside. Undefined: not loaded. */
+  replyTo?: QuotedMessage | null;
 }
+
+/** R13 — what a reply shows of the message it answers. */
+export interface QuotedMessage {
+  id: string;
+  senderId: string;
+  body: string;
+  deletedAt: Date | null;
+}
+
+const QUOTED = { select: { id: true, senderId: true, body: true, deletedAt: true } } as const;
 
 /** What a profile shows about messaging its owner. */
 export interface Messaging {
@@ -112,11 +145,17 @@ export interface LimiterPort {
   ): Promise<{ allowed: boolean; retryAfterSeconds: number }>;
 }
 
+/** R14 — the live channel "typing…" goes out on. Best-effort. */
+export interface TypingPort {
+  publish(channels: string[], event: string, data: Record<string, unknown>): Promise<void>;
+}
+
 export interface ChatDeps {
   db: Db;
   profiles: ProfilesPort;
   sharedPlay: SharedPlayPort;
   limiter: LimiterPort;
+  realtime?: TypingPort;
   now?: () => Date;
 }
 
@@ -145,6 +184,8 @@ const cannotMessage = () =>
   new UserError(ChatCode.CANNOT_MESSAGE, 'You can’t message this player.');
 const notFound = () =>
   new UserError(ChatCode.CONVERSATION_NOT_FOUND, 'That conversation does not exist.');
+const messageNotFound = () =>
+  new UserError(ChatCode.MESSAGE_NOT_FOUND, 'That message is no longer available.');
 
 const pair = (a: string, b: string): [string, string] => (a < b ? [a, b] : [b, a]);
 const isLow = (row: Row, playerId: string) => row.playerLowId === playerId;
@@ -377,10 +418,16 @@ export function createChatService(deps: ChatDeps) {
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: first + 1,
+      include: { replyTo: QUOTED },
     });
     const page = rows.slice(0, first);
     const cursors = page.map((m) => encodeCursor(m.createdAt, m.id));
     return { nodes: page, cursors, hasNextPage: rows.length > first, endCursor: cursors.at(-1) ?? null };
+  }
+
+  /** R13 — a quoted message read on its own (a reply whose quote was not loaded with it). */
+  async function quoted(messageId: string): Promise<QuotedMessage | null> {
+    return db.message.findUnique({ where: { id: messageId }, ...QUOTED });
   }
 
   async function lastMessage(conversationId: string): Promise<ChatMessage | null> {
@@ -392,7 +439,8 @@ export function createChatService(deps: ChatDeps) {
     if (conversationIds.length === 0) return new Map();
     const rows = await db.$queryRaw<ChatMessage[]>`
       SELECT m.id, m.conversation_id AS "conversationId", m.sender_id AS "senderId", m.body,
-             m.created_at AS "createdAt"
+             m.created_at AS "createdAt", m.edited_at AS "editedAt", m.deleted_at AS "deletedAt",
+             m.reply_to_id AS "replyToId"
         FROM unnest(${[...conversationIds]}::uuid[]) AS c(id)
         CROSS JOIN LATERAL (
           SELECT * FROM messages
@@ -415,6 +463,7 @@ export function createChatService(deps: ChatDeps) {
             JOIN messages m
               ON m.conversation_id = c.id
              AND m.sender_id <> ${viewerId}::uuid
+             AND m.deleted_at IS NULL
              AND m.created_at > COALESCE(
                    CASE WHEN c.player_low_id = ${viewerId}::uuid
                         THEN c.low_last_read_at ELSE c.high_last_read_at END,
@@ -433,6 +482,7 @@ export function createChatService(deps: ChatDeps) {
       where: {
         conversationId: c.id,
         senderId: c.otherId,
+        deletedAt: null,
         ...(c.viewerLastReadAt ? { createdAt: { gt: c.viewerLastReadAt } } : {}),
       },
     });
@@ -456,6 +506,7 @@ export function createChatService(deps: ChatDeps) {
            SELECT 1 FROM messages m
             WHERE m.conversation_id = c.id
               AND m.sender_id <> ${viewer.id}::uuid
+              AND m.deleted_at IS NULL
               AND m.created_at > COALESCE(
                     CASE WHEN c.player_low_id = ${viewer.id}::uuid
                          THEN c.low_last_read_at ELSE c.high_last_read_at END,
@@ -471,7 +522,7 @@ export function createChatService(deps: ChatDeps) {
    */
   async function send(
     actor: Actor,
-    input: { playerId: string; body: string },
+    input: { playerId: string; body: string; replyToId?: string | null },
   ): Promise<{ conversation: ConversationView; message: ChatMessage }> {
     const body = input.body.trim();
     if (body.length < 1 || body.length > MESSAGE_MAX) {
@@ -491,14 +542,20 @@ export function createChatService(deps: ChatDeps) {
     // Shared play is asked alongside rather than after: it can only matter when
     // there is no conversation or the sender's request is pending, and waiting
     // to find out would cost another round trip.
-    const [blocks, existing, sharedNow] = await Promise.all([
+    const replyToId = input.replyToId || null;
+    const [blocks, existing, sharedNow, replyTo] = await Promise.all([
       blocksBetween(sender.id, recipient.id),
       db.conversation.findUnique({
         where: { playerLowId_playerHighId: { playerLowId: low, playerHighId: high } },
       }),
       sharedPlay.sharePlay(sender, recipient),
+      replyToId ? db.message.findUnique({ where: { id: replyToId }, select: { ...QUOTED.select, conversationId: true } }) : null,
     ]);
     if (blocks.some(Boolean)) throw cannotMessage();
+    // R13 — only a live message of this same conversation can be answered.
+    if (replyToId && (!replyTo || replyTo.deletedAt || replyTo.conversationId !== existing?.id)) {
+      throw messageNotFound();
+    }
     if (!perMinute.allowed) {
       throw new UserError(ChatCode.MESSAGE_LIMIT, 'You’re sending messages too quickly.', {
         retryAfterSeconds: perMinute.retryAfterSeconds,
@@ -570,7 +627,19 @@ export function createChatService(deps: ChatDeps) {
       }
 
       const conversationId = found?.id ?? newId();
-      const message: ChatMessage = { id: newId(), conversationId, senderId: sender.id, body, createdAt: at };
+      const message: ChatMessage = {
+        id: newId(),
+        conversationId,
+        senderId: sender.id,
+        body,
+        createdAt: at,
+        editedAt: null,
+        deletedAt: null,
+        replyToId,
+        replyTo: replyTo
+          ? { id: replyTo.id, senderId: replyTo.senderId, body: replyTo.body, deletedAt: replyTo.deletedAt }
+          : null,
+      };
       const event = JSON.stringify({
         conversationId,
         senderId: sender.id,
@@ -585,8 +654,9 @@ export function createChatService(deps: ChatDeps) {
       const rows = found
         ? await tx.$queryRaw<Row[]>`
             WITH m AS (
-              INSERT INTO messages (id, conversation_id, sender_id, body, created_at)
-              VALUES (${message.id}::uuid, ${conversationId}::uuid, ${sender.id}::uuid, ${body}, ${at}::timestamptz)
+              INSERT INTO messages (id, conversation_id, sender_id, body, created_at, reply_to_id)
+              VALUES (${message.id}::uuid, ${conversationId}::uuid, ${sender.id}::uuid, ${body}, ${at}::timestamptz,
+                      ${replyToId}::uuid)
             ), o AS (
               INSERT INTO outbox (topic, payload) VALUES ('chat.message.sent', ${event}::jsonb)
             )
@@ -653,6 +723,93 @@ export function createChatService(deps: ChatDeps) {
     return viewFor(updated, viewer.id, found.blocked);
   }
 
+  /**
+   * One of the viewer's own messages, in a conversation they can still see.
+   * Anything else — someone else's message, a hidden conversation — is not found.
+   */
+  async function ownMessage(actor: Actor, messageId: string) {
+    const viewer = await me(actor);
+    const found = await db.message.findUnique({ where: { id: messageId }, include: { replyTo: QUOTED } });
+    if (!found || found.senderId !== viewer.id) throw messageNotFound();
+    const visible = await visibleRow(viewer.id, found.conversationId);
+    if (!visible) throw messageNotFound();
+    const recipient = await profiles.findById(otherOf(visible.row, viewer.id));
+    return { message: found, nudge: { conversationId: found.conversationId, recipientUserId: recipient?.userId ?? null } };
+  }
+
+  /** Nudges the other side's app to refetch the thread (worker: `chat.message.changed`). */
+  async function changed(tx: Tx, nudge: { conversationId: string; recipientUserId: string | null }): Promise<void> {
+    if (!nudge.recipientUserId) return;
+    await tx.$executeRaw`
+      INSERT INTO outbox (topic, payload) VALUES ('chat.message.changed', ${JSON.stringify(nudge)}::jsonb)`;
+  }
+
+  /** R11 — your own message, within 15 minutes of sending, same limits as a send (R5). */
+  async function edit(actor: Actor, input: { messageId: string; body: string }): Promise<ChatMessage> {
+    const body = input.body.trim();
+    if (body.length < 1 || body.length > MESSAGE_MAX) {
+      throw new UserError(ChatCode.INVALID_MESSAGE, `A message is 1 to ${MESSAGE_MAX} characters.`);
+    }
+    const [{ message, nudge }, perMinute] = await Promise.all([
+      ownMessage(actor, input.messageId),
+      limiter.consume(`chat:msg:${actor.userId}`, MESSAGE_WINDOW),
+    ]);
+    if (message.deletedAt) throw messageNotFound();
+    if (now().getTime() - message.createdAt.getTime() > EDIT_WINDOW_MS) {
+      throw new UserError(ChatCode.EDIT_WINDOW_CLOSED, 'Messages can only be edited for 15 minutes after sending.');
+    }
+    if (!perMinute.allowed) {
+      throw new UserError(ChatCode.MESSAGE_LIMIT, 'You’re sending messages too quickly.', {
+        retryAfterSeconds: perMinute.retryAfterSeconds,
+      });
+    }
+    if (body === message.body) return message;
+    return db.$transaction(async (tx: Tx) => {
+      const updated = await tx.message.update({
+        where: { id: message.id },
+        data: { body, editedAt: now() },
+        include: { replyTo: QUOTED },
+      });
+      await changed(tx, nudge);
+      return updated;
+    });
+  }
+
+  /** R12 — deleted for everyone, any time. Idempotent. */
+  async function remove(actor: Actor, messageId: string): Promise<ChatMessage> {
+    const { message, nudge } = await ownMessage(actor, messageId);
+    if (message.deletedAt) return message;
+    return db.$transaction(async (tx: Tx) => {
+      const updated = await tx.message.update({
+        where: { id: message.id },
+        data: { deletedAt: now() },
+        include: { replyTo: QUOTED },
+      });
+      await changed(tx, nudge);
+      return updated;
+    });
+  }
+
+  /**
+   * R14 — tells the other side the viewer is typing. Silent (no error, no
+   * signal) when the viewer cannot send there, has been blocked (R6), or is
+   * over the limit: a missed "typing…" costs nothing.
+   */
+  async function typing(actor: Actor, conversationId: string): Promise<void> {
+    if (!deps.realtime) return;
+    const [viewer, allowed] = await Promise.all([
+      me(actor),
+      limiter.consume(`chat:typing:${actor.userId}`, TYPING_WINDOW),
+    ]);
+    if (!allowed.allowed) return;
+    const found = await visibleRow(viewer.id, conversationId);
+    if (!found || found.blocked) return;
+    if (!view(found.row, viewer.id, false).canSend) return;
+    const other = await profiles.findById(otherOf(found.row, viewer.id));
+    if (!other) return;
+    await deps.realtime.publish([`private-user-${other.userId}`], TYPING_EVENT, { conversationId }).catch(() => {});
+  }
+
   /** R6 — idempotent, silent to the blocked player. */
   async function block(actor: Actor, playerId: string): Promise<void> {
     const viewer = await me(actor);
@@ -676,12 +833,16 @@ export function createChatService(deps: ChatDeps) {
     byId,
     messages,
     messagesIn,
+    quoted,
     lastMessage,
     lastMessages,
     unreadIn,
     unreadCounts,
     unreadConversationCount,
     send,
+    edit,
+    remove,
+    typing,
     accept,
     decline,
     markRead,

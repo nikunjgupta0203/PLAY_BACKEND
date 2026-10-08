@@ -1,5 +1,6 @@
 /** The ONLY surface other modules may import (conventions.md §1). */
 import { db } from '../../platform/db.js';
+import { realtime } from '../../platform/pusher.js';
 import { consume } from '../../platform/rateLimit.js';
 import { profile } from '../profile/index.js';
 import { createChatService } from './service/index.js';
@@ -23,10 +24,13 @@ export const chat = createChatService({
     },
   },
   limiter: { consume },
+  // R14 — "typing…" goes straight out; it is never stored or queued.
+  realtime,
 });
 
 export {
   ChatCode,
+  EDIT_WINDOW_MS,
   MESSAGE_MAX,
   MESSAGE_WINDOW,
   PREVIEW_MAX,
@@ -37,4 +41,5 @@ export type {
   ChatService,
   ConversationView,
   Messaging,
+  QuotedMessage,
 } from './service/index.js';

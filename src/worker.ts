@@ -480,6 +480,15 @@ const handlers: Record<string, OutboxHandler> = {
     const kind = payload['notify'];
     if (kind === 'request' || kind === 'message') await notify.chatNotify({ ...payload, kind });
   },
+  // chat R11, R12 — an edit or a delete only nudges the other side; never a notification.
+  'chat.message.changed': async (payload) => {
+    const recipientUserId = String(payload['recipientUserId'] ?? '');
+    const conversationId = String(payload['conversationId'] ?? '');
+    if (!recipientUserId || !conversationId) return;
+    await realtime
+      .publish([`private-user-${recipientUserId}`], 'chat.message', { conversationId })
+      .catch((err: unknown) => logger.warn({ err, conversationId }, 'chat publish failed — dropped'));
+  },
 
   // rating (docs/modules/08-rating.md § Emits).
   //

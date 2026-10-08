@@ -1525,11 +1525,20 @@ model Message {
   senderId       String   @map("sender_id") @db.Uuid
   body           String
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// chat R11 — the sender changed the body (within 15 minutes of sending).
+  editedAt       DateTime? @map("edited_at") @db.Timestamptz(6)
+  /// chat R12 — deleted for everyone. Soft: the body stays for moderation, never sent to players.
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  /// chat R13 — the message this one answers; always in the same conversation.
+  replyToId      String?   @map("reply_to_id") @db.Uuid
 
   conversation Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       PlayerProfile @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo      Message?      @relation("replies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies      Message[]     @relation("replies")
 
   @@index([conversationId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([replyToId])
   @@map("messages")
 }
 

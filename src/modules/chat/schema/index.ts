@@ -10,10 +10,11 @@ import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { SystemError } from '../../../platform/errors/index.js';
 import { PlayerProfileRef } from '../../profile/schema/index.js';
-import { chat } from '../index.js';
-import type { ChatMessage, ConversationView, Messaging } from '../index.js';
+import { chat, EDIT_WINDOW_MS } from '../index.js';
+import type { ChatMessage, ConversationView, Messaging, QuotedMessage } from '../index.js';
 
 type ChatMessageNode = ChatMessage & { viewerId: string };
+type QuotedMessageNode = QuotedMessage & { viewerId: string };
 
 const ConversationStatusEnum = builder.enumType('ConversationStatus', {
   description:
@@ -26,13 +27,51 @@ const ConversationStatusEnum = builder.enumType('ConversationStatus', {
   },
 });
 
-const MessageRef = builder.objectRef<ChatMessageNode>('Message').implement({
-  description: 'chat R9 — append-only. `body` is the sender’s own words: render as text, never markup.',
+const QuotedMessageRef = builder.objectRef<QuotedMessageNode>('QuotedMessage').implement({
+  description: 'chat R13 — what a reply shows of the message it answers.',
   fields: (t) => ({
     id: t.exposeID('id'),
-    body: t.exposeString('body'),
+    body: t.string({ description: 'Empty once deleted (R12).', resolve: (m) => (m.deletedAt ? '' : m.body) }),
+    fromViewer: t.boolean({ resolve: (m) => m.senderId === m.viewerId }),
+    deleted: t.boolean({ resolve: (m) => m.deletedAt !== null }),
+  }),
+});
+
+const MessageRef = builder.objectRef<ChatMessageNode>('Message').implement({
+  description:
+    'chat R9 — `body` is the sender’s own words: render as text, never markup. ' +
+    'R11 — the sender may edit it for 15 minutes; R12 — or delete it for everyone.',
+  fields: (t) => ({
+    id: t.exposeID('id'),
+    body: t.string({
+      description: 'Empty once deleted (R12).',
+      resolve: (m) => (m.deletedAt ? '' : m.body),
+    }),
     sentAt: t.field({ type: 'DateTime', resolve: (m) => m.createdAt }),
     fromViewer: t.boolean({ resolve: (m) => m.senderId === m.viewerId }),
+    editedAt: t.field({
+      type: 'DateTime',
+      nullable: true,
+      description: 'R11 — when the sender last edited it. Null when never edited, and once deleted.',
+      resolve: (m) => (m.deletedAt ? null : m.editedAt),
+    }),
+    deleted: t.boolean({ description: 'R12 — deleted for everyone.', resolve: (m) => m.deletedAt !== null }),
+    replyTo: t.field({
+      type: QuotedMessageRef,
+      nullable: true,
+      description: 'R13 — the message this one answers.',
+      resolve: async (m) => {
+        const q = m.replyTo !== undefined ? m.replyTo : m.replyToId ? await chat.quoted(m.replyToId) : null;
+        return q ? { ...q, viewerId: m.viewerId } : null;
+      },
+    }),
+    editableUntil: t.field({
+      type: 'DateTime',
+      nullable: true,
+      description: 'R11 — your own message, not deleted: when editing closes. Null otherwise.',
+      resolve: (m) =>
+        m.senderId === m.viewerId && !m.deletedAt ? new Date(m.createdAt.getTime() + EDIT_WINDOW_MS) : null,
+    }),
   }),
 });
 
@@ -178,10 +217,20 @@ const BlockPayload = builder
     }),
   });
 
+const MessagePayload = builder
+  .objectRef<{ message: ChatMessageNode | null; userError: UserErrorShape | null }>('MessagePayload')
+  .implement({
+    fields: (t) => ({
+      message: t.field({ type: MessageRef, nullable: true, resolve: (p) => p.message }),
+      userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
+    }),
+  });
+
 const SendMessageInput = builder.inputType('SendMessageInput', {
   fields: (t) => ({
     playerId: t.id({ required: true }),
     body: t.string({ required: true }),
+    replyToId: t.id({ required: false, description: 'chat R13 — a message of this conversation to answer.' }),
   }),
 });
 
@@ -239,13 +288,52 @@ builder.mutationFields((t) => ({
     resolve: async (_root, args, ctx) => {
       const actor = requireActor(ctx);
       const { data, userError } = await attempt(() =>
-        chat.send(actor, { playerId: args.input.playerId, body: args.input.body }),
+        chat.send(actor, {
+          playerId: args.input.playerId,
+          body: args.input.body,
+          replyToId: args.input.replyToId ?? null,
+        }),
       );
       return {
         conversation: data?.conversation ?? null,
         message: data ? { ...data.message, viewerId: data.conversation.viewerId } : null,
         userError,
       };
+    },
+  }),
+
+  editMessage: t.field({
+    type: MessagePayload,
+    description: 'chat R11 — your own message, within 15 minutes of sending. The other side is not notified.',
+    args: { messageId: t.arg.id({ required: true }), body: t.arg.string({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() =>
+        chat.edit(actor, { messageId: args.messageId, body: args.body }),
+      );
+      return { message: data ? { ...data, viewerId: data.senderId } : null, userError };
+    },
+  }),
+
+  deleteMessage: t.field({
+    type: MessagePayload,
+    description: 'chat R12 — deletes your own message for everyone. It shows as deleted in the thread.',
+    args: { messageId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() => chat.remove(actor, args.messageId));
+      return { message: data ? { ...data, viewerId: data.senderId } : null, userError };
+    },
+  }),
+
+  setTyping: t.boolean({
+    description:
+      'chat R14 — you are typing in this conversation; the other side sees "typing…" for a few seconds. ' +
+      'Best-effort and silent: always true. Send at most every 3 seconds.',
+    args: { conversationId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      await chat.typing(requireActor(ctx), args.conversationId);
+      return true;
     },
   }),
 

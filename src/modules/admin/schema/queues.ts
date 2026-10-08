@@ -110,15 +110,20 @@ async function summarise(targetType: ReportTarget, targetId: string): Promise<Ta
     case 'message': {
       const m = await db.message.findUnique({
         where: { id: targetId },
-        select: { body: true, sender: { select: { userId: true, user: { select: { displayName: true } } } } },
+        select: {
+          body: true,
+          deletedAt: true,
+          sender: { select: { userId: true, user: { select: { displayName: true } } } },
+        },
       });
       if (!m) return missing;
       return {
         title: `Chat message from ${m.sender.user.displayName}`,
+        // chat R12 — a deleted message keeps its body for staff, and says so.
         body: m.body,
         authorUserId: m.sender.userId,
         authorName: m.sender.user.displayName,
-        hidden: false,
+        hidden: m.deletedAt !== null,
         link: `/users/${m.sender.userId}`,
       };
     }
