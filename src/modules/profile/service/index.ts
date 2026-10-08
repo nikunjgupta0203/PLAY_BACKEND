@@ -17,6 +17,7 @@ import { write as outboxWrite } from '../../../platform/outbox.js';
 import type { UploadSignature } from '../../../platform/cloudinary.js';
 import { cityVariants } from '../../../platform/city.js';
 import { memo, remember } from '../../../platform/requestCache.js';
+import { badgesFromHistory } from './badges.js';
 
 export const ProfileCode = {
   /** Also what a private profile returns: R4 — not distinguishable from missing. */
@@ -741,10 +742,14 @@ export function createProfileService(deps: ProfileDeps) {
 
   // --- achievements ----------------------------------------------------------
 
-  /** Idempotent: the unique index is (player_id, key, event_id) NULLS NOT DISTINCT. */
+  /**
+   * Idempotent: the unique index is (player_id, key, event_id) NULLS NOT DISTINCT.
+   * `quiet` skips the push, for backfills of badges earned long ago.
+   */
   async function award(
     playerId: string,
     achievement: { key: string; sportId?: string | null; eventId?: string | null },
+    opts: { quiet?: boolean } = {},
   ): Promise<Achievement | null> {
     const existing = await db.achievement.findFirst({
       where: { playerId, key: achievement.key, eventId: achievement.eventId ?? null },
@@ -763,10 +768,12 @@ export function createProfileService(deps: ProfileDeps) {
             eventId: achievement.eventId ?? null,
           },
         });
-        await outboxWrite(tx, {
-          topic: 'achievement.earned',
-          payload: { playerId, key: achievement.key, achievementId: created.id },
-        });
+        if (!opts.quiet) {
+          await outboxWrite(tx, {
+            topic: 'achievement.earned',
+            payload: { playerId, key: achievement.key, achievementId: created.id },
+          });
+        }
         return created;
       });
     } catch (e) {
@@ -783,6 +790,29 @@ export function createProfileService(deps: ProfileDeps) {
       eventId: row.eventId,
       earnedAt: row.earnedAt,
     };
+  }
+
+  /**
+   * R11 — awards whatever badges this player's match history has earned and
+   * they do not hold yet. Runs after every projected match; a result that is
+   * later corrected does not take a badge back.
+   */
+  async function awardMatchBadges(playerId: string, opts: { quiet?: boolean } = {}): Promise<number> {
+    const [rows, held] = await Promise.all([
+      db.playerMatchHistory.findMany({
+        where: { playerId },
+        orderBy: [{ completedAt: 'asc' }, { matchId: 'asc' }],
+        select: { won: true, sportId: true, eventId: true },
+      }),
+      db.achievement.findMany({ where: { playerId, eventId: null }, select: { key: true } }),
+    ]);
+    const have = new Set(held.map((a) => a.key));
+    let awarded = 0;
+    for (const badge of badgesFromHistory(rows)) {
+      if (have.has(badge.key)) continue;
+      if (await award(playerId, { key: badge.key, sportId: badge.sportId }, opts)) awarded += 1;
+    }
+    return awarded;
   }
 
   async function achievementsFor(playerId: string): Promise<Achievement[]> {
@@ -942,6 +972,7 @@ export function createProfileService(deps: ProfileDeps) {
     const touched = new Map<string, { playerId: string; sportId: string }>();
     for (const r of [...before, ...rows]) touched.set(`${r.playerId}|${r.sportId}`, r);
     for (const t of touched.values()) await refreshStats(t.playerId, t.sportId);
+    for (const playerId of new Set(rows.map((r) => r.playerId))) await awardMatchBadges(playerId);
   }
 
   const encodeHistoryCursor = (r: { completedAt: Date; matchId: string }): string =>
@@ -1145,6 +1176,7 @@ export function createProfileService(deps: ProfileDeps) {
     avatarUploadSignature,
     setAvatar,
     award,
+    awardMatchBadges,
     achievementsFor,
     statsSnapshot,
     statsFor,

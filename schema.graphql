@@ -2659,6 +2659,11 @@ type PlayerProfile implements Node {
   P1 — the owner only: true while the name is still the one made from their email (the part before the @). Onboarding asks for a real name then. False for anyone else.
   """
   nameIsPlaceholder: Boolean!
+
+  """
+  National rank per sport. Sports the player is unranked in are left out.
+  """
+  nationalRanks: [SportRank!]!
   nodeId: ID!
 
   """
@@ -3494,6 +3499,12 @@ type Sport {
   name: String!
   skillBands: [SkillBand!]!
   slug: String!
+}
+
+"""One sport's place on the national board."""
+type SportRank {
+  rank: Int!
+  sportId: ID!
 }
 
 type StaffRefundPayload {

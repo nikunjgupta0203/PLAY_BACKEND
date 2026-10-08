@@ -135,6 +135,36 @@ const RatingEventRef = builder.objectRef<RatingEvent>('RatingEvent').implement({
   }),
 });
 
+const SportRankRef = builder
+  .objectRef<{ sportId: string; rank: number }>('SportRank')
+  .implement({
+    description: "One sport's place on the national board.",
+    fields: (t) => ({
+      sportId: t.exposeID('sportId'),
+      rank: t.exposeInt('rank'),
+    }),
+  });
+
+/**
+ * A profile's national places, one per ranked sport. Boards are public, so
+ * this is shown on anyone's profile, never gated by visibility (profile R6).
+ */
+builder.objectField(PlayerProfileRef, 'nationalRanks', (t) =>
+  t.field({
+    type: [SportRankRef],
+    description: 'National rank per sport. Sports the player is unranked in are left out.',
+    resolve: async (p) => {
+      const rows = await Promise.all(
+        p.sports.map(async (s) => ({
+          sportId: s.sportId,
+          rank: await rating.rankFor(s.sportId, { kind: 'national' }, p.id),
+        })),
+      );
+      return rows.filter((r): r is { sportId: string; rank: number } => r.rank !== null);
+    },
+  }),
+);
+
 // --- queries -----------------------------------------------------------------
 
 builder.queryFields((t) => ({

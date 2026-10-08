@@ -34,6 +34,7 @@
     "admin:grant": "tsx --env-file-if-exists=.env scripts/grant-admin.ts",
     "predeploy:check": "tsx --env-file-if-exists=.env scripts/predeploy-check.ts",
     "backfill:match-history": "tsx --env-file-if-exists=.env scripts/backfill-match-history.ts",
+    "backfill:badges": "tsx --env-file-if-exists=.env scripts/backfill-badges.ts",
     "seed:venues": "tsx --env-file-if-exists=.env scripts/seed-venue-details.ts",
     "seed:home": "tsx --env-file-if-exists=.env scripts/seed-home-feed.ts",
     "cloudinary:setup": "tsx --env-file-if-exists=.env scripts/cloudinary-setup.ts"

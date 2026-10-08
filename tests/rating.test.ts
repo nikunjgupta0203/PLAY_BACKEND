@@ -817,6 +817,9 @@ describe('rating — your standing on a board', () => {
     const leader = await rating.myStanding(pickleballId, { kind: 'national' }, top.playerId);
     expect(leader.row?.rank).toBe(1);
     expect(leader.next).toBeNull();
+
+    // Anyone's place, for the profile strip — the same rank, without the extras.
+    expect(await rating.rankFor(pickleballId, { kind: 'national' }, middle.playerId)).toBe(2);
   });
 
   it('R9: an unranked player has no row, but still learns when the board was built', async () => {
@@ -833,6 +836,7 @@ describe('rating — your standing on a board', () => {
     const mine = await rating.myStanding(pickleballId, { kind: 'national' }, newcomer.playerId);
     expect(mine).toMatchObject({ row: null, next: null });
     expect(mine.updatedAt).toBeInstanceOf(Date);
+    expect(await rating.rankFor(pickleballId, { kind: 'national' }, newcomer.playerId)).toBeNull();
   });
 
   it('an empty board has no build time', async () => {

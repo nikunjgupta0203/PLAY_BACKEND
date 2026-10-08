@@ -656,6 +656,12 @@ export function createRatingService(deps: RatingDeps) {
     };
   }
 
+  /** A player's place on one board, or null when they are not on it. */
+  async function rankFor(sportId: string, scope: RankingScope, playerId: string): Promise<number | null> {
+    const row = await repo.rankOf(sportId, scopeKey(scope), playerId);
+    return row?.rank ?? null;
+  }
+
   async function leaderboard(
     sportId: string,
     scope: RankingScope,
@@ -832,6 +838,7 @@ export function createRatingService(deps: RatingDeps) {
     rebuildAll,
     leaderboard,
     myStanding,
+    rankFor,
     ratingFor,
     rankedRatingFor,
     historyFor,
