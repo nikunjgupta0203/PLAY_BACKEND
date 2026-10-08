@@ -15,7 +15,6 @@ import { audited, requirePlatformStaff } from '../../../graphql/staff.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { isUserError, UserError } from '../../../platform/errors/index.js';
-import { registration } from '../../registration/index.js';
 import { RegistrationRef } from '../../registration/schema/index.js';
 import { tournament } from '../../tournament/index.js';
 import type { Match } from '../../tournament/index.js';
@@ -308,7 +307,7 @@ const MatchResultRef = builder.objectRef<ResultRow>('MatchResult').implement({
       type: RegistrationRef,
       nullable: true,
       description: 'Null for a draw.',
-      resolve: (r) => (r.winnerRegistrationId ? registration.findById(r.winnerRegistrationId) : null),
+      resolve: (r, _args, ctx) => (r.winnerRegistrationId ? ctx.loaders.registration.load(r.winnerRegistrationId) : null),
     }),
     isDraw: t.boolean({
       description: 'A league or group match that ended level.',

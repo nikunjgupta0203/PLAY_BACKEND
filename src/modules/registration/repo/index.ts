@@ -251,6 +251,11 @@ export function createRegistrationRepo(db: Db) {
     return db.registration.findUnique({ where: { id: registrationId } });
   }
 
+  async function byIds(registrationIds: string[]): Promise<RegistrationRow[]> {
+    if (registrationIds.length === 0) return [];
+    return db.registration.findMany({ where: { id: { in: registrationIds } } });
+  }
+
   /**
    * registration R11 — the ONLY place `status` is written. A conditional UPDATE
    * on the expected current status, so two workers racing to confirm the same
@@ -661,6 +666,7 @@ export function createRegistrationRepo(db: Db) {
     lockCategory,
     liveHoldFor,
     liveHoldsFor,
+    byIds,
     extendHold,
     inCategoryWithStatus,
     holdById,

@@ -7,10 +7,10 @@
  * Services never import GraphQL types (conventions.md §1). Profiles, shared
  * play and the rate limiter arrive as ports.
  */
+import { Prisma } from '@prisma/client';
 import type { Db, Tx } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
 import { UserError } from '../../../platform/errors/index.js';
-import { write as outboxWrite } from '../../../platform/outbox.js';
 
 export const ChatCode = {
   /** R1, R3, R4, R6 — one code for every refusal, so a block is indistinguishable. */
@@ -134,6 +134,12 @@ type Row = {
   declinedAt: Date | null;
   createdAt: Date;
 };
+
+/** A conversations row as `Row` — for the raw writes in `send`. */
+const ROW_COLUMNS = Prisma.sql`id, player_low_id AS "playerLowId", player_high_id AS "playerHighId",
+  initiator_id AS "initiatorId", status, low_last_read_at AS "lowLastReadAt",
+  high_last_read_at AS "highLastReadAt", last_message_at AS "lastMessageAt",
+  declined_at AS "declinedAt", created_at AS "createdAt"`;
 
 const cannotMessage = () =>
   new UserError(ChatCode.CANNOT_MESSAGE, 'You can’t message this player.');
@@ -471,31 +477,35 @@ export function createChatService(deps: ChatDeps) {
     if (body.length < 1 || body.length > MESSAGE_MAX) {
       throw new UserError(ChatCode.INVALID_MESSAGE, `A message is 1 to ${MESSAGE_MAX} characters.`);
     }
-    // Speed — the reads in each group are independent, so each group costs one
-    // round trip rather than one per lookup.
-    const [sender, recipient] = await Promise.all([me(actor), profiles.findById(input.playerId)]);
+    // Speed — every round trip to the database is ~200 ms from production, so
+    // the reads go in two parallel groups. The per-minute limit is keyed on the
+    // account, which is known before any lookup, so it rides in the first.
+    const [sender, recipient, perMinute] = await Promise.all([
+      me(actor),
+      profiles.findById(input.playerId),
+      limiter.consume(`chat:msg:${actor.userId}`, MESSAGE_WINDOW),
+    ]);
     if (sender.id === input.playerId || !recipient) throw cannotMessage();
 
     const [low, high] = pair(sender.id, recipient.id);
-    const [blocks, existing] = await Promise.all([
+    // Shared play is asked alongside rather than after: it can only matter when
+    // there is no conversation or the sender's request is pending, and waiting
+    // to find out would cost another round trip.
+    const [blocks, existing, sharedNow] = await Promise.all([
       blocksBetween(sender.id, recipient.id),
       db.conversation.findUnique({
         where: { playerLowId_playerHighId: { playerLowId: low, playerHighId: high } },
       }),
+      sharedPlay.sharePlay(sender, recipient),
     ]);
     if (blocks.some(Boolean)) throw cannotMessage();
-
-    // Shared play is only worth asking when it could change the answer.
-    const needsShared = !existing || (existing.status === 'request' && existing.initiatorId === sender.id);
-    const [perMinute, shared] = await Promise.all([
-      limiter.consume(`chat:msg:${sender.id}`, MESSAGE_WINDOW),
-      needsShared ? sharedPlay.sharePlay(sender, recipient) : false,
-    ]);
     if (!perMinute.allowed) {
       throw new UserError(ChatCode.MESSAGE_LIMIT, 'You’re sending messages too quickly.', {
         retryAfterSeconds: perMinute.retryAfterSeconds,
       });
     }
+    const needsShared = !existing || (existing.status === 'request' && existing.initiatorId === sender.id);
+    const shared = needsShared && sharedNow;
 
     // R10 — a declined sender may ask again once the wait is over.
     const askingAgain = existing?.status === 'declined' && existing.initiatorId === sender.id;
@@ -520,75 +530,90 @@ export function createChatService(deps: ChatDeps) {
     }
 
     const at = now();
+    const senderIsLow = low === sender.id;
     return db.$transaction(async (tx: Tx) => {
       // One pair, one writer: two first messages racing must not both open it.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`chat:${low}:${high}`}))`;
       const found = await tx.conversation.findUnique({
         where: { playerLowId_playerHighId: { playerLowId: low, playerHighId: high } },
       });
-      // The sender has read their own message. Each path writes the
-      // conversation once: status, last-message time and read mark together.
-      const senderRead = low === sender.id ? ('lowLastReadAt' as const) : ('highLastReadAt' as const);
       let notify: 'request' | 'message' | null;
-      let row: Row;
-      let message: ChatMessage;
+      let status: ConversationStatus;
+      let declinedAt: Date | null = null;
 
       if (!found) {
-        row = await tx.conversation.create({
-          data: {
-            id: newId(),
-            playerLowId: low,
-            playerHighId: high,
-            initiatorId: sender.id,
-            status: shared ? 'active' : 'request',
-            createdAt: at,
-            lastMessageAt: at,
-            [senderRead]: at,
-          },
-        });
+        status = shared ? 'active' : 'request';
         notify = shared ? 'message' : 'request';
-        message = await tx.message.create({
-          data: { id: newId(), conversationId: row.id, senderId: sender.id, body, createdAt: at },
-        });
       } else {
         const senderIsInitiator = found.initiatorId === sender.id;
-        const status = found.status as ConversationStatus;
-        let change: { status: ConversationStatus; declinedAt: null } | null = null;
+        status = found.status as ConversationStatus;
+        declinedAt = found.declinedAt;
         if (status === 'request' && senderIsInitiator && !shared) throw cannotMessage(); // R3 — one until accepted
         if (status === 'declined' && senderIsInitiator) {
           // R10 — re-checked under the pair lock: another device may have asked first,
           // or the recipient declined again since the check above.
           const openAt = resendAt(found);
           if (!openAt || at < openAt) throw cannotMessage();
-          change = { status: 'request', declinedAt: null };
+          status = 'request';
+          declinedAt = null;
           notify = 'request';
         } else {
           // Replying accepts (R3); shared play since the request opens it too (R2).
-          if (status !== 'active') change = { status: 'active', declinedAt: null };
+          if (status !== 'active') {
+            status = 'active';
+            declinedAt = null;
+          }
           const recipientRead = readAtOf(found, recipient.id);
           // R8 — push only the first unread message.
           notify = !found.lastMessageAt || (recipientRead && recipientRead >= found.lastMessageAt) ? 'message' : null;
         }
-        message = await tx.message.create({
-          data: { id: newId(), conversationId: found.id, senderId: sender.id, body, createdAt: at },
-        });
-        row = await tx.conversation.update({
-          where: { id: found.id },
-          data: { ...change, lastMessageAt: at, [senderRead]: at },
-        });
       }
-      await outboxWrite(tx, {
-        topic: 'chat.message.sent',
-        payload: {
-          conversationId: row.id,
-          senderId: sender.id,
-          recipientId: recipient.id,
-          recipientUserId: recipient.userId,
-          notify,
-          preview: body.slice(0, PREVIEW_MAX),
-        },
+
+      const conversationId = found?.id ?? newId();
+      const message: ChatMessage = { id: newId(), conversationId, senderId: sender.id, body, createdAt: at };
+      const event = JSON.stringify({
+        conversationId,
+        senderId: sender.id,
+        recipientId: recipient.id,
+        recipientUserId: recipient.userId,
+        notify,
+        preview: body.slice(0, PREVIEW_MAX),
       });
-      return { conversation: view(row, sender.id, false), message };
+      // Speed — the conversation, the message and the outbox event in ONE
+      // statement (was three round trips). The sender has read their own
+      // message, so their read mark moves with it.
+      const rows = found
+        ? await tx.$queryRaw<Row[]>`
+            WITH m AS (
+              INSERT INTO messages (id, conversation_id, sender_id, body, created_at)
+              VALUES (${message.id}::uuid, ${conversationId}::uuid, ${sender.id}::uuid, ${body}, ${at}::timestamptz)
+            ), o AS (
+              INSERT INTO outbox (topic, payload) VALUES ('chat.message.sent', ${event}::jsonb)
+            )
+            UPDATE conversations
+               SET status = ${status},
+                   declined_at = ${declinedAt}::timestamptz,
+                   last_message_at = ${at}::timestamptz,
+                   low_last_read_at = CASE WHEN ${senderIsLow} THEN ${at}::timestamptz ELSE low_last_read_at END,
+                   high_last_read_at = CASE WHEN ${senderIsLow} THEN high_last_read_at ELSE ${at}::timestamptz END
+             WHERE id = ${conversationId}::uuid
+            RETURNING ${ROW_COLUMNS}`
+        : await tx.$queryRaw<Row[]>`
+            WITH c AS (
+              INSERT INTO conversations (id, player_low_id, player_high_id, initiator_id, status, created_at,
+                                         last_message_at, low_last_read_at, high_last_read_at)
+              VALUES (${conversationId}::uuid, ${low}::uuid, ${high}::uuid, ${sender.id}::uuid, ${status},
+                      ${at}::timestamptz, ${at}::timestamptz,
+                      ${senderIsLow ? at : null}::timestamptz, ${senderIsLow ? null : at}::timestamptz)
+              RETURNING *
+            ), m AS (
+              INSERT INTO messages (id, conversation_id, sender_id, body, created_at)
+              SELECT ${message.id}::uuid, c.id, ${sender.id}::uuid, ${body}, ${at}::timestamptz FROM c
+            ), o AS (
+              INSERT INTO outbox (topic, payload) VALUES ('chat.message.sent', ${event}::jsonb)
+            )
+            SELECT ${ROW_COLUMNS} FROM c`;
+      return { conversation: view(rows[0]!, sender.id, false), message };
     });
   }
 

@@ -364,6 +364,12 @@ export function createRegistrationService(deps: RegistrationDeps) {
     return row ? hydrate(row) : null;
   }
 
+  /** Speed — many entries in one read, for request-scoped loaders. Missing ids are absent. */
+  async function findByIds(registrationIds: readonly string[]): Promise<Map<string, Registration>> {
+    const rows = await repo.byIds([...new Set(registrationIds)]);
+    return new Map((await hydrateMany(rows)).map((r) => [r.id, r]));
+  }
+
   async function isParticipant(actor: Actor, row: RegistrationRow): Promise<boolean> {
     if (row.captainUserId === actor.userId) return true;
     if (!row.teamId) return false;
@@ -2046,6 +2052,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
     checkIn,
     checkInToken,
     checkInTokenFor,
+    findByIds,
     checkInByToken,
     checkInRoster,
     byId,

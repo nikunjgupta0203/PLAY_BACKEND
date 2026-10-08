@@ -7,7 +7,6 @@ import { builder } from '../../../graphql/builder.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { UserError } from '../../../platform/errors/index.js';
-import { registration } from '../../registration/index.js';
 import { RegistrationRef } from '../../registration/schema/index.js';
 import { field } from '../index.js';
 import type { FieldEvent, HeatView, Standing } from '../index.js';
@@ -43,7 +42,8 @@ const StandingRef = builder.objectRef<StandingOut>('HeatStanding').implement({
     registration: t.field({
       type: RegistrationRef,
       nullable: true,
-      resolve: (s) => registration.findById(s.entry),
+      // Speed — a heat's entries in one read.
+      resolve: (s, _args, ctx) => ctx.loaders.registration.load(s.entry),
     }),
     registrationId: t.id({ resolve: (s) => s.entry }),
     place: t.int({ nullable: true, description: 'Shared by entrants level on every criterion. Null: no result yet, or DNS/DNF/DQ.', resolve: (s) => s.place }),

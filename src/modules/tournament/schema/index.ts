@@ -16,7 +16,6 @@ import { isUserError, SystemError } from '../../../platform/errors/index.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { events } from '../../events/index.js';
 import { EventCategoryRef, EventRef } from '../../events/schema/index.js';
-import { registration } from '../../registration/index.js';
 import { RegistrationRef } from '../../registration/schema/index.js';
 import { venues } from '../../venues/index.js';
 import { CourtRef } from '../../venues/schema/index.js';
@@ -101,14 +100,14 @@ builder.node(MatchRef, {
       type: RegistrationRef,
       nullable: true,
       description: 'Null while the feeding match is still being played — or forever, on a bye.',
-      resolve: (m) =>
-        m.sideARegistrationId ? registration.findById(m.sideARegistrationId) : null,
+      resolve: (m, _args, ctx) =>
+        m.sideARegistrationId ? ctx.loaders.registration.load(m.sideARegistrationId) : null,
     }),
     sideB: t.field({
       type: RegistrationRef,
       nullable: true,
-      resolve: (m) =>
-        m.sideBRegistrationId ? registration.findById(m.sideBRegistrationId) : null,
+      resolve: (m, _args, ctx) =>
+        m.sideBRegistrationId ? ctx.loaders.registration.load(m.sideBRegistrationId) : null,
     }),
     winner: t.field({
       type: RegistrationRef,
@@ -116,8 +115,8 @@ builder.node(MatchRef, {
       description:
         'Who came out of this match. `scoring` records how it was won; this is ' +
         'the bracket’s own record that it was, because a final advances nobody.',
-      resolve: (m) =>
-        m.winnerRegistrationId ? registration.findById(m.winnerRegistrationId) : null,
+      resolve: (m, _args, ctx) =>
+        m.winnerRegistrationId ? ctx.loaders.registration.load(m.winnerRegistrationId) : null,
     }),
     court: t.field({
       type: CourtRef,
@@ -176,7 +175,7 @@ const StandingRowRef = builder.objectRef<StandingRow>('StandingRow').implement({
     registration: t.field({
       type: RegistrationRef,
       nullable: true,
-      resolve: (row) => registration.findById(row.registrationId),
+      resolve: (row, _args, ctx) => ctx.loaders.registration.load(row.registrationId),
     }),
     seed: t.exposeInt('seed'),
     bracket: t.field({ type: BracketTypeEnum, resolve: (row) => row.bracket }),
@@ -209,7 +208,7 @@ const LeagueRowRef = builder.objectRef<LeagueGroup['table'][number]>('LeagueRow'
     registration: t.field({
       type: RegistrationRef,
       nullable: true,
-      resolve: (r) => registration.findById(r.registrationId),
+      resolve: (r, _args, ctx) => ctx.loaders.registration.load(r.registrationId),
     }),
     registrationId: t.exposeID('registrationId'),
     place: t.exposeInt('place'),
@@ -308,12 +307,12 @@ const DrawPairRef = builder
         type: RegistrationRef,
         nullable: true,
         description: 'Null is a bye.',
-        resolve: (p) => (p.sideA ? registration.findById(p.sideA) : null),
+        resolve: (p, _args, ctx) => (p.sideA ? ctx.loaders.registration.load(p.sideA) : null),
       }),
       sideB: t.field({
         type: RegistrationRef,
         nullable: true,
-        resolve: (p) => (p.sideB ? registration.findById(p.sideB) : null),
+        resolve: (p, _args, ctx) => (p.sideB ? ctx.loaders.registration.load(p.sideB) : null),
       }),
     }),
   });
@@ -327,7 +326,7 @@ const DrawSeedRef = builder
       registration: t.field({
         type: RegistrationRef,
         nullable: true,
-        resolve: (x) => registration.findById(x.registrationId),
+        resolve: (x, _args, ctx) => ctx.loaders.registration.load(x.registrationId),
       }),
     }),
   });
@@ -336,8 +335,8 @@ const DrawGroupRef = builder.objectRef<{ ids: string[] }>('DrawPreviewGroup').im
   fields: (t) => ({
     entries: t.field({
       type: [RegistrationRef],
-      resolve: async (g) =>
-        (await Promise.all(g.ids.map((id) => registration.findById(id)))).filter(
+      resolve: async (g, _args, ctx) =>
+        (await Promise.all(g.ids.map((id) => ctx.loaders.registration.load(id)))).filter(
           (r): r is NonNullable<typeof r> => r !== null,
         ),
     }),

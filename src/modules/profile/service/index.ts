@@ -382,9 +382,12 @@ export function createProfileService(deps: ProfileDeps) {
     viewerUserId: string | null,
     playerId: string,
   ): Promise<PublicProfile | null> {
-    const target = await findById(playerId);
+    // Speed — the target and the viewer are independent reads.
+    const [target, viewer] = await Promise.all([
+      findById(playerId),
+      viewerUserId ? findByUserId(viewerUserId) : null,
+    ]);
     if (!target) return null;
-    const viewer = viewerUserId ? await findByUserId(viewerUserId) : null;
     return viewOf(target, viewer);
   }
 
@@ -692,10 +695,13 @@ export function createProfileService(deps: ProfileDeps) {
     opts: { viewerUserId: string | null; first: number },
   ): Promise<PlayedWith[]> {
     const first = Math.min(Math.max(opts.first, 1), 50);
-    const target = await findById(playerId);
+    const [target, viewer] = await Promise.all([
+      findById(playerId),
+      opts.viewerUserId ? findByUserId(opts.viewerUserId) : null,
+    ]);
     if (!target) return [];
-    const viewer = opts.viewerUserId ? await findByUserId(opts.viewerUserId) : null;
-    if (!(await viewOf(target, viewer)).detailsVisible) return [];
+    // Visibility needs no achievements — skip reading them.
+    if (!toPublic(target, viewer, []).detailsVisible) return [];
 
     const visible: Visibility[] = viewer ? ['public', 'players_only'] : ['public'];
     const rows = await db.$queryRaw<{ otherId: string; matches: number; lastPlayedAt: Date }[]>`
@@ -713,11 +719,12 @@ export function createProfileService(deps: ProfileDeps) {
       where: { id: { in: rows.map((r) => r.otherId) } },
       include: { sports: true },
     });
-    const byId = new Map((await hydrate(profiles)).map((p) => [p.id, p]));
+    // Speed — every player's view in one batch, not one read after another.
+    const views = new Map((await viewsOf(await hydrate(profiles), viewer)).map((p) => [p.id, p]));
     const out: PlayedWith[] = [];
     for (const r of rows) {
-      const p = byId.get(r.otherId);
-      if (p) out.push({ player: await viewOf(p, viewer), matches: r.matches, lastPlayedAt: r.lastPlayedAt });
+      const player = views.get(r.otherId);
+      if (player) out.push({ player, matches: r.matches, lastPlayedAt: r.lastPlayedAt });
     }
     return out;
   }

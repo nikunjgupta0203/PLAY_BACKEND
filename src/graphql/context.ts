@@ -13,6 +13,7 @@ import type { Grant, PlatformRole } from '../modules/identity/index.js';
 import type { Capacity, Event, EventCategory } from '../modules/events/index.js';
 import type { Venue } from '../modules/venues/index.js';
 import type { GeoPoint } from '../platform/geo.js';
+import type { Registration } from '../modules/registration/index.js';
 import type { PublicProfile } from '../modules/profile/index.js';
 import type { ChatMessage, ConversationView } from '../modules/chat/index.js';
 import { logger } from '../platform/logging/index.js';
@@ -24,6 +25,8 @@ export interface Loaders {
   platformRole: DataLoader<string, PlatformRole | null>;
   /** Speed — a feed of cards reads each event once, however many categories it lists. */
   event: DataLoader<string, Event | null>;
+  /** Speed — a draw's entries (both sides of every match, every standing) in one read. */
+  registration: DataLoader<string, Registration | null>;
   /** Speed — a list of entries reads each one's category in one query. */
   category: DataLoader<string, EventCategory | null>;
   /** Speed — every card's categories in one query, not one per card. */
@@ -63,6 +66,11 @@ function buildLoaders(actor: Actor | null): Loaders {
       const { events } = await import('../modules/events/index.js');
       const found = await events.findByIds(eventIds);
       return eventIds.map((id) => found.get(id) ?? null);
+    }),
+    registration: new DataLoader(async (registrationIds) => {
+      const { registration } = await import('../modules/registration/index.js');
+      const found = await registration.findByIds(registrationIds);
+      return registrationIds.map((id) => found.get(id) ?? null);
     }),
     category: new DataLoader(async (categoryIds) => {
       const { events } = await import('../modules/events/index.js');
