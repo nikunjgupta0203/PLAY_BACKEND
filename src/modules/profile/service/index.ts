@@ -16,6 +16,7 @@ import { UserError } from '../../../platform/errors/index.js';
 import { write as outboxWrite } from '../../../platform/outbox.js';
 import type { UploadSignature } from '../../../platform/cloudinary.js';
 import { cityVariants } from '../../../platform/city.js';
+import { memo, remember } from '../../../platform/requestCache.js';
 
 export const ProfileCode = {
   /** Also what a private profile returns: R4 — not distinguishable from missing. */
@@ -331,13 +332,16 @@ export function createProfileService(deps: ProfileDeps) {
     });
   }
 
-  async function findById(playerId: string): Promise<PlayerProfile | null> {
-    const row = await db.playerProfile.findUnique({
-      where: { id: playerId },
-      include: { sports: true },
+  // Speed — a profile is read once per query, however many fields ask (platform/requestCache.ts).
+  function findById(playerId: string): Promise<PlayerProfile | null> {
+    return memo(`profile:id:${playerId}`, async () => {
+      const row = await db.playerProfile.findUnique({
+        where: { id: playerId },
+        include: { sports: true },
+      });
+      if (!row) return null;
+      return (await hydrate([row]))[0] ?? null;
     });
-    if (!row) return null;
-    return (await hydrate([row]))[0] ?? null;
   }
 
   async function byId(playerId: string): Promise<PlayerProfile> {
@@ -346,13 +350,17 @@ export function createProfileService(deps: ProfileDeps) {
     return found;
   }
 
-  async function findByUserId(userId: string): Promise<PlayerProfile | null> {
-    const row = await db.playerProfile.findUnique({
-      where: { userId },
-      include: { sports: true },
+  function findByUserId(userId: string): Promise<PlayerProfile | null> {
+    return memo(`profile:user:${userId}`, async () => {
+      const row = await db.playerProfile.findUnique({
+        where: { userId },
+        include: { sports: true },
+      });
+      if (!row) return null;
+      const found = (await hydrate([row]))[0] ?? null;
+      if (found) remember(`profile:id:${found.id}`, found);
+      return found;
     });
-    if (!row) return null;
-    return (await hydrate([row]))[0] ?? null;
   }
 
   async function byUserId(userId: string): Promise<PlayerProfile> {
@@ -403,23 +411,41 @@ export function createProfileService(deps: ProfileDeps) {
   }
 
   /** Speed — the three columns chat needs, in one query instead of three. */
-  async function briefByUserId(userId: string): Promise<ProfileBrief | null> {
-    return db.playerProfile.findUnique({ where: { userId }, select: BRIEF }) as Promise<ProfileBrief | null>;
+  function briefByUserId(userId: string): Promise<ProfileBrief | null> {
+    return memo(`profile:brief:user:${userId}`, () =>
+      db.playerProfile.findUnique({ where: { userId }, select: BRIEF }) as Promise<ProfileBrief | null>,
+    );
   }
 
-  async function briefById(playerId: string): Promise<ProfileBrief | null> {
-    return db.playerProfile.findUnique({ where: { id: playerId }, select: BRIEF }) as Promise<ProfileBrief | null>;
+  function briefById(playerId: string): Promise<ProfileBrief | null> {
+    return memo(`profile:brief:id:${playerId}`, () =>
+      db.playerProfile.findUnique({ where: { id: playerId }, select: BRIEF }) as Promise<ProfileBrief | null>,
+    );
   }
 
   async function viewOf(
     target: PlayerProfile,
     viewer: PlayerProfile | null,
   ): Promise<PublicProfile> {
+    const achievements = await memo(`profile:achievements:${target.id}`, () =>
+      db.achievement.findMany({
+        where: { playerId: target.id },
+        orderBy: { earnedAt: 'desc' },
+      }),
+    );
+    return toPublic(target, viewer, achievements);
+  }
+
+  /** Speed — `viewOf` for a list: every row's achievements in one query, not one each. */
+  async function viewsOf(targets: PlayerProfile[], viewer: PlayerProfile | null): Promise<PublicProfile[]> {
+    if (targets.length === 0) return [];
     const achievements = await db.achievement.findMany({
-      where: { playerId: target.id },
+      where: { playerId: { in: targets.map((t) => t.id) } },
       orderBy: { earnedAt: 'desc' },
     });
-    return toPublic(target, viewer, achievements);
+    const byPlayer = new Map<string, AchievementRow[]>();
+    for (const a of achievements) byPlayer.set(a.playerId, [...(byPlayer.get(a.playerId) ?? []), a]);
+    return targets.map((t) => toPublic(t, viewer, byPlayer.get(t.id) ?? []));
   }
 
   function toPublic(
@@ -1023,9 +1049,11 @@ export function createProfileService(deps: ProfileDeps) {
       take: first + 1,
     });
 
-    const hydrated = await hydrate(rows.slice(0, first));
-    const viewer = opts.viewerUserId ? await findByUserId(opts.viewerUserId) : null;
-    const nodes = await Promise.all(hydrated.map((p) => viewOf(p, viewer)));
+    const [hydrated, viewer] = await Promise.all([
+      hydrate(rows.slice(0, first)),
+      opts.viewerUserId ? findByUserId(opts.viewerUserId) : null,
+    ]);
+    const nodes = await viewsOf(hydrated, viewer);
     const last = hydrated.at(-1);
 
     return {
@@ -1063,8 +1091,7 @@ export function createProfileService(deps: ProfileDeps) {
       take: first,
     });
 
-    const hydrated = await hydrate(rows);
-    return Promise.all(hydrated.map((p) => viewOf(p, viewer)));
+    return viewsOf(await hydrate(rows), viewer);
   }
 
   // --- rating (R9) -----------------------------------------------------------

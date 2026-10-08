@@ -914,6 +914,12 @@ export function createEventService(deps: EventDeps) {
     return toCategory(row);
   }
 
+  /** Speed — many categories in one query, for request-scoped loaders. Missing ids are absent. */
+  async function findCategoriesByIds(categoryIds: readonly string[]): Promise<Map<string, EventCategory>> {
+    const rows = await repo.categoriesByIds([...new Set(categoryIds)]);
+    return new Map(rows.map((r) => [r.id, toCategory(r)]));
+  }
+
   async function mediaFor(eventId: string): Promise<EventMedia[]> {
     return repo.mediaFor(eventId);
   }
@@ -2110,6 +2116,11 @@ export function createEventService(deps: EventDeps) {
     return (await venues.findById(row.venueId))?.location ?? null;
   }
 
+  /** Speed — each event's own pin, for a page of events in one query (no venue fallback). */
+  async function ownLocations(eventIds: readonly string[]): Promise<Map<string, GeoPoint>> {
+    return repo.locationsOf([...new Set(eventIds)]);
+  }
+
   /** F3 — signs a host can be trusted: events they ran to the end. */
   async function hostedCount(userId: string): Promise<number> {
     return db.event.count({ where: { organizerId: userId, status: 'completed' } });
@@ -2223,6 +2234,7 @@ export function createEventService(deps: EventDeps) {
     hostedCount,
     warnShortCategories,
     locationOf,
+    ownLocations,
     staffOf,
     addStaffMember,
     removeStaffMember,
@@ -2242,6 +2254,7 @@ export function createEventService(deps: EventDeps) {
     canSeeContact,
     coverUploadSignature,
     categoryById,
+    findCategoriesByIds,
     mediaFor,
     capacityOf,
     capacitiesOf,

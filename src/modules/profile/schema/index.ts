@@ -13,6 +13,7 @@
  * `rating` module fills the rankings board.
  */
 import { builder, clampFirst } from '../../../graphql/builder.js';
+import type { Ctx } from '../../../graphql/context.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { cloudinary, TRANSFORMS } from '../../../platform/cloudinary.js';
@@ -115,10 +116,13 @@ const PlayerGameScoreRef = builder
     }),
   });
 
-/** Opponents and partners are shown as the viewer is allowed to see them (R4). */
-const playersAsSeen = async (ids: string[], viewerUserId: string | null) =>
-  (await Promise.all(ids.map((id) => profile.publicView(viewerUserId, id)))).filter(
-    (p): p is PublicProfile => p !== null,
+/**
+ * Opponents and partners are shown as the viewer is allowed to see them (R4).
+ * Speed — through the request's loader, so every result on screen is one batch.
+ */
+const playersAsSeen = async (ids: string[], ctx: Ctx) =>
+  (await ctx.loaders.publicProfile.loadMany(ids)).filter(
+    (p): p is PublicProfile => p !== null && !(p instanceof Error),
   );
 
 // Declared before PlayerProfileRef is implemented; its player fields point back at it.
@@ -151,11 +155,11 @@ const MatchResultSummaryRef = builder.objectRef<MatchHistoryRow>('MatchResultSum
     }),
     partners: t.field({
       type: [PlayerProfileRef],
-      resolve: (r, _args, ctx) => playersAsSeen(r.partnerIds, ctx.actor?.userId ?? null),
+      resolve: (r, _args, ctx) => playersAsSeen(r.partnerIds, ctx),
     }),
     opponents: t.field({
       type: [PlayerProfileRef],
-      resolve: (r, _args, ctx) => playersAsSeen(r.opponentIds, ctx.actor?.userId ?? null),
+      resolve: (r, _args, ctx) => playersAsSeen(r.opponentIds, ctx),
     }),
     completedAt: t.field({ type: 'DateTime', resolve: (r) => r.completedAt }),
   }),

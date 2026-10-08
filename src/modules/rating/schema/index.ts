@@ -53,7 +53,8 @@ const RankingRowRef = builder.objectRef<RankingRow>('RankingRow').implement({
     player: t.field({
       type: PlayerProfileRef,
       nullable: true,
-      resolve: (row, _args, ctx) => profile.publicView(ctx.actor?.userId ?? null, row.playerId),
+      // Speed — a leaderboard page's players in one batch, not one read per row.
+      resolve: (row, _args, ctx) => ctx.loaders.publicProfile.load(row.playerId),
     }),
     rating: t.float({ resolve: (r) => r.rating }),
     matchesPlayed: t.exposeInt('matchesPlayed'),

@@ -12,6 +12,7 @@ import { identity } from '../modules/identity/index.js';
 import type { Grant, PlatformRole } from '../modules/identity/index.js';
 import type { Capacity, Event, EventCategory } from '../modules/events/index.js';
 import type { Venue } from '../modules/venues/index.js';
+import type { GeoPoint } from '../platform/geo.js';
 import type { PublicProfile } from '../modules/profile/index.js';
 import type { ChatMessage, ConversationView } from '../modules/chat/index.js';
 import { logger } from '../platform/logging/index.js';
@@ -23,10 +24,14 @@ export interface Loaders {
   platformRole: DataLoader<string, PlatformRole | null>;
   /** Speed — a feed of cards reads each event once, however many categories it lists. */
   event: DataLoader<string, Event | null>;
+  /** Speed — a list of entries reads each one's category in one query. */
+  category: DataLoader<string, EventCategory | null>;
   /** Speed — every card's categories in one query, not one per card. */
   categories: DataLoader<string, EventCategory[]>;
   /** Speed — seat counts for every category on screen in one round trip (events R5). */
   capacity: DataLoader<EventCategory, Capacity, string>;
+  /** Speed — every card's own map pin in one query (the venue's is the fallback). */
+  eventLocation: DataLoader<string, GeoPoint | null>;
   /** Speed — every card's venue in one query. */
   venue: DataLoader<string, Venue | null>;
   /** Speed — every player on screen (an inbox row each) in a fixed number of queries. */
@@ -47,11 +52,10 @@ export interface Ctx {
 
 function buildLoaders(actor: Actor | null): Loaders {
   return {
-    grant: new DataLoader(
-      async (keys) =>
-        Promise.all(keys.map((k) => identity.grantsFor(k.userId, k.eventId))),
-      { cacheKeyFn: (k) => `${k.userId}:${k.eventId}` },
-    ),
+    // Speed — a screen of event cards asks for its grants in one query.
+    grant: new DataLoader(async (keys) => identity.grantsForPairs(keys), {
+      cacheKeyFn: (k) => `${k.userId}:${k.eventId}`,
+    }),
     platformRole: new DataLoader(async (userIds) =>
       Promise.all(userIds.map((userId) => identity.platformRoleFor(userId))),
     ),
@@ -59,6 +63,11 @@ function buildLoaders(actor: Actor | null): Loaders {
       const { events } = await import('../modules/events/index.js');
       const found = await events.findByIds(eventIds);
       return eventIds.map((id) => found.get(id) ?? null);
+    }),
+    category: new DataLoader(async (categoryIds) => {
+      const { events } = await import('../modules/events/index.js');
+      const found = await events.findCategoriesByIds(categoryIds);
+      return categoryIds.map((id) => found.get(id) ?? null);
     }),
     categories: new DataLoader(async (eventIds) => {
       const { events } = await import('../modules/events/index.js');
@@ -73,6 +82,11 @@ function buildLoaders(actor: Actor | null): Loaders {
       },
       { cacheKeyFn: (c) => c.id },
     ),
+    eventLocation: new DataLoader(async (eventIds) => {
+      const { events } = await import('../modules/events/index.js');
+      const found = await events.ownLocations(eventIds);
+      return eventIds.map((id) => found.get(id) ?? null);
+    }),
     venue: new DataLoader(async (venueIds) => {
       const { venues } = await import('../modules/venues/index.js');
       const found = new Map((await venues.byIds([...venueIds])).map((v) => [v.id, v]));

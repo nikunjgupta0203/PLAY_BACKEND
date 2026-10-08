@@ -28,6 +28,7 @@ import { razorpay } from './platform/paymentGateway.js';
 import { createRazorpayCheckoutRouter } from './platform/webhooks/razorpayCheckout.js';
 import { pusherAuthRoute } from './platform/realtime/auth.js';
 import { buildContext, type Ctx } from './graphql/context.js';
+import { enableReadCache, withRequestCache } from './platform/requestCache.js';
 import { schema } from './schema.js';
 
 export async function createApp() {
@@ -116,11 +117,24 @@ export async function createApp() {
     // not publish it.
     introspection: !isProd,
     includeStacktraceInErrorResponses: !isProd,
+    // Speed — a query may share repeated reads; a mutation never (platform/requestCache.ts).
+    plugins: [
+      {
+        async requestDidStart() {
+          return {
+            async didResolveOperation({ operation }) {
+              if (operation?.operation === 'query') enableReadCache();
+            },
+          };
+        },
+      },
+    ],
   });
   await apollo.start();
 
   app.use(
     '/graphql',
+    (_req, _res, next) => withRequestCache(next),
     cors({
       origin: config.CORS_ORIGINS.length > 0 ? config.CORS_ORIGINS : true,
       credentials: true,

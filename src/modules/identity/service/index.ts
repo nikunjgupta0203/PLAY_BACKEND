@@ -20,6 +20,7 @@ import type { AuthClient } from '../../../platform/auth/tokens.js';
 import type { LimitResult, Window } from '../../../platform/rateLimit.js';
 import { write as outboxWrite } from '../../../platform/outbox.js';
 import { logger } from '../../../platform/logging/index.js';
+import { memo } from '../../../platform/requestCache.js';
 import { otpEmail } from './otpEmail.js';
 
 /** Constant-time: the test code is a live credential in production. */
@@ -655,10 +656,31 @@ export function createIdentityService(deps: IdentityDeps) {
    *
    * R16 — a direct grant and an organizer-derived one resolve to the higher.
    */
-  async function grantsFor(userId: string, eventId: string): Promise<Grant | null> {
-    const rows = await db.eventStaff.findMany({ where: { eventId, userId } });
-    const best = highestGrant(rows);
-    return best ? { eventId: best.eventId, userId: best.userId, role: best.role as StaffRole } : null;
+  // Speed — read once per query however many fields ask (platform/requestCache.ts);
+  // a mutation always reads it fresh (R10).
+  function grantsFor(userId: string, eventId: string): Promise<Grant | null> {
+    return memo(`grant:${userId}:${eventId}`, async () => {
+      const rows = await db.eventStaff.findMany({ where: { eventId, userId } });
+      const best = highestGrant(rows);
+      return best ? { eventId: best.eventId, userId: best.userId, role: best.role as StaffRole } : null;
+    });
+  }
+
+  /** Speed — `grantsFor` for a screenful of (user, event) pairs in one query. */
+  async function grantsForPairs(
+    pairs: readonly { userId: string; eventId: string }[],
+  ): Promise<(Grant | null)[]> {
+    if (pairs.length === 0) return [];
+    const rows = await db.eventStaff.findMany({
+      where: {
+        userId: { in: [...new Set(pairs.map((p) => p.userId))] },
+        eventId: { in: [...new Set(pairs.map((p) => p.eventId))] },
+      },
+    });
+    return pairs.map((p) => {
+      const best = highestGrant(rows.filter((r) => r.userId === p.userId && r.eventId === p.eventId));
+      return best ? { eventId: best.eventId, userId: best.userId, role: best.role as StaffRole } : null;
+    });
   }
 
   async function grantsForUser(userId: string): Promise<Grant[]> {
@@ -749,9 +771,11 @@ export function createIdentityService(deps: IdentityDeps) {
   // --- platform roles (R15) ---------------------------------------------------
 
   /** Read per request through a request-scoped loader. Never a JWT claim. */
-  async function platformRoleFor(userId: string): Promise<PlatformRole | null> {
-    const row = await db.platformStaff.findUnique({ where: { userId } });
-    return (row?.role as PlatformRole | undefined) ?? null;
+  function platformRoleFor(userId: string): Promise<PlatformRole | null> {
+    return memo(`platformRole:${userId}`, async () => {
+      const row = await db.platformStaff.findUnique({ where: { userId } });
+      return (row?.role as PlatformRole | undefined) ?? null;
+    });
   }
 
   /**
@@ -887,6 +911,7 @@ export function createIdentityService(deps: IdentityDeps) {
     registerSignInHook,
     scrubDeletedUsers,
     grantsFor,
+    grantsForPairs,
     grantsForUser,
     staffFor,
     addStaff,

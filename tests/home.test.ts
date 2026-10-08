@@ -105,7 +105,7 @@ beforeAll(async () => {
       async discoverable(filter, first) {
         return (await events.search(filter, { first })).nodes;
       },
-      byId: (id) => events.byId(id),
+      byIds: (ids) => events.findByIds(ids),
     },
     registrations: { committedForUser: (userId) => registration.committedForUser(userId) },
     profile: {

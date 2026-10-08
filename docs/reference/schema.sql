@@ -35,7 +35,7 @@ CREATE TABLE outbox (
   last_error    text,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX outbox_pending_idx ON outbox (created_at) WHERE processed_at IS NULL;
+CREATE INDEX outbox_pending_idx ON outbox (id) WHERE processed_at IS NULL;  -- migration 040
 
 
 -- =============================================================================
@@ -1508,3 +1508,19 @@ ALTER TABLE payment_orders
   ADD COLUMN ticket_order_id uuid REFERENCES ticket_orders(id),
   ADD CONSTRAINT payment_orders_one_subject CHECK (
     num_nonnulls(registration_id, booking_id, ticket_order_id) = 1);
+
+-- =============================================================================
+-- Migration 040 — indexes for reads that were scanning (speed review 2026-10-08)
+-- =============================================================================
+CREATE INDEX seat_holds_registration_live_idx ON seat_holds (registration_id) WHERE released_at IS NULL;
+CREATE INDEX registrations_event_id_idx ON registrations (event_id);
+CREATE INDEX registrations_team_id_idx ON registrations (team_id);
+CREATE INDEX team_members_user_id_idx ON team_members (user_id);
+CREATE INDEX teams_event_category_id_idx ON teams (event_category_id);
+CREATE INDEX registration_invites_registration_id_idx ON registration_invites (registration_id);
+CREATE INDEX events_organizer_id_idx ON events (organizer_id);
+CREATE INDEX events_venue_id_idx ON events (venue_id);
+CREATE INDEX events_city_norm_idx ON events (lower(btrim(city)), starts_at);
+CREATE INDEX matches_side_a_registration_id_idx ON matches (side_a_registration_id);
+CREATE INDEX matches_side_b_registration_id_idx ON matches (side_b_registration_id);
+CREATE INDEX rankings_player_id_idx ON rankings (player_id);

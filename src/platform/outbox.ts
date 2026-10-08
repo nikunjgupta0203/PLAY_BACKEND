@@ -66,4 +66,16 @@ export async function markFailed(id: bigint, error: string): Promise<void> {
   });
 }
 
-export const outbox = { write, claimBatch, markProcessed, markFailed };
+/**
+ * Retention: dispatched rows older than a week. Every score point writes a
+ * row, so an unpruned outbox grows without end — and everything still pending
+ * sits in a partial index (migration 040), which this keeps small too.
+ */
+export async function prune(olderThanDays = 7): Promise<number> {
+  return db.$executeRaw`
+    DELETE FROM outbox
+     WHERE processed_at IS NOT NULL
+       AND processed_at < now() - ${olderThanDays}::int * interval '1 day'`;
+}
+
+export const outbox = { write, claimBatch, markProcessed, markFailed, prune };

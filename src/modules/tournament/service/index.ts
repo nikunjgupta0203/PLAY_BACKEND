@@ -46,6 +46,7 @@ import {
 } from '../league.js';
 import type { MatchRow, TournamentRepo } from '../repo/index.js';
 import { isCourtOverlap } from '../repo/index.js';
+import { memo } from '../../../platform/requestCache.js';
 
 export { MIN_ENTRIES } from '../draw.js';
 export type { BracketType } from '../draw.js';
@@ -406,9 +407,12 @@ export function createTournamentService(deps: TournamentDeps) {
     return found;
   }
 
-  async function findByCategory(eventCategoryId: string): Promise<Tournament | null> {
-    const row = await repo.byCategory(db, eventCategoryId);
-    return row ? toTournament(row) : null;
+  // Speed — the category's tournament and its standings both ask; one read per query.
+  function findByCategory(eventCategoryId: string): Promise<Tournament | null> {
+    return memo(`tournament:category:${eventCategoryId}`, async () => {
+      const row = await repo.byCategory(db, eventCategoryId);
+      return row ? toTournament(row) : null;
+    });
   }
 
   async function matchById(matchId: string): Promise<Match> {

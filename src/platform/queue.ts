@@ -196,17 +196,27 @@ interface Closable {
 
 export function createQueueRuntime(
   db: Db,
-  opts: { pollMs?: number; leaseMs?: number; tickMs?: number } = {},
+  opts: { pollMs?: number; maxIdlePollMs?: number; leaseMs?: number; tickMs?: number } = {},
 ) {
   const leaseMs = opts.leaseMs ?? LEASE_MS;
   const store = createJobStore(db, { leaseMs });
   const pollMs = opts.pollMs ?? 1_000;
+  // Speed — an idle queue polls less and less often, up to this. Every poll is
+  // a database round trip on the same pool requests use; nine queues at one a
+  // second kept connections busy around the clock. A job added in this process
+  // wakes its queue at once (`kick`), so only work from elsewhere waits.
+  const maxIdlePollMs = Math.max(opts.maxIdlePollMs ?? 5_000, pollMs);
   const tickMs = opts.tickMs ?? 15_000;
   const open = new Set<Closable>();
+  const kicks = new Map<string, () => void>();
 
   function queue(name: QueueName | string) {
     return {
-      add: (jobName: string, data: unknown, jobOpts?: JobsOptions) => store.add(name, jobName, data, jobOpts),
+      add: async (jobName: string, data: unknown, jobOpts?: JobsOptions) => {
+        const added = await store.add(name, jobName, data, jobOpts);
+        if (added && !(jobOpts?.delay && jobOpts.delay > 0)) kicks.get(name)?.();
+        return added;
+      },
     };
   }
 
@@ -214,6 +224,10 @@ export function createQueueRuntime(
     const concurrency = wopts.concurrency ?? 5;
     const running = new Set<Promise<void>>();
     let stopped = false;
+    let polling = false;
+    /** A kick arrived mid-poll: that poll's claim may have missed the new job. */
+    let kickedWhilePolling = false;
+    let idleMs = pollMs;
     let timer: NodeJS.Timeout | undefined;
 
     const run = async (row: Claimed): Promise<void> => {
@@ -243,7 +257,8 @@ export function createQueueRuntime(
 
     const poll = async (): Promise<void> => {
       timer = undefined;
-      if (stopped) return;
+      if (stopped || polling) return;
+      polling = true;
       const free = concurrency - running.size;
       let claimed = 0;
       if (free > 0) {
@@ -251,20 +266,43 @@ export function createQueueRuntime(
           const rows = await store.claim(name, free);
           claimed = rows.length;
           for (const row of rows) {
-            const p: Promise<void> = run(row).finally(() => running.delete(p));
+            const p: Promise<void> = run(row).finally(() => {
+              running.delete(p);
+              // A slot came free: look again soon rather than after a long idle wait.
+              if (idleMs > pollMs) kick();
+            });
             running.add(p);
           }
         } catch (err) {
           logger.error({ queue: name, err }, 'job claim failed');
         }
       }
-      // A full batch means more is probably waiting.
-      if (!stopped) timer = setTimeout(() => void poll(), claimed > 0 && claimed === free ? 0 : pollMs);
+      polling = false;
+      const again = kickedWhilePolling || (claimed > 0 && claimed === free);
+      kickedWhilePolling = false;
+      // Busy: the base interval (a full batch means more is waiting — no wait).
+      // Idle: twice the last wait, up to maxIdlePollMs.
+      idleMs = again || claimed > 0 || free <= 0 ? pollMs : Math.min(idleMs * 2, maxIdlePollMs);
+      if (!stopped) timer = setTimeout(() => void poll(), again ? 0 : idleMs);
     };
+
+    /** New work in this process: poll now instead of at the end of an idle wait. */
+    const kick = (): void => {
+      if (stopped) return;
+      idleMs = pollMs;
+      if (polling) {
+        kickedWhilePolling = true; // the running poll looks again as soon as it ends
+        return;
+      }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void poll(), 0);
+    };
+    kicks.set(name, kick);
 
     const handle: Closable = {
       async close() {
         stopped = true;
+        kicks.delete(name);
         if (timer) clearTimeout(timer);
         await Promise.allSettled([...running]);
         open.delete(handle);
@@ -283,6 +321,10 @@ export function createQueueRuntime(
       busy = true;
       store
         .tickSchedules()
+        .then((due) => {
+          // A schedule just queued its job: wake every queue rather than wait out an idle poll.
+          if (due > 0) for (const kick of kicks.values()) kick();
+        })
         .catch((err: unknown) => logger.error({ err }, 'schedule tick failed'))
         .finally(() => {
           busy = false;

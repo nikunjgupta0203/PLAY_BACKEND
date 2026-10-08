@@ -14,7 +14,7 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
+  previewFeatures = ["postgresqlExtensions", "relationJoins"]
 }
 
 datasource db {
@@ -40,6 +40,7 @@ model Outbox {
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([createdAt])
+  /// Also outbox_pending_idx on (id) WHERE processed_at IS NULL — the drain claim, migration 040.
   @@map("outbox")
 }
 
@@ -664,6 +665,9 @@ model Event {
   /// status IN ('published','live'). Draft and cancelled events are never
   /// listed, so they should not be in the index either.
   @@index([sportId, city, startsAt])
+  @@index([organizerId], map: "events_organizer_id_idx")
+  @@index([venueId], map: "events_venue_id_idx")
+  /// Also events_city_norm_idx on (lower(btrim(city)), starts_at) — an expression, so migration 040 only.
   @@map("events")
 }
 
@@ -779,6 +783,7 @@ model Team {
   members       TeamMember[]
   registrations Registration[]
 
+  @@index([eventCategoryId], map: "teams_event_category_id_idx")
   @@map("teams")
 }
 
@@ -792,6 +797,7 @@ model TeamMember {
   user User @relation(fields: [userId], references: [id])
 
   @@id([teamId, userId])
+  @@index([userId], map: "team_members_user_id_idx")
   @@map("team_members")
 }
 
@@ -844,6 +850,8 @@ model Registration {
 
   @@index([eventCategoryId, status])
   @@index([captainUserId])
+  @@index([eventId], map: "registrations_event_id_idx")
+  @@index([teamId], map: "registrations_team_id_idx")
   @@map("registrations")
 }
 
@@ -866,6 +874,7 @@ model RegistrationInvite {
   /// The migration makes this partial on `status = 'pending'`: an accepted
   /// invite is never looked up by email again.
   @@index([invitedEmail])
+  @@index([registrationId], map: "registration_invites_registration_id_idx")
   @@map("registration_invites")
 }
 
@@ -886,6 +895,7 @@ model SeatHold {
   /// Partial on `released_at IS NULL` in the migration — a released hold is
   /// never counted, so it does not belong in the index that counts.
   @@index([eventCategoryId])
+  /// Also seat_holds_registration_live_idx on (registration_id) WHERE released_at IS NULL — migration 040.
   @@map("seat_holds")
 }
 
@@ -1211,6 +1221,8 @@ model Match {
   /// partial on NOT NULL in the migration.
   @@index([winnerMatchId])
   @@index([loserMatchId])
+  @@index([sideARegistrationId], map: "matches_side_a_registration_id_idx")
+  @@index([sideBRegistrationId], map: "matches_side_b_registration_id_idx")
   @@map("matches")
 }
 
@@ -1323,6 +1335,7 @@ model Ranking {
 
   @@id([sportId, scope, playerId])
   @@index([sportId, scope, rank])
+  @@index([playerId], map: "rankings_player_id_idx")
   @@map("rankings")
 }
 

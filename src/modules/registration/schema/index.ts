@@ -80,10 +80,15 @@ const RegistrationRef = builder.objectRef<Registration>('Registration');
 builder.objectType(RegistrationRef, {
   fields: (t) => ({
     id: t.exposeID('id'),
-    event: t.field({ type: EventRef, resolve: (r) => events.byId(r.eventId) }),
+    // Speed — a list of entries reads its events and categories in one query each.
+    event: t.field({
+      type: EventRef,
+      resolve: async (r, _args, ctx) => (await ctx.loaders.event.load(r.eventId)) ?? events.byId(r.eventId),
+    }),
     category: t.field({
       type: EventCategoryRef,
-      resolve: (r) => events.categoryById(r.eventCategoryId),
+      resolve: async (r, _args, ctx) =>
+        (await ctx.loaders.category.load(r.eventCategoryId)) ?? events.categoryById(r.eventCategoryId),
     }),
     status: t.field({ type: RegistrationStatusEnum, resolve: (r) => r.status }),
     displayName: t.string({
@@ -127,7 +132,8 @@ builder.objectType(RegistrationRef, {
       description:
         'registration R13 — the payload to render as a QR. Team members only, confirmed ' +
         'entries only. Deterministic, so the app may cache it for offline display.',
-      resolve: (r, _args, ctx) => (ctx.actor ? registration.checkInToken(ctx.actor, r.id) : null),
+      // The entry is in hand — no need to read it again.
+      resolve: (r, _args, ctx) => (ctx.actor ? registration.checkInTokenFor(ctx.actor, r) : null),
     }),
     checkedInAt: t.field({ type: 'DateTime', nullable: true, resolve: (r) => r.checkedInAt }),
     seed: t.int({ nullable: true, description: 'Set at draw time.', resolve: (r) => r.seed }),

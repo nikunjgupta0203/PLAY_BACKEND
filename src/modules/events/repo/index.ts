@@ -212,6 +212,11 @@ export function createEventRepo(db: Db) {
     return db.eventCategory.findUnique({ where: { id: categoryId } });
   }
 
+  async function categoriesByIds(categoryIds: string[]): Promise<CategoryRow[]> {
+    if (categoryIds.length === 0) return [];
+    return db.eventCategory.findMany({ where: { id: { in: categoryIds } } });
+  }
+
   async function mediaFor(eventId: string): Promise<
     { id: string; publicId: string; kind: string; sortOrder: number }[]
   > {
@@ -244,6 +249,16 @@ export function createEventRepo(db: Db) {
         FROM events WHERE id = ${eventId}::uuid AND geo IS NOT NULL
     `;
     return rows[0] ?? null;
+  }
+
+  /** Speed — `locationOf` for a page of events in one query. Events with no pin are absent. */
+  async function locationsOf(eventIds: string[]): Promise<Map<string, GeoPoint>> {
+    if (eventIds.length === 0) return new Map();
+    const rows = await db.$queryRaw<{ id: string; lat: number; lng: number }[]>`
+      SELECT id::text AS id, ST_Y(geo::geometry) AS lat, ST_X(geo::geometry) AS lng
+        FROM events WHERE id = ANY(${eventIds}::uuid[]) AND geo IS NOT NULL
+    `;
+    return new Map(rows.map((r) => [r.id, { lat: r.lat, lng: r.lng }]));
   }
 
   /** Raw: `geo` is Unsupported. Longitude first — see platform/geo.ts. */
@@ -309,10 +324,12 @@ export function createEventRepo(db: Db) {
     slugExists,
     categoriesFor,
     categoryById,
+    categoriesByIds,
     mediaFor,
     insert,
     setLocation,
     locationOf,
+    locationsOf,
     update,
     insertCategory,
     updateCategory,

@@ -35,7 +35,8 @@ export interface FeedStats {
 export interface EventsPort<E extends FeedEvent> {
   /** events R6 — published and live events only, soonest first. */
   discoverable(filter: { city: string | null; sportId: string | null; from: Date }, first: number): Promise<E[]>;
-  byId(eventId: string): Promise<E>;
+  /** Speed — every entry's event in one read. Missing ids are absent. */
+  byIds(eventIds: string[]): Promise<Map<string, E>>;
 }
 
 export interface RegistrationsPort<R extends FeedRegistration> {
@@ -118,17 +119,19 @@ export function createHomeService<
     // home R4 — committed entries in events that have not finished. Each event
     // is read once even if the viewer holds two entries in it.
     const committed = mine.committed.filter((r) => COMMITTED.has(r.status));
-    const eventById = new Map<string, E>();
-    const [discoverable, stats] = await Promise.all([
+    const [discoverable, stats, eventById] = await Promise.all([
       // One over the shelf, because the hero may take the first.
       deps.events.discoverable({ city, sportId, from: at }, FEATURED_LIMIT + 1),
       player ? statsFor(player, sportId) : null,
-      ...[...new Set(committed.map((r) => r.eventId))].map(async (id) => {
-        eventById.set(id, await deps.events.byId(id));
-      }),
+      committed.length > 0
+        ? deps.events.byIds([...new Set(committed.map((r) => r.eventId))])
+        : new Map<string, E>(),
     ]);
     const entries: Entry<E, R>[] = committed
-      .map((registration) => ({ registration, event: eventById.get(registration.eventId)! }))
+      .flatMap((registration) => {
+        const event = eventById.get(registration.eventId);
+        return event ? [{ registration, event }] : [];
+      })
       .filter(({ event }) => isOngoing(event, at) && (!sportId || event.sportId === sportId))
       .sort((a, b) => byStart(a.event, b.event));
 

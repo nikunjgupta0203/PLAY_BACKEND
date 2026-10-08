@@ -402,7 +402,10 @@ builder.node(EventRef, {
       type: GeoPointRef,
       nullable: true,
       description: 'F17 — the event’s pin, else its venue’s. Null when neither is known.',
-      resolve: (e) => events.locationOf(e.id),
+      // Speed — a page of cards reads every pin in one query; the venue loader is shared with `venue`.
+      resolve: async (e, _args, ctx) =>
+        (await ctx.loaders.eventLocation.load(e.id)) ??
+        (e.venueId ? ((await ctx.loaders.venue.load(e.venueId))?.location ?? null) : null),
     }),
     courts: t.field({
       type: [EventCourtRef],
@@ -414,8 +417,7 @@ builder.node(EventRef, {
       description: 'owner | manager | scorer — the viewer’s grant on this event, or null.',
       resolve: async (e, _args, ctx) => {
         if (!ctx.actor) return null;
-        const { identity } = await import('../../identity/index.js');
-        return (await identity.grantsFor(ctx.actor.userId, e.id))?.role ?? null;
+        return (await ctx.loaders.grant.load({ userId: ctx.actor.userId, eventId: e.id }))?.role ?? null;
       },
     }),
     viewerReport: t.field({
@@ -428,8 +430,7 @@ builder.node(EventRef, {
       description: 'True when the viewer is owner or manager of this event.',
       resolve: async (e, _args, ctx) => {
         if (!ctx.actor) return false;
-        const { identity } = await import('../../identity/index.js');
-        const grant = await identity.grantsFor(ctx.actor.userId, e.id);
+        const grant = await ctx.loaders.grant.load({ userId: ctx.actor.userId, eventId: e.id });
         return grant?.role === 'owner' || grant?.role === 'manager';
       },
     }),

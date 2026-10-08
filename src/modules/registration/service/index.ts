@@ -44,6 +44,7 @@ import {
   type RegistrationStatus,
 } from './transitions.js';
 import { offerExpiresAt } from './waitlist.js';
+import { memo } from '../../../platform/requestCache.js';
 
 export { LIVE_STATUSES, REGISTRATION_STATUSES, SEATED_STATUSES, canTransition } from './transitions.js';
 export type { RegistrationStatus } from './transitions.js';
@@ -336,6 +337,22 @@ export function createRegistrationService(deps: RegistrationDeps) {
     };
   };
 
+  /** Speed — `hydrate` for a list: every row's live hold in one query, not one read per row. */
+  const hydrateMany = async (rows: RegistrationRow[]): Promise<Registration[]> => {
+    if (rows.length === 0) return [];
+    const [holds, positions] = await Promise.all([
+      repo.liveHoldsFor(rows.map((r) => r.id)),
+      Promise.all(rows.map((r) => (r.status === 'waitlisted' ? repo.waitlistPosition(r.id) : null))),
+    ]);
+    return rows.map((row, i) => ({
+      ...row,
+      status: row.status as RegistrationStatus,
+      paymentMode: row.paymentMode as PaymentMode,
+      holdExpiresAt: holds.get(row.id)?.expiresAt ?? null,
+      waitlistPosition: positions[i] ?? null,
+    }));
+  };
+
   async function byId(registrationId: string): Promise<Registration> {
     const row = await repo.byId(registrationId);
     if (!row) throw notFound();
@@ -350,7 +367,8 @@ export function createRegistrationService(deps: RegistrationDeps) {
   async function isParticipant(actor: Actor, row: RegistrationRow): Promise<boolean> {
     if (row.captainUserId === actor.userId) return true;
     if (!row.teamId) return false;
-    const members = await repo.teamMembers(row.teamId);
+    const teamId = row.teamId;
+    const members = await memo(`team:members:${teamId}`, () => repo.teamMembers(teamId));
     return members.some((m) => m.userId === actor.userId);
   }
 
@@ -1486,7 +1504,11 @@ export function createRegistrationService(deps: RegistrationDeps) {
    */
   async function checkInToken(actor: Actor, registrationId: string): Promise<string | null> {
     const row = await repo.byId(registrationId);
-    if (!row) return null;
+    return row ? checkInTokenFor(actor, row) : null;
+  }
+
+  /** `checkInToken` for an entry already read. */
+  async function checkInTokenFor(actor: Actor, row: RegistrationRow): Promise<string | null> {
     if (row.status !== 'confirmed' && row.status !== 'checked_in') return null;
     if (!(await isParticipant(actor, row))) return null;
     return signCheckinToken(deps.checkinKeys, row.id);
@@ -1562,7 +1584,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
 
   async function listForUser(userId: string): Promise<Registration[]> {
     const rows = await repo.forUser(userId);
-    return Promise.all(rows.map(hydrate));
+    return hydrateMany(rows);
   }
 
   /**
@@ -1573,7 +1595,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
   async function committedForUser(userId: string): Promise<{ committed: Registration[]; everEntered: boolean }> {
     const rows = await repo.forUser(userId);
     const seated = rows.filter((r) => r.status === 'confirmed' || r.status === 'checked_in');
-    return { committed: await Promise.all(seated.map(hydrate)), everEntered: rows.length > 0 };
+    return { committed: await hydrateMany(seated), everEntered: rows.length > 0 };
   }
 
   /** Organizer view. Gated on the event's staff grant, freshly read. */
@@ -1592,7 +1614,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
       after: page.after ? decodeCursor(page.after) : null,
       limit: first + 1,
     });
-    const nodes = await Promise.all(rows.slice(0, first).map(hydrate));
+    const nodes = await hydrateMany(rows.slice(0, first));
     const last = nodes.at(-1);
     return {
       nodes,
@@ -1604,7 +1626,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
   /** `tournament` calls this to build a draw. */
   async function confirmedForCategory(categoryId: string): Promise<Registration[]> {
     const rows = await repo.confirmedForCategory(categoryId);
-    return Promise.all(rows.map(hydrate));
+    return hydrateMany(rows);
   }
 
   /**
@@ -2023,6 +2045,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
     cancel,
     checkIn,
     checkInToken,
+    checkInTokenFor,
     checkInByToken,
     checkInRoster,
     byId,

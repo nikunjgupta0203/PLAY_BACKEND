@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { logger } from './platform/logging/index.js';
 import { disconnectDb, db } from './platform/db.js';
 import { QUEUES, closeQueues, defaultJobOptions, jobStore, queue, startScheduler, startWorker } from './platform/queue.js';
-import { claimBatch, markFailed, markProcessed } from './platform/outbox.js';
+import { claimBatch, markFailed, markProcessed, prune as pruneOutbox } from './platform/outbox.js';
 import { pruneRateLimits } from './platform/rateLimit.js';
 import { registrationNotifier } from './platform/realtime/registrationUpdates.js';
 import { matchNotifier, supersededScores } from './platform/realtime/matchUpdates.js';
@@ -581,6 +581,7 @@ const SCHEDULES: [string, string, string][] = [
   [QUEUES.rating, 'run-period', '30 21 * * 0'],
   // platform — the queue's own retention.
   [QUEUES.maintenance, 'prune-jobs', '0 4 * * *'],
+  [QUEUES.maintenance, 'prune-outbox', '10 4 * * *'],
   [QUEUES.maintenance, 'prune-rate-limits', '5 * * * *'],
   // admin R8, F26 — fraud detectors, nightly at 03:30 IST.
   [QUEUES.maintenance, 'detect-fraud-signals', '0 22 * * *'],
@@ -974,6 +975,11 @@ export async function startWorkers(): Promise<() => void> {
       case 'prune-jobs': {
         const count = await jobStore.prune();
         if (count > 0) logger.info({ count }, 'pruned finished jobs');
+        return;
+      }
+      case 'prune-outbox': {
+        const count = await pruneOutbox();
+        if (count > 0) logger.info({ count }, 'pruned dispatched outbox rows');
         return;
       }
       case 'prune-rate-limits': {

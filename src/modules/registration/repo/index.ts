@@ -486,6 +486,26 @@ export function createRegistrationRepo(db: Db) {
   }
 
   /** 1-based, among entries still waiting. Null once promoted or gone. */
+  /** Speed — `liveHoldFor` for a list of registrations in one query. Keyed by registration id. */
+  async function liveHoldsFor(registrationIds: readonly string[]): Promise<Map<string, SeatHoldRow>> {
+    if (registrationIds.length === 0) return new Map();
+    const rows = await db.$queryRaw<SeatHoldRow[]>`
+      SELECT DISTINCT ON (registration_id)
+             id,
+             event_category_id AS "eventCategoryId",
+             registration_id AS "registrationId",
+             seats,
+             expires_at AS "expiresAt",
+             released_at AS "releasedAt"
+        FROM seat_holds
+       WHERE registration_id = ANY(${[...registrationIds]}::uuid[])
+         AND released_at IS NULL
+         AND expires_at > now()
+       ORDER BY registration_id, expires_at DESC
+    `;
+    return new Map(rows.map((r) => [r.registrationId, r]));
+  }
+
   async function waitlistPosition(registrationId: string): Promise<number | null> {
     const rows = await db.$queryRaw<{ position: bigint }[]>`
       SELECT (
@@ -640,6 +660,7 @@ export function createRegistrationRepo(db: Db) {
     acquireHold,
     lockCategory,
     liveHoldFor,
+    liveHoldsFor,
     extendHold,
     inCategoryWithStatus,
     holdById,

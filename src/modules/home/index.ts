@@ -16,7 +16,7 @@ export const home = createHomeService<Event, Registration, StatsSnapshot>({
       );
       return page.nodes;
     },
-    byId: (eventId) => events.byId(eventId),
+    byIds: (eventIds) => events.findByIds(eventIds),
   },
   registrations: {
     committedForUser: (userId) => registration.committedForUser(userId),
