@@ -103,12 +103,14 @@ model User {
   displayName         String    @map("display_name")
   /// Cloudinary public_id, never a URL (ADR 0003 §C3).
   avatarPublicId      String?   @map("avatar_public_id")
-  /// active | suspended | deleted. CHECK in the migration.
+  /// active | suspended | deleted | deactivated. CHECK in the migration.
   status              String    @default("active")
   /// F20 — a walk-in with no account: never signs in, never emailed.
   isGuest             Boolean   @default(false) @map("is_guest")
   /// identity R18 — the scrub runs 30 days after this.
   deletionRequestedAt DateTime? @map("deletion_requested_at") @db.Timestamptz(6)
+  /// identity R19 — set while status = 'deactivated'; cleared on reactivation.
+  deactivatedAt       DateTime? @map("deactivated_at") @db.Timestamptz(6)
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -1768,4 +1770,78 @@ model CourtBooking {
   @@index([userId, startsAt(sort: Desc)], map: "court_bookings_user_idx")
   @@index([venueId, startsAt], map: "court_bookings_venue_idx")
   @@map("court_bookings")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// games — casual games (docs/modules/12-games.md). No money, no bracket, no
+// rating. The CHECKs (status, place, capacity) and the gist index on `geo` are
+// in migration 042.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Game {
+  id             String                                 @id @db.Uuid
+  hostUserId     String                                 @map("host_user_id") @db.Uuid
+  sportId        String                                 @map("sport_id") @db.Uuid
+  /// A listed venue, or a pin (`geo` + `place_name`). Never free text alone.
+  venueId        String?                                @map("venue_id") @db.Uuid
+  geo            Unsupported("geography(Point, 4326)")?
+  placeName      String?                                @map("place_name")
+  city           String                                 @default("")
+  startsAt       DateTime                               @map("starts_at") @db.Timestamptz(6)
+  endsAt         DateTime                               @map("ends_at") @db.Timestamptz(6)
+  timezone       String                                 @default("Asia/Kolkata")
+  maxPlayers     Int                                    @map("max_players") @db.SmallInt
+  minPlayers     Int?                                   @map("min_players") @db.SmallInt
+  skillBand      String?                                @map("skill_band")
+  notes          String?
+  /// open | full | cancelled | completed
+  status         String                                 @default("open")
+  cancelReason   String?                                @map("cancel_reason")
+  cancelledAt    DateTime?                              @map("cancelled_at") @db.Timestamptz(6)
+  completedAt    DateTime?                              @map("completed_at") @db.Timestamptz(6)
+  reminderSentAt DateTime?                              @map("reminder_sent_at") @db.Timestamptz(6)
+  createdAt      DateTime                               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                               @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  participants GameParticipant[]
+
+  @@index([hostUserId, startsAt(sort: Desc)], map: "games_host_idx")
+  @@map("games")
+}
+
+model GameParticipant {
+  gameId    String   @map("game_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  /// joined | left | removed
+  status    String   @default("joined")
+  joinedAt  DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@id([gameId, userId])
+  @@index([userId, status], map: "game_participants_user_idx")
+  @@map("game_participants")
+}
+
+model GameInvite {
+  gameId    String   @map("game_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  invitedBy String   @map("invited_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([gameId, userId])
+  @@index([userId], map: "game_invites_user_idx")
+  @@map("game_invites")
+}
+
+model GameComment {
+  id        String   @id @db.Uuid
+  gameId    String   @map("game_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  body      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([gameId, createdAt], map: "game_comments_game_idx")
+  @@map("game_comments")
 }

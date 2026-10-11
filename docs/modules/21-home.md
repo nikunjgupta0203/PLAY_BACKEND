@@ -69,9 +69,11 @@ built yet", which is true. discovery adds it with `extend type` (discovery R4).
 **R1** — One query fills every region of the Home screen. A region that needs a field `HomeFeed`
 lacks is a schema change here, not a second client request.
 
-**R2** — `city` defaults to the viewer's profile city. An explicit `city` browses another city **without
-editing the profile**; the feed echoes back the city it used. `sportId` filters featured events and
-entries to one sport, and selects which sport's stats are shown.
+**R2** — *(changed 2026-10-11)* **Every city by default.** The profile's city is no longer a default:
+until location is properly integrated, Home shows every city's events. An explicit `city` still
+narrows the feed **without editing the profile**, and the feed echoes back the city it used (null for
+every city). `sportId` filters featured events and entries to one sport, and selects which sport's
+stats are shown.
 
 **R3** — The hero is the viewer's **next committed entry** that is not live. When there is none, it
 is the city's soonest discoverable event, which is then not repeated in `featured`. `featured` never

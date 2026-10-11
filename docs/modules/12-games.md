@@ -17,6 +17,32 @@ this gives them something to do in the six weeks between.
 > **2026-09-29:** follows were removed ([chat spec](../superpowers/specs/2026-09-29-chat-design.md)). Wherever this doc says *follows*,
 > *followers* or *friends*, read **played with** (profile R10) until this module is re-specified.
 
+> **2026-10-11 — built as "Create Game Flow v2".** What shipped (migration 042, `src/modules/games`,
+> `tests/games.test.ts`) follows the v2 product spec, not every line below. The rules as the code
+> and tests number them:
+>
+> | | |
+> |---|---|
+> | **R1** | The host is a player from the first moment; a game is never empty. |
+> | **R2** | Capacity is a count under a row lock. No holds, no approval: joining is automatic while a place is free. |
+> | **R3** | `open` → `full` at the last place; back to `open` when a player leaves, is removed, or the maximum is raised. |
+> | **R4** | The host cannot leave (`HOST_CANNOT_LEAVE`); cancelling is how a host walks away. |
+> | **R5** | A removed player cannot rejoin (`GAME_REMOVED`) and is not offered the game in Discover. |
+> | **R6** | `completed` once `ends_at` passes: read that way at once, written by `sweep-games` every minute. The host may also mark it played once it has started. |
+> | **R7** | A new time or place is told to every joined player. Other edits are silent. |
+> | **R8** | The host's contact number and the comment thread are for joined players only. |
+> | **R9** | A game is at a listed venue, or at a pin with a name. Never free text alone. |
+> | **R10** | One reminder, an hour before the start; moving the start arms it again. It overrides quiet hours. |
+> | **R11** | Invites are the host's, to reachable accounts only. `playerByPhone` finds an account by the contact number it gave (rate limited). |
+>
+> Statuses: `open · full · cancelled · completed`. Notifications: `game.invite`, `game.player_joined`,
+> `game.full`, `game.changed`, `game.cancelled`, `game.reminder` — nothing else.
+>
+> **Not built, on purpose (v2 §6):** waitlist, ratings and match scores, recurring games (series),
+> no-show penalties. `left` and `removed` rows are kept in `game_participants`, which is the no-show
+> data to look at before deciding on penalties. Open play, community games and visibility (R3, R8–R12
+> below) are also not built. `Game` is a plain type, not a `Node`.
+
 ---
 
 ## Service interface

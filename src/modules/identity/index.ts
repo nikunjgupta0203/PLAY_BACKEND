@@ -28,7 +28,7 @@ export const identity = createIdentityService({
   ],
 });
 
-export { IdentityCode, OTP_WINDOWS, highestGrant, normaliseEmail } from './service/index.js';
+export { IdentityCode, OTP_WINDOWS, REACTIVATION_TTL_MINUTES, highestGrant, normaliseEmail } from './service/index.js';
 export type {
   DeletionGuard,
   Grant,

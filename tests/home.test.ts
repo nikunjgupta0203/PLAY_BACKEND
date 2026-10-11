@@ -152,14 +152,16 @@ describe('home — Done when: one query fills every region', () => {
 });
 
 describe('home — rules', () => {
-  it('R2: city defaults to the profile, and an explicit city browses another without editing it', async () => {
+  it('R2: every city by default, and an explicit city narrows the feed without editing the profile', async () => {
     const player = await makePlayer('Ravi', 'Pune');
-    const pune = await publishedEvent({ city: 'Pune' });
-    const blr = await publishedEvent({ city: 'Bengaluru' });
+    const pune = await publishedEvent({ city: 'Pune', startsInDays: 9 });
+    const blr = await publishedEvent({ city: 'Bengaluru', startsInDays: 5 });
 
+    // The profile's city is not a filter: the soonest event anywhere leads.
     const own = await home.feed(player.actor, {});
-    expect(own.city).toBe('Pune');
-    expect(own.hero?.event.id).toBe(pune.eventId);
+    expect(own.city).toBeNull();
+    expect(own.hero?.event.id).toBe(blr.eventId);
+    expect(own.featured.map((e) => e.id)).toContain(pune.eventId);
 
     const away = await home.feed(player.actor, { city: 'Bengaluru' });
     expect(away.city).toBe('Bengaluru');
@@ -171,17 +173,17 @@ describe('home — rules', () => {
     const player = await makePlayer('Mira', 'Egyara');
     const elsewhere = await publishedEvent({ city: 'Ahmedabad' });
 
-    const feed = await home.feed(player.actor, {});
+    const feed = await home.feed(player.actor, { city: 'Egyara' });
 
     expect(feed.city).toBe('Egyara');
     expect(feed.hero?.event.id).toBe(elsewhere.eventId);
   });
 
   it('R2: a city under another spelling is the same city', async () => {
-    const player = await makePlayer('Dev', 'bangalore ');
+    const player = await makePlayer('Dev', 'Pune');
     const blr = await publishedEvent({ city: 'Bengaluru' });
 
-    const feed = await home.feed(player.actor, {});
+    const feed = await home.feed(player.actor, { city: 'bangalore ' });
 
     expect(feed.hero?.event.id).toBe(blr.eventId);
   });

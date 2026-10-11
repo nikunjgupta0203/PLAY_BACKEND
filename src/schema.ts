@@ -21,6 +21,7 @@ import './modules/organizers/schema/index.js';
 import './modules/organizers/schema/hosting.js';
 import './modules/organizers/schema/analytics.js';
 import './modules/bookings/schema/index.js';
+import './modules/games/schema/index.js';
 import './modules/admin/schema/index.js';
 import './modules/admin/schema/queues.js';
 

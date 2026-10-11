@@ -156,6 +156,8 @@ export interface ChatDeps {
   sharedPlay: SharedPlayPort;
   limiter: LimiterPort;
   realtime?: TypingPort;
+  /** identity R19 — false for an account that is deactivated, suspended or deleted. */
+  isReachable?(userId: string): Promise<boolean>;
   now?: () => Date;
 }
 
@@ -537,6 +539,8 @@ export function createChatService(deps: ChatDeps) {
       limiter.consume(`chat:msg:${actor.userId}`, MESSAGE_WINDOW),
     ]);
     if (sender.id === input.playerId || !recipient) throw cannotMessage();
+    // identity R19 — a deactivated account takes no new messages or requests.
+    if (deps.isReachable && !(await deps.isReachable(recipient.userId))) throw cannotMessage();
 
     const [low, high] = pair(sender.id, recipient.id);
     // Shared play is asked alongside rather than after: it can only matter when

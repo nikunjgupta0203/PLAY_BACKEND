@@ -24,6 +24,10 @@ export const chat = createChatService({
     },
   },
   limiter: { consume },
+  async isReachable(userId) {
+    const { identity } = await import('../identity/index.js');
+    return !(await identity.inactiveUserIds([userId])).has(userId);
+  },
   // R14 — "typing…" goes straight out; it is never stored or queued.
   realtime,
 });

@@ -515,4 +515,82 @@ describe('identity — platform roles, organizer grants and account deletion', (
     expect(await identity.scrubDeletedUsers()).toBe(0);
     expect((await signUp('gone@example.com')).isNewUser).toBe(true);
   });
+
+  it('R19: deactivating ends every session, keeps the account and its data, and is never scrubbed', async () => {
+    await signUp('resting@example.com');
+    const user = await prisma.user.findFirstOrThrow();
+    await identity.setPhone(user.id, '+919876543210');
+
+    await identity.deactivateAccount({ userId: user.id });
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.status).toBe('deactivated');
+    expect(row.deactivatedAt).not.toBeNull();
+    expect(row.deletionRequestedAt).toBeNull();
+    expect(row.phoneE164).toBe('+919876543210');
+    expect(await prisma.refreshToken.count({ where: { revokedAt: null } })).toBe(0);
+    expect(await prisma.playerProfile.count({ where: { userId: user.id } })).toBe(1);
+    expect(await prisma.outbox.count({ where: { topic: 'user.deactivated' } })).toBe(1);
+
+    // However long it stays deactivated, the scrub never touches it.
+    await prisma.user.update({ where: { id: user.id }, data: { deactivatedAt: new Date(Date.now() - 400 * 86_400_000) } });
+    expect(await identity.scrubDeletedUsers()).toBe(0);
+    expect((await identity.inactiveUserIds([user.id])).has(user.id)).toBe(true);
+  });
+
+  it('R19: signing in to a deactivated account gives a reactivation token, not a session', async () => {
+    await signUp('back@example.com');
+    const user = await prisma.user.findFirstOrThrow();
+    await identity.deactivateAccount({ userId: user.id });
+
+    // The code is still sent: signing in is how the account comes back.
+    await identity.requestOtp('back@example.com', 'login');
+    const refused = await identity.verifyOtp('back@example.com', mail.lastCode()).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: IdentityCode.ACCOUNT_DEACTIVATED });
+    const token = String((refused as { details?: { reactivationToken?: string } }).details?.reactivationToken);
+    expect(token.length).toBeGreaterThan(20);
+    expect(await prisma.refreshToken.count({ where: { revokedAt: null } })).toBe(0);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).status).toBe('deactivated');
+
+    const pair = await identity.reactivateAccount(token);
+    expect(pair.isNewUser).toBe(false);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.status).toBe('active');
+    expect(row.deactivatedAt).toBeNull();
+    // The same account: no second user, no second profile.
+    expect(await prisma.user.count()).toBe(1);
+    expect(await prisma.playerProfile.count()).toBe(1);
+    expect(await prisma.outbox.count({ where: { topic: 'user.reactivated' } })).toBe(1);
+  });
+
+  it('R19: a reactivation token works once, and a wrong one never does', async () => {
+    await signUp('once@example.com');
+    const user = await prisma.user.findFirstOrThrow();
+    await identity.deactivateAccount({ userId: user.id });
+    await identity.requestOtp('once@example.com', 'login');
+    const refused = await identity.verifyOtp('once@example.com', mail.lastCode()).catch((e: unknown) => e);
+    const token = String((refused as { details: { reactivationToken: string } }).details.reactivationToken);
+
+    await expect(identity.reactivateAccount('not-the-token')).rejects.toMatchObject({
+      code: IdentityCode.REACTIVATION_EXPIRED,
+    });
+    await identity.reactivateAccount(token);
+    await expect(identity.reactivateAccount(token)).rejects.toMatchObject({
+      code: IdentityCode.REACTIVATION_EXPIRED,
+    });
+  });
+
+  it('R19: a reactivation token is not a sign-in code', async () => {
+    await signUp('mix@example.com');
+    const user = await prisma.user.findFirstOrThrow();
+    await identity.deactivateAccount({ userId: user.id });
+    await identity.requestOtp('mix@example.com', 'login');
+    await identity.verifyOtp('mix@example.com', mail.lastCode()).catch(() => undefined);
+
+    // The newest challenge for this email is now the reactivation row; verifyOtp must not read it.
+    await expect(identity.verifyOtp('mix@example.com', '000000')).rejects.toMatchObject({
+      code: IdentityCode.OTP_INVALID,
+    });
+    expect(await prisma.otpChallenge.count({ where: { purpose: 'reactivation', consumedAt: null } })).toBe(1);
+  });
 });

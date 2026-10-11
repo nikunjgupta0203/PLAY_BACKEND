@@ -82,9 +82,9 @@ builder.queryFields((t) => ({
   home: t.field({
     type: HomeFeedRef,
     description:
-      'Fills the entire Home screen (home R1). `city` defaults to the viewer\'s profile ' +
-      'city; passing one browses without editing the profile (home R2). Signed-out ' +
-      'viewers get the city shelf only.',
+      'Fills the entire Home screen (home R1). Every city\'s events unless `city` is ' +
+      'passed; the profile\'s city is not a default (home R2). Signed-out viewers get ' +
+      'the shelf only.',
     args: {
       city: t.arg.string(),
       sportId: t.arg.id(),

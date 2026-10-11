@@ -123,6 +123,18 @@ export interface TemplatePayloads {
     change: 'added' | 'owner' | 'removed' | 'suspended' | 'reinstated';
     role?: 'owner' | 'admin' | 'member' | null;
   };
+  /** games — the host asked this player to a casual game. */
+  'game.invite': { hostName: string; sportName: string; placeName: string; startsAt: string };
+  /** games — to the host: someone took a place. */
+  'game.player_joined': { playerName: string; sportName: string; startsAt: string; joined: number; maxPlayers: number };
+  /** games — to the host and every player: the last place went. */
+  'game.full': { sportName: string; placeName: string; startsAt: string };
+  /** games — to every joined player: the host moved the time or the place. */
+  'game.changed': { sportName: string; placeName: string; startsAt: string; timeChanged: boolean; placeChanged: boolean };
+  /** games — to every joined player. `reason` is the host's own words. */
+  'game.cancelled': { sportName: string; placeName: string; startsAt: string; reason?: string | null };
+  /** games — one hour before the start, to the host and every player. */
+  'game.reminder': { sportName: string; placeName: string; startsAt: string };
 }
 
 export type TemplateKey = keyof TemplatePayloads;
@@ -132,6 +144,26 @@ interface Template<P> {
   /** R3 — only a player standing on a court outranks quiet hours. */
   overridesQuietHours?: boolean;
 }
+
+/**
+ * identity R19 — what a deactivated account is still pushed: money, and a
+ * change to something they paid to be in. Everything else waits in the feed.
+ */
+const ESSENTIAL = new Set<TemplateKey>([
+  'registration.confirmed',
+  'registration.expired',
+  'payment.updated',
+  'event.cancelled',
+  'event.changed',
+  'category.cancelled',
+  'waitlist.offer',
+  'booking.confirmed',
+  'booking.cancelled',
+  'payout.status',
+  'payout_account.status',
+]);
+
+export const isEssential = (key: string): boolean => ESSENTIAL.has(key as TemplateKey);
 
 const rupees = (paise: string | null): string =>
   paise === null ? '' : ` ₹${(Number(paise) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -406,6 +438,49 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
           };
       }
     },
+  },
+  'game.invite': {
+    render: (p) => ({
+      title: `${p.hostName} invited you to play`,
+      body: `${p.sportName} at ${p.placeName} · ${istWhen(p.startsAt)}. Open it to join.`,
+    }),
+  },
+  'game.player_joined': {
+    render: (p) => ({
+      title: `${p.playerName} joined your game`,
+      body: `${p.sportName} · ${istWhen(p.startsAt)}. ${p.joined} of ${p.maxPlayers} players are in.`,
+    }),
+  },
+  'game.full': {
+    render: (p) => ({
+      title: 'Your game is full',
+      body: `${p.sportName} at ${p.placeName} · ${istWhen(p.startsAt)}. Every place is taken.`,
+    }),
+  },
+  'game.changed': {
+    render: (p) => {
+      const what = p.timeChanged && p.placeChanged ? 'time and place' : p.timeChanged ? 'time' : 'place';
+      return {
+        title: `The ${what} of your game changed`,
+        body: `${p.sportName} is now at ${p.placeName} · ${istWhen(p.startsAt)}. Leave the game if it no longer works for you.`,
+      };
+    },
+  },
+  'game.cancelled': {
+    render: (p) => ({
+      title: 'Game cancelled',
+      body: p.reason
+        ? `${p.sportName} at ${p.placeName} · ${istWhen(p.startsAt)} was cancelled: “${p.reason}”.`
+        : `${p.sportName} at ${p.placeName} · ${istWhen(p.startsAt)} was cancelled by the host.`,
+    }),
+  },
+  'game.reminder': {
+    // A 6:30 am game's reminder is due at 5:30: held to 7:00 it would arrive late.
+    overridesQuietHours: true,
+    render: (p) => ({
+      title: 'Your game starts in an hour',
+      body: `${p.sportName} at ${p.placeName} · ${istWhen(p.startsAt)}.`,
+    }),
   },
 };
 

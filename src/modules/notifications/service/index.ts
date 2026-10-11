@@ -18,6 +18,7 @@ import type { PushGateway, PushTicket } from '../../../platform/push.js';
 import {
   DEEP_LINK_ROUTES,
   inQuietHours,
+  isEssential,
   isTemplateKey,
   overridesQuietHours,
   quietHoursEnd,
@@ -65,6 +66,8 @@ export type Delivery =
   | 'push_disabled'
   | 'muted'
   | 'quiet_hours'
+  /** identity R19 — a deactivated account is pushed only what is essential. */
+  | 'account_paused'
   | 'already_read'
   | 'missing';
 
@@ -80,6 +83,8 @@ export interface NotificationsDeps {
   enqueueReceiptCheck(tickets: PushTicket[]): Promise<void>;
   /** Best-effort badge hint on private-user-{id}. Never fails an emit. */
   announce(userIds: string[]): Promise<void>;
+  /** identity R19 — the accounts among these whose non-essential pushes are paused. */
+  paused?(userIds: string[]): Promise<Set<string>>;
   now?: () => Date;
 }
 
@@ -224,9 +229,10 @@ export function createNotificationsService(deps: NotificationsDeps) {
     for (const id of notificationIds) if (!found.has(id)) out[id] = 'missing';
 
     const userIds = [...new Set(rows.map((r) => r.userId))];
-    const [prefRows, devices] = await Promise.all([
+    const [prefRows, devices, paused] = await Promise.all([
       db.notificationPreferences.findMany({ where: { userId: { in: userIds } } }),
       db.deviceRegistration.findMany({ where: { userId: { in: userIds } } }),
+      deps.paused ? deps.paused(userIds) : new Set<string>(),
     ]);
     const prefs = new Map(prefRows.map((p) => [p.userId, p]));
     const tokens = new Map<string, string[]>();
@@ -254,6 +260,11 @@ export function createNotificationsService(deps: NotificationsDeps) {
       // buzzing the phone about it now is noise.
       if (row.readAt) {
         out[row.id] = 'already_read';
+        continue;
+      }
+      // identity R19 — the feed row stays; only the buzz is held back.
+      if (paused.has(row.userId) && !isEssential(row.template)) {
+        out[row.id] = 'account_paused';
         continue;
       }
       const p = prefs.get(row.userId);

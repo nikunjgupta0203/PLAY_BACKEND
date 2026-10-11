@@ -42,10 +42,19 @@ export const IdentityCode = {
   ACCOUNT_DELETION_BLOCKED: 'ACCOUNT_DELETION_BLOCKED',
   /** portal R1 — the code was right, but the portal is for PL4Y staff. */
   NOT_STAFF: 'NOT_STAFF',
+  /** R19 — the code was right, but the account is deactivated. `details.reactivationToken` brings it back. */
+  ACCOUNT_DEACTIVATED: 'ACCOUNT_DEACTIVATED',
+  /** R19 — the reactivation token was used already, or ran out. */
+  REACTIVATION_EXPIRED: 'REACTIVATION_EXPIRED',
 } as const;
+
+/** R19 — how long a person has to answer "reactivate?" after proving their email. */
+export const REACTIVATION_TTL_MINUTES = 15;
 
 /** `payout_change` — gap #25: a fresh code before verified bank details are replaced. Never signs anyone in. */
 export type OtpPurpose = 'signup' | 'login' | 'email_change' | 'payout_change';
+/** Challenge rows that are not sign-in codes: `verifyOtp` never reads them. */
+const NOT_SIGN_IN = ['payout_change', 'reactivation'];
 export type StaffRole = 'owner' | 'manager' | 'scorer';
 /** R16 — where a grant came from. */
 export type GrantSource = 'direct' | 'organizer';
@@ -213,7 +222,8 @@ export function createIdentityService(deps: IdentityDeps) {
         'We cannot deliver email to that address. Please check it or use another.',
       );
     }
-    if (existing && existing.status !== 'active') {
+    // R19 — a deactivated account still gets its code: signing in is how it comes back.
+    if (existing && existing.status !== 'active' && existing.status !== 'deactivated') {
       // R8 — surfaced as a generic invalid so a suspended account is not
       // distinguishable from a wrong address at this step. A deleted one
       // (R18) is treated the same until it is scrubbed.
@@ -273,11 +283,12 @@ export function createIdentityService(deps: IdentityDeps) {
         if (client === 'app') await runSignInHooks(user.id, address);
         return { ...pair, isNewUser: false };
       }
+      if (user && user.status === 'deactivated' && client === 'app') throw await deactivated(address);
     }
 
     const challenge = await db.otpChallenge.findFirst({
       // gap #25 — a step-up code confirms an action; it never signs anyone in.
-      where: { email: address, consumedAt: null, purpose: { not: 'payout_change' } },
+      where: { email: address, consumedAt: null, purpose: { notIn: NOT_SIGN_IN } },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -329,7 +340,7 @@ export function createIdentityService(deps: IdentityDeps) {
 
     // R9 — user and profile are created in one transaction. A user without a
     // profile is not a state the system can be in.
-    const { userId, isNewUser } = await db.$transaction(async (tx) => {
+    const { userId, isNewUser, isDeactivated } = await db.$transaction(async (tx) => {
       await tx.otpChallenge.update({
         where: { id: challenge.id },
         data: { consumedAt: at },
@@ -337,10 +348,12 @@ export function createIdentityService(deps: IdentityDeps) {
 
       const found = await tx.user.findUnique({ where: { email: address } });
       if (found) {
+        // R19 — the code is spent either way; the answer is a question, not a session.
+        if (found.status === 'deactivated') return { userId: found.id, isNewUser: false, isDeactivated: true };
         if (found.status !== 'active') {
           throw new UserError(IdentityCode.ACCOUNT_SUSPENDED, 'This account is unavailable.');
         }
-        return { userId: found.id, isNewUser: false };
+        return { userId: found.id, isNewUser: false, isDeactivated: false };
       }
 
       const created = await tx.user.create({
@@ -355,8 +368,9 @@ export function createIdentityService(deps: IdentityDeps) {
         topic: 'user.created',
         payload: { userId: created.id },
       });
-      return { userId: created.id, isNewUser: true };
+      return { userId: created.id, isNewUser: true, isDeactivated: false };
     });
+    if (isDeactivated) throw await deactivated(address);
 
     const pair = await issueSession(userId, deviceLabel);
     await runSignInHooks(userId, address);
@@ -597,6 +611,97 @@ export function createIdentityService(deps: IdentityDeps) {
         payload: { userId: actor.userId },
       });
     });
+  }
+
+  // --- deactivation (R19) -------------------------------------------------------
+
+  /**
+   * R19 — temporary, and the player's own choice. The status moves and every
+   * session ends; the profile, ratings, match history and entries are not
+   * touched. No guard runs: a paid entry stays paid and stays entered, and
+   * nothing here is scrubbed later.
+   */
+  async function deactivateAccount(actor: { userId: string }): Promise<void> {
+    await db.$transaction(async (tx) => {
+      const moved = await tx.user.updateMany({
+        where: { id: actor.userId, status: 'active', isGuest: false },
+        data: { status: 'deactivated', deactivatedAt: now() },
+      });
+      if (moved.count === 0) return;
+      await tx.refreshToken.updateMany({
+        where: { userId: actor.userId, revokedAt: null },
+        data: { revokedAt: now() },
+      });
+      await outboxWrite(tx, { topic: 'user.deactivated', payload: { userId: actor.userId } });
+    });
+  }
+
+  /**
+   * R19 — the right code for a deactivated account. No session yet: the app
+   * asks "reactivate?" first and comes back with this single-use token. It
+   * rides in the challenge table (purpose `reactivation`), stored hashed like
+   * a refresh token, so purge-expired-otp tidies it up.
+   */
+  async function deactivated(address: string): Promise<UserError> {
+    const { token, hash } = tokens.newRefreshToken();
+    await db.otpChallenge.create({
+      data: {
+        id: newId(),
+        email: address,
+        codeHash: hash,
+        purpose: 'reactivation',
+        expiresAt: new Date(now().getTime() + REACTIVATION_TTL_MINUTES * 60_000),
+      },
+    });
+    return new UserError(IdentityCode.ACCOUNT_DEACTIVATED, 'This account is deactivated.', {
+      details: { reactivationToken: token },
+    });
+  }
+
+  /**
+   * R19 — the same account comes back: same user row, same profile, nothing
+   * recreated. The token is single use and only ever issued after a correct
+   * sign-in code, so holding it proves the email.
+   */
+  async function reactivateAccount(reactivationToken: string, deviceLabel?: string): Promise<SessionPair> {
+    const expired = () =>
+      new UserError(IdentityCode.REACTIVATION_EXPIRED, 'That took too long. Sign in again to reactivate your account.');
+    const challenge = await db.otpChallenge.findFirst({
+      where: { codeHash: tokens.hashRefreshToken(reactivationToken), purpose: 'reactivation', consumedAt: null },
+    });
+    if (!challenge || challenge.expiresAt <= now()) throw expired();
+
+    const userId = await db.$transaction(async (tx) => {
+      const spent = await tx.otpChallenge.updateMany({
+        where: { id: challenge.id, consumedAt: null },
+        data: { consumedAt: now() },
+      });
+      if (spent.count === 0) throw expired();
+      const user = await tx.user.findUnique({ where: { email: challenge.email } });
+      // Suspended or deleted while deactivated: reactivation does not undo that.
+      if (!user || (user.status !== 'deactivated' && user.status !== 'active')) {
+        throw new UserError(IdentityCode.ACCOUNT_SUSPENDED, 'This account is unavailable.');
+      }
+      if (user.status === 'deactivated') {
+        await tx.user.update({ where: { id: user.id }, data: { status: 'active', deactivatedAt: null } });
+        await outboxWrite(tx, { topic: 'user.reactivated', payload: { userId: user.id } });
+      }
+      return user.id;
+    });
+
+    const pair = await issueSession(userId, deviceLabel);
+    await runSignInHooks(userId, challenge.email);
+    return { ...pair, isNewUser: false };
+  }
+
+  /** R19 — the accounts among these that other players should not see or reach right now. */
+  async function inactiveUserIds(userIds: string[]): Promise<Set<string>> {
+    if (userIds.length === 0) return new Set();
+    const rows = await db.user.findMany({
+      where: { id: { in: [...new Set(userIds)] }, status: { not: 'active' } },
+      select: { id: true },
+    });
+    return new Set(rows.map((r) => r.id));
   }
 
   /** Composition roots add guards here; see DeletionGuard. */
@@ -874,6 +979,23 @@ export function createIdentityService(deps: IdentityDeps) {
     return row;
   }
 
+  /**
+   * games — the active account that gave this contact number. Numbers are
+   * stored as typed (R12), so the match is on the last ten digits. Contact
+   * only: this never signs anyone in.
+   */
+  async function findByPhone(phone: string): Promise<{ id: string } | null> {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 10) return null;
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      SELECT id FROM users
+       WHERE status = 'active' AND is_guest = false AND phone_e164 IS NOT NULL
+         AND right(regexp_replace(phone_e164, '[^0-9]', '', 'g'), 10) = ${digits.slice(-10)}
+       ORDER BY created_at
+       LIMIT 1`;
+    return rows[0] ?? null;
+  }
+
   /** ADR 0003 §C3 — a Cloudinary public_id, never a URL. */
   async function setAvatar(userId: string, publicId: string | null): Promise<void> {
     await db.user.update({ where: { id: userId }, data: { avatarPublicId: publicId } });
@@ -907,6 +1029,9 @@ export function createIdentityService(deps: IdentityDeps) {
     suspend,
     reinstate,
     requestAccountDeletion,
+    deactivateAccount,
+    reactivateAccount,
+    inactiveUserIds,
     registerDeletionGuard,
     registerSignInHook,
     scrubDeletedUsers,
@@ -924,6 +1049,7 @@ export function createIdentityService(deps: IdentityDeps) {
     contactsByIds,
     createGuest,
     findByEmail,
+    findByPhone,
     setAvatar,
     setDisplayName,
     recordDeliveryEvent,

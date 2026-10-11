@@ -39,6 +39,8 @@ export interface Loaders {
   venue: DataLoader<string, Venue | null>;
   /** Speed — every player on screen (an inbox row each) in a fixed number of queries. */
   publicProfile: DataLoader<string, PublicProfile | null>;
+  /** Speed — the same card, asked for by user id (a game's players are users). */
+  publicProfileByUser: DataLoader<string, PublicProfile | null>;
   /** Speed — an inbox page's last messages in one query. */
   chatLastMessage: DataLoader<string, ChatMessage | null>;
   /** Speed — an inbox page's unread counts in one query. */
@@ -104,6 +106,12 @@ function buildLoaders(actor: Actor | null): Loaders {
       const { profile } = await import('../modules/profile/index.js');
       const found = await profile.publicViews(actor?.userId ?? null, playerIds);
       return playerIds.map((id) => found.get(id) ?? null);
+    }),
+    publicProfileByUser: new DataLoader(async (userIds) => {
+      const { profile } = await import('../modules/profile/index.js');
+      const playerIds = await profile.playerIdsByUserIds(userIds);
+      const found = await profile.publicViews(actor?.userId ?? null, [...playerIds.values()]);
+      return userIds.map((userId) => found.get(playerIds.get(userId) ?? '') ?? null);
     }),
     chatLastMessage: new DataLoader(async (conversationIds) => {
       const { chat } = await import('../modules/chat/index.js');

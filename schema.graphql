@@ -498,6 +498,29 @@ input CreateEventInput {
   venueId: ID
 }
 
+input CreateGameInput {
+  city: String
+  endsAt: DateTime!
+
+  """Players to invite as the game is published. Player ids."""
+  inviteUserIds: [ID!]
+
+  """
+  games R9 — the pin, when the game is not at a listed venue. Needs placeName.
+  """
+  location: GeoPointInput
+  maxPlayers: Int!
+  minPlayers: Int
+  notes: String
+  placeName: String
+  skillBand: String
+  sportId: ID!
+  startsAt: DateTime!
+
+  """A listed venue. Leave out to use a pin."""
+  venueId: ID
+}
+
 input CreateOrganisationInput {
   bio: String
   city: String
@@ -1042,6 +1065,88 @@ enum FraudSubject {
   VENUE
 }
 
+"""A casual game: no fee, no bracket, no rating. Separate from events."""
+type Game {
+  cancelReason: String
+  city: String!
+
+  """
+  games R8 — the thread, oldest first. Empty for anyone who has not joined.
+  """
+  comments: [GameComment!]!
+
+  """Set when the search had a map centre."""
+  distanceKm: Float
+  endsAt: DateTime!
+
+  """True once a minimum was set and reached."""
+  gameOn: Boolean!
+  host: PlayerProfile
+
+  """
+  games R8 — the host’s contact number, for joined players only. Null when the host gave none.
+  """
+  hostPhone: String
+  id: ID!
+
+  """
+  Players the host invited who have not joined yet. Empty for everyone but the host.
+  """
+  invited: [PlayerProfile!]!
+
+  """The venue’s point, or the host’s pin."""
+  location: GeoPoint
+  maxPlayers: Int!
+  minPlayers: Int
+  notes: String
+
+  """The venue’s name, or the name the host gave the pin."""
+  placeName: String!
+  playerCount: Int!
+
+  """Joined players, the host first."""
+  players: [PlayerProfile!]!
+  skillBand: String
+  sport: Sport!
+  spotsLeft: Int!
+  startsAt: DateTime!
+  status: GameStatus!
+  timezone: String!
+  venue: Venue
+  viewerHasJoined: Boolean!
+  viewerIsHost: Boolean!
+  viewerIsInvited: Boolean!
+}
+
+"""games R8 — one line in the joined players’ thread. Plain text."""
+type GameComment {
+  author: PlayerProfile
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+  mine: Boolean!
+}
+
+type GameCommentPayload {
+  comment: GameComment
+  userError: UserError
+}
+
+type GameConnection {
+  edges: [GameEdge!]!
+  pageInfo: PageInfo!
+}
+
+type GameEdge {
+  cursor: String!
+  node: Game!
+}
+
+type GamePayload {
+  game: Game
+  userError: UserError
+}
+
 type GameScore {
   a: Int!
   b: Int!
@@ -1050,6 +1155,16 @@ type GameScore {
 input GameScoreInput {
   a: Int!
   b: Int!
+}
+
+"""
+OPEN — places left. FULL — every place taken. COMPLETED — its end time has passed, or the host marked it played.
+"""
+enum GameStatus {
+  CANCELLED
+  COMPLETED
+  FULL
+  OPEN
 }
 
 input GenerateDrawInput {
@@ -1244,6 +1359,16 @@ input InvitePartnerInput {
 
 type InvitePartnerPayload {
   invite: PartnerInvite
+  userError: UserError
+}
+
+type InviteToGamePayload {
+  game: Game
+
+  """
+  How many were invited now. Players already in, already invited or removed are skipped.
+  """
+  invitedCount: Int!
   userError: UserError
 }
 
@@ -1623,6 +1748,9 @@ type Mutation {
   """
   addEventStaff(email: String!, eventId: ID!, role: EventStaffRole!): EventStaffPayload!
 
+  """games R8 — joined players only."""
+  addGameComment(body: String!, gameId: ID!): GameCommentPayload!
+
   """
   Owner or manager. Seats a player who paid at the desk (OFFLINE) or plays free (COMP), until the draw is made. F20 — by account email, or by name with no account (a guest); a doubles walk-in names both players; a team walk-in names its captain, and optionally its name and teammates (N14). No money moves through PL4Y for it.
   """
@@ -1739,6 +1867,9 @@ type Mutation {
   events R7 — irreversible, and every confirmed registration is refunded in full, platform fee included.
   """
   cancelEvent(eventId: ID!, reason: String!): EventPayload!
+
+  """Host only. Every joined player is told."""
+  cancelGame(gameId: ID!, reason: String): GamePayload!
   cancelOrganisationInvite(inviteId: ID!): OrganisationOkPayload!
 
   """
@@ -1763,6 +1894,11 @@ type Mutation {
   closeEventRegistration(eventId: ID!): EventPayload!
 
   """
+  Host only, once the game has started. A game also completes by itself when its end time passes.
+  """
+  completeGame(gameId: ID!): GamePayload!
+
+  """
   R6 — the other side, or an owner/manager 15 minutes after submission (at once when disputed). Advances the bracket.
   """
   confirmMatchResult(matchId: ID!): MatchResultPayload!
@@ -1781,6 +1917,11 @@ type Mutation {
   Creates a draft. Publishing is the validation gate (events R1). PL4Y staff use adminCreateEvent.
   """
   createEvent(input: CreateEventInput!): EventPayload!
+
+  """
+  Publishes a casual game at once. The host is its first player (games R1).
+  """
+  createGame(input: CreateGameInput!): GamePayload!
 
   """
   A heat of every confirmed entry in a field category. Owners and managers only.
@@ -1806,6 +1947,11 @@ type Mutation {
   bookings R8 — the desk books a court for someone in person or on the phone. Same constraint, no bypass.
   """
   createWalkInBooking(input: WalkInBookingInput!): CourtBookingPayload!
+
+  """
+  identity R19 — temporary. Ends every session and hides the profile; ratings, history, entries and payments are kept. Signing in again offers to reactivate. Permanent deletion is requestAccountDeletion.
+  """
+  deactivateAccount: OkPayload!
   declineMessageRequest(conversationId: ID!): ConversationPayload!
   declinePartnerInvite(token: String!): RegistrationPayload!
 
@@ -1848,9 +1994,24 @@ type Mutation {
   invitePartner(input: InvitePartnerInput!): InvitePartnerPayload!
 
   """
+  Host only. Each invited player gets a notification that opens the game.
+  """
+  inviteToGame(gameId: ID!, playerIds: [ID!]!): InviteToGamePayload!
+
+  """
+  Automatic while a place is free: no approval. GAME_FULL, GAME_CLOSED, GAME_REMOVED, ALREADY_JOINED.
+  """
+  joinGame(gameId: ID!): GamePayload!
+
+  """
   registration R17 — queue for a full draw. Holds no seat. A doubles team is queued when the partner accepts, so for doubles this returns a DRAFT to invite from.
   """
   joinWaitlist(eventCategoryId: ID!): RegistrationPayload!
+
+  """
+  A full game is open again. The host cannot leave: HOST_CANNOT_LEAVE — cancel instead.
+  """
+  leaveGame(gameId: ID!): GamePayload!
 
   """org R9 — your own events stay yours."""
   leaveOrganisation(organisationId: ID!): OrganisationOkPayload!
@@ -1883,6 +2044,11 @@ type Mutation {
   events R1 — needs at least one category, a city or venue, a registration window that closes by the start, a future start, a contact phone and accepted hosting terms. A paid category also needs a verified host (ORGANIZER_NOT_VERIFIED).
   """
   publishEvent(eventId: ID!): EventPayload!
+
+  """
+  identity R19 — brings a deactivated account back and signs the player in. Nothing is recreated: same profile, ratings and history.
+  """
+  reactivateAccount(deviceLabel: String, reactivationToken: String!): SessionPayload!
 
   """
   Scoring R1–R5 for a heat. SCORE_STALE and INVALID_EVENT come back with the heat.
@@ -1939,6 +2105,9 @@ type Mutation {
   """
   removeEventCourt(courtId: ID!, eventId: ID!): OrganizerOkPayload!
   removeEventStaff(eventId: ID!, userId: ID!): EventStaffPayload!
+
+  """Host only. The removed player cannot rejoin (games R5)."""
+  removeGamePlayer(gameId: ID!, playerId: ID!): GamePayload!
   removeOrganisationMember(organisationId: ID!, userId: ID!): OrganisationOkPayload!
 
   """
@@ -2077,6 +2246,11 @@ type Mutation {
   updateEventCategory(categoryId: ID!, input: UpdateEventCategoryInput!): EventCategoryPayload!
 
   """
+  Host only. A new time or place notifies every joined player (games R7).
+  """
+  updateGame(input: UpdateGameInput!): GamePayload!
+
+  """
   The owner or an admin: logo, description, city and contact. Not the name.
   """
   updateOrganisation(input: OrganisationDetailsInput!, organisationId: ID!): OrganisationPayload!
@@ -2161,6 +2335,12 @@ enum NotificationKind {
   EVENT_CANCELLED
   EVENT_CHANGED
   EVENT_REPORT_RESOLVED
+  GAME_CANCELLED
+  GAME_CHANGED
+  GAME_FULL
+  GAME_INVITE
+  GAME_PLAYER_JOINED
+  GAME_REMINDER
   HOST_DRAW_CANCELLED
   HOST_DRAW_MADE
   HOST_DRAW_SHORT
@@ -2623,6 +2803,14 @@ type PlayedWith {
   player: PlayerProfile!
 }
 
+type PlayerByPhonePayload {
+  """
+  Null when nobody on PL4Y gave that number: invite them with a link instead.
+  """
+  player: PlayerProfile
+  userError: UserError
+}
+
 type PlayerConnection {
   edges: [PlayerEdge!]!
   pageInfo: PageInfo!
@@ -2833,19 +3021,42 @@ type Query {
   """
   events(after: String, before: String, filter: EventFilter, first: Int, last: Int): EventConnection!
   fieldCategory(eventCategoryId: ID!): FieldCategory!
+  game(id: ID!): Game
+
+  """
+  Discover Games: open and full games that have not ended, soonest first. Filters: sport, dates, distance (capped at 50 km).
+  """
+  games(
+    after: String
+    before: String
+    first: Int
+    from: DateTime
+    last: Int
+    near: GeoPointInput
+    radiusKm: Float
+    sportId: ID
+
+    """Exclusive."""
+    to: DateTime
+  ): GameConnection!
   heat(id: ID!): Heat
 
   """A field category’s heats, oldest first."""
   heats(eventCategoryId: ID!): [Heat!]!
 
   """
-  Fills the entire Home screen (home R1). `city` defaults to the viewer's profile city; passing one browses without editing the profile (home R2). Signed-out viewers get the city shelf only.
+  Fills the entire Home screen (home R1). Every city's events unless `city` is passed; the profile's city is not a default (home R2). Signed-out viewers get the shelf only.
   """
   home(city: String, sportId: ID): HomeFeed!
   match(id: ID!): Match
   me: Viewer
   myCourtBookings(first: Int, offset: Int): [CourtBooking!]!
   myEventGrants: [EventGrant!]!
+
+  """
+  My Games: games the viewer hosts, has joined or is invited to (last 90 days on), newest start first.
+  """
+  myGames: [Game!]!
 
   """
   Events the viewer helps run (any grant), drafts included, newest start first.
@@ -2856,6 +3067,9 @@ type Query {
   bookings R7 — venues this person runs: the desk entry in the Hosting tab.
   """
   myManagedVenues: [ManagedVenue!]!
+
+  """Home’s "Next up": the viewer’s next game that has not ended."""
+  myNextGame: Game
   myPayoutAccount: PayoutAccount
   myPayouts(after: String, before: String, first: Int, last: Int): PayoutConnection!
 
@@ -2896,6 +3110,11 @@ type Query {
   Manual payouts — "Ready to pay": send each from PL4Y’s bank, then markPayoutPaid. Oldest first.
   """
   payoutsToPay: [Payout!]!
+
+  """
+  The invite screen’s "is this number on PL4Y?". Matches the contact number a player gave. Rate limited (LOOKUP_LIMIT).
+  """
+  playerByPhone(phone: String!): PlayerByPhonePayload!
   playerProfile(id: ID!): PlayerProfile
 
   """The settled rating for one player in one sport."""
@@ -3463,6 +3682,10 @@ type Session {
 }
 
 type SessionPayload {
+  """
+  identity R19 — set with userError ACCOUNT_DEACTIVATED: the code was right and the account is deactivated. Ask the player, then pass it to reactivateAccount. Single use, 15 minutes.
+  """
+  reactivationToken: String
   session: Session
   userError: UserError
 }
@@ -3752,6 +3975,36 @@ input UpdateEventInput {
   startsAt: DateTime
   timezone: String
   title: String
+  venueId: ID
+}
+
+"""
+Only what is given changes. A new time or place is told to every joined player (games R7).
+"""
+input UpdateGameInput {
+  city: String
+  endsAt: DateTime
+  gameId: ID!
+
+  """
+  games R9 — the pin, when the game is not at a listed venue. Needs placeName.
+  """
+  location: GeoPointInput
+  maxPlayers: Int
+
+  """Null clears the minimum."""
+  minPlayers: Int
+
+  """Null clears them."""
+  notes: String
+  placeName: String
+
+  """Null clears it."""
+  skillBand: String
+  sportId: ID
+  startsAt: DateTime
+
+  """A listed venue. Leave out to use a pin."""
   venueId: ID
 }
 

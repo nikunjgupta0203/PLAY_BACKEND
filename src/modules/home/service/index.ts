@@ -74,7 +74,7 @@ export interface HomeFeed<E, R, S> {
   stats: S | null;
   /** home R6 — the viewer has never entered anything. */
   firstRun: boolean;
-  /** The city the feed was built for — the argument, else the profile's (home R2). */
+  /** The city the feed was narrowed to — the argument; null means every city (home R2). */
   city: string | null;
 }
 
@@ -112,9 +112,10 @@ export function createHomeService<
         : Promise.resolve({ committed: [] as R[], everEntered: false }),
     ]);
 
-    // home R2 — an explicit city wins; the profile's is the default. A viewer
-    // browsing another city from the header is not editing their profile.
-    const city = args.city?.trim() || player?.city || null;
+    // home R2 — only an explicit city narrows the feed. The profile's city is
+    // no longer a default: until location is properly integrated, Home shows
+    // every city's events (issue sheet 2026-10-11 #4).
+    const city = args.city?.trim() || null;
 
     // home R4 — committed entries in events that have not finished. Each event
     // is read once even if the viewer holds two entries in it.

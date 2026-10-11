@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inQuietHours, overridesQuietHours, quietHoursEnd, render, TEMPLATES, type TemplateKey } from './templates.js';
+import { inQuietHours, isEssential, overridesQuietHours, quietHoursEnd, render, TEMPLATES, type TemplateKey } from './templates.js';
 
 /** IST is UTC+05:30 with no daylight saving. */
 const ist = (hh: number, mm = 0) => new Date(Date.UTC(2026, 8, 23, hh, mm) - 330 * 60_000);
@@ -20,9 +20,20 @@ describe('notifications — templates', () => {
     expect(quietHoursEnd(ist(6, 59)).toISOString()).toBe(ist(7, 0).toISOString());
   });
 
-  it('notifications R3: only a match starting soon overrides them', () => {
+  it('notifications R3: only something about to start overrides them', () => {
+    // A match starting soon, and a casual game's one-hour reminder: held to
+    // 07:00, the reminder for a 6:30 am game would arrive after it began.
     const overriding = (Object.keys(TEMPLATES) as TemplateKey[]).filter(overridesQuietHours);
-    expect(overriding).toEqual(['match.starting_soon']);
+    expect(overriding).toEqual(['match.starting_soon', 'game.reminder']);
+  });
+
+  it('identity R19: a deactivated account is still pushed money and changes to what it paid for, nothing else', () => {
+    for (const key of ['payment.updated', 'event.cancelled', 'booking.cancelled', 'payout.status'] as TemplateKey[]) {
+      expect(isEssential(key)).toBe(true);
+    }
+    for (const key of ['chat.message', 'game.invite', 'ranking.changed', 'achievement.earned'] as TemplateKey[]) {
+      expect(isEssential(key)).toBe(false);
+    }
   });
 
   it('notifications R4: copy comes from the registry, keyed and typed', () => {

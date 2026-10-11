@@ -63,6 +63,14 @@ beforeAll(async () => {
       receiptChecks.push(tickets);
     },
     async announce() {},
+    // identity R19 — the production port reads users.status; so does this one.
+    async paused(userIds) {
+      const rows = await prisma.user.findMany({
+        where: { id: { in: userIds }, status: 'deactivated' },
+        select: { id: true },
+      });
+      return new Set(rows.map((r) => r.id));
+    },
     now: () => clock,
   });
 });
@@ -100,6 +108,22 @@ describe('notifications', () => {
     expect(sent).toHaveLength(0);
     const feed = await service.feed({ userId: u }, { first: 20 });
     expect(feed.edges.map((e) => e.node.id)).toEqual([n.id]);
+  });
+
+  it('identity R19: a deactivated account is pushed only what is essential, and its feed keeps everything', async () => {
+    const u = await user();
+    await service.registerDevice({ userId: u }, { token: TOKEN('a'), platform: 'android' });
+    await prisma.user.update({ where: { id: u }, data: { status: 'deactivated' } });
+
+    const chat = await service.emit(u, 'chat.message', { fromName: 'Asha', preview: 'Game on Sunday?' }, null);
+    const money = await service.emit(u, 'payment.updated', { eventTitle: 'Open', state: 'refunded', amountPaise: '50000' }, event);
+    expect(await service.deliver([chat.id, money.id])).toEqual({ [chat.id]: 'account_paused', [money.id]: 'sent' });
+    expect(sent.map((m) => m.title)).toEqual(['Refund on its way']);
+    // Nothing is lost: both rows are waiting when the account comes back.
+    expect(await prisma.notification.count({ where: { userId: u } })).toBe(2);
+
+    await prisma.user.update({ where: { id: u }, data: { status: 'active' } });
+    expect(await service.deliver([chat.id])).toEqual({ [chat.id]: 'sent' });
   });
 
   it('notifications R2: a muted kind is not pushed, other kinds are', async () => {

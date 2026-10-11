@@ -19,6 +19,13 @@ export const notifications = createNotificationsService({
     // Expo publishes receipts within about fifteen minutes of the send.
     await queue(QUEUES.notify).add('check-push-receipts', { tickets }, { ...defaultJobOptions, delay: 15 * 60_000 });
   },
+  async paused(userIds) {
+    const rows = await db.user.findMany({
+      where: { id: { in: userIds }, status: 'deactivated' },
+      select: { id: true },
+    });
+    return new Set(rows.map((r) => r.id));
+  },
   async announce(userIds) {
     // The badge hint (client notifications R9). Invalidation only: the app
     // refetches `unreadNotificationCount`. Best-effort, like every publish.

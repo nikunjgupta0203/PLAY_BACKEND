@@ -149,6 +149,25 @@ results are **retained** with the user reference, because financial and competit
 survive (conventions §2). Deletion is refused with `ACCOUNT_DELETION_BLOCKED` while the user has a
 confirmed entry in an upcoming event, or owns an organizer with an unsettled payout.
 
+**R19** *(2026-10-11)* — **Deactivation is temporary and is not deletion.** `deactivateAccount` sets
+`status = 'deactivated'` and revokes every session. Nothing else changes: the profile, ratings, match
+history, entries and payments are kept, no guard runs (a paid entry stays entered), and
+`scrub-deleted-users` never touches the row. While deactivated the account is hidden and unreachable:
+`profile.search`, `recommended` and `publicView` skip it, the rankings board filters it on read (so it
+is back the moment it reactivates), `chat.send` refuses a message to it, and only essential pushes go
+out (payments, and changes to something it paid for; `templates.ts` `ESSENTIAL`) — the feed row is
+still written.
+
+Signing in is how it comes back. `requestOtp` still sends the code; a correct code returns
+`ACCOUNT_DEACTIVATED` with `SessionPayload.reactivationToken` and **no session**. The app asks the
+player, then calls `reactivateAccount(reactivationToken)`: same user row, same profile, nothing
+recreated. The token is single use, 15 minutes, stored hashed in `otp_challenges` under purpose
+`reactivation`, which `verifyOtp` never reads.
+
+The app's Settings row is still labelled *Delete account*. It opens the deactivation screen, and R18's
+permanent deletion stays reachable from that screen, because the stores require an in-app way to
+delete an account and deactivation does not meet that.
+
 ---
 
 ## Schema

@@ -14,6 +14,8 @@ import {
   UserErrorRef,
   type UserErrorShape,
 } from '../../../graphql/userError.js';
+import { isUserError } from '../../../platform/errors/index.js';
+import { IdentityCode } from '../service/index.js';
 
 // ─── types ───────────────────────────────────────────────────────────────────
 
@@ -92,12 +94,19 @@ const RequestOtpPayload = builder
   });
 
 const SessionPayload = builder
-  .objectRef<{ session: SessionShape | null; userError: UserErrorShape | null }>(
+  .objectRef<{ session: SessionShape | null; reactivationToken?: string | null; userError: UserErrorShape | null }>(
     'SessionPayload',
   )
   .implement({
     fields: (t) => ({
       session: t.field({ type: Session, nullable: true, resolve: (p) => p.session }),
+      reactivationToken: t.string({
+        nullable: true,
+        description:
+          'identity R19 — set with userError ACCOUNT_DEACTIVATED: the code was right and the account is deactivated. ' +
+          'Ask the player, then pass it to reactivateAccount. Single use, 15 minutes.',
+        resolve: (p) => p.reactivationToken ?? null,
+      }),
       userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
     }),
   });
@@ -184,9 +193,18 @@ builder.mutationFields((t) => ({
       client: t.arg({ type: AuthClientEnum, defaultValue: 'app' }),
     },
     resolve: async (_root, args) => {
-      const { data, userError } = await attempt(() =>
-        identity.verifyOtp(args.email, args.code, args.deviceLabel ?? undefined, args.client ?? 'app'),
-      );
+      // identity R19 — a deactivated account answers with a token, not a session.
+      let reactivationToken: string | null = null;
+      const { data, userError } = await attempt(async () => {
+        try {
+          return await identity.verifyOtp(args.email, args.code, args.deviceLabel ?? undefined, args.client ?? 'app');
+        } catch (e) {
+          if (isUserError(e) && e.code === IdentityCode.ACCOUNT_DEACTIVATED) {
+            reactivationToken = String(e.details?.['reactivationToken'] ?? '') || null;
+          }
+          throw e;
+        }
+      });
       return {
         session: data
           ? {
@@ -195,8 +213,40 @@ builder.mutationFields((t) => ({
               isNewUser: data.isNewUser,
             }
           : null,
+        reactivationToken,
         userError,
       };
+    },
+  }),
+
+  reactivateAccount: t.field({
+    type: SessionPayload,
+    description:
+      'identity R19 — brings a deactivated account back and signs the player in. Nothing is recreated: same profile, ratings and history.',
+    args: {
+      reactivationToken: t.arg.string({ required: true }),
+      deviceLabel: t.arg.string(),
+    },
+    resolve: async (_root, args) => {
+      const { data, userError } = await attempt(() =>
+        identity.reactivateAccount(args.reactivationToken, args.deviceLabel ?? undefined),
+      );
+      return {
+        session: data ? { accessToken: data.access, refreshToken: data.refresh, isNewUser: false } : null,
+        userError,
+      };
+    },
+  }),
+
+  deactivateAccount: t.field({
+    type: OkPayload,
+    description:
+      'identity R19 — temporary. Ends every session and hides the profile; ratings, history, entries and payments are kept. ' +
+      'Signing in again offers to reactivate. Permanent deletion is requestAccountDeletion.',
+    resolve: async (_root, _args, ctx) => {
+      const actor = requireActor(ctx);
+      await identity.deactivateAccount(actor);
+      return { ok: true };
     },
   }),
 

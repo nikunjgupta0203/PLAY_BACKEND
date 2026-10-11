@@ -331,7 +331,14 @@ export function createRatingRepo(db: Db) {
     page: { after?: number | null; limit: number },
   ): Promise<RankingRow[]> {
     const rows = await db.ranking.findMany({
-      where: { sportId, scope, ...(page.after ? { rank: { gt: page.after } } : {}) },
+      // identity R19 — filtered on read, not in the rebuild: a deactivated player
+      // leaves the board at once and is back on it the moment they reactivate.
+      where: {
+        sportId,
+        scope,
+        player: { user: { status: 'active' } },
+        ...(page.after ? { rank: { gt: page.after } } : {}),
+      },
       orderBy: [{ rank: 'asc' }, { playerId: 'asc' }],
       take: page.limit,
     });

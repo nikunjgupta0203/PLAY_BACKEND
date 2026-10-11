@@ -389,7 +389,15 @@ export function createProfileService(deps: ProfileDeps) {
       viewerUserId ? findByUserId(viewerUserId) : null,
     ]);
     if (!target) return null;
+    // identity R19 — a deactivated (or suspended, or deleted) player's page is
+    // not distinguishable from a missing one. Draws and match history still
+    // name them: those read `publicViews`, and the record is kept.
+    if (target.id !== viewer?.id && !(await isActiveUser(target.userId))) return null;
     return viewOf(target, viewer);
+  }
+
+  async function isActiveUser(userId: string): Promise<boolean> {
+    return (await db.user.count({ where: { id: userId, status: 'active' } })) > 0;
   }
 
   /**
@@ -412,6 +420,16 @@ export function createProfileService(deps: ProfileDeps) {
     for (const a of achievements) byPlayer.set(a.playerId, [...(byPlayer.get(a.playerId) ?? []), a]);
     const targets = await hydrate(rows);
     return new Map(targets.map((t) => [t.id, toPublic(t, viewer, byPlayer.get(t.id) ?? [])]));
+  }
+
+  /** games — a game's players are users; their cards are profiles. One query for the lot. */
+  async function playerIdsByUserIds(userIds: readonly string[]): Promise<Map<string, string>> {
+    if (userIds.length === 0) return new Map();
+    const rows = await db.playerProfile.findMany({
+      where: { userId: { in: [...new Set(userIds)] } },
+      select: { id: true, userId: true },
+    });
+    return new Map(rows.map((r) => [r.userId, r.id]));
   }
 
   /** Speed — the three columns chat needs, in one query instead of three. */
@@ -1070,7 +1088,8 @@ export function createProfileService(deps: ProfileDeps) {
     const rows = await db.playerProfile.findMany({
       where: {
         visibility: { in: visible },
-        ...(term ? { user: { displayName: { contains: term, mode: 'insensitive' } } } : {}),
+        // identity R19 — only active accounts are discoverable.
+        user: { status: 'active', ...(term ? { displayName: { contains: term, mode: 'insensitive' as const } } : {}) },
         ...(opts.sportId ? { sports: { some: { sportId: opts.sportId } } } : {}),
         ...(cursor
           ? {
@@ -1120,6 +1139,7 @@ export function createProfileService(deps: ProfileDeps) {
     const rows = await db.playerProfile.findMany({
       where: {
         visibility: { in: visible },
+        user: { status: 'active' },
         ...(viewer ? { id: { not: viewer.id } } : {}),
         ...(opts.city ? { city: { in: cityVariants(opts.city), mode: 'insensitive' as const } } : {}),
         ...(opts.sportId ? { sports: { some: { sportId: opts.sportId } } } : {}),
@@ -1165,6 +1185,7 @@ export function createProfileService(deps: ProfileDeps) {
     findByUserId,
     publicView,
     publicViews,
+    playerIdsByUserIds,
     briefById,
     briefByUserId,
     assertHasSport,

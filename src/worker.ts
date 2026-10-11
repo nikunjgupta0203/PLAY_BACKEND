@@ -40,6 +40,13 @@ const handlers: Record<string, OutboxHandler> = {
   'user.suspended': async (payload) => {
     logger.info({ payload }, 'outbox: user.suspended');
   },
+  // identity R19 — nothing to fan out: every read checks the account's status.
+  'user.deactivated': async (payload) => {
+    logger.info({ payload }, 'outbox: user.deactivated');
+  },
+  'user.reactivated': async (payload) => {
+    logger.info({ payload }, 'outbox: user.reactivated');
+  },
   // profile (docs/modules/03-profile.md § Emits). rating consumes the first,
   // notifications the second.
   'profile.sports_changed': async (payload) => {
@@ -573,6 +580,8 @@ const SCHEDULES: [string, string, string][] = [
   [QUEUES.registration, 'sweep-stale-holds', '*/5 * * * *'],
   // bookings R3 — lapsed court holds and finished bookings, every minute.
   [QUEUES.registration, 'sweep-bookings', '* * * * *'],
+  // games R6, R10 — games past their end complete; the one-hour reminder goes out.
+  [QUEUES.registration, 'sweep-games', '* * * * *'],
   // payments R9 — turns a lost webhook from a support ticket into a few minutes'
   // delay, inside the seat hold (gap #22).
   [QUEUES.payments, 'reconcile-pending', '*/5 * * * *'],
@@ -707,6 +716,12 @@ export async function startWorkers(): Promise<() => void> {
         const { bookings } = await import('./modules/bookings/index.js');
         const result = await bookings.sweep();
         if (result.expired + result.completed > 0) logger.info(result, 'swept court bookings');
+        return;
+      }
+      case 'sweep-games': {
+        const { games } = await import('./modules/games/index.js');
+        const result = await games.sweep();
+        if (result.completed + result.reminded > 0) logger.info(result, 'swept casual games');
         return;
       }
       case 'expire-invite': {
