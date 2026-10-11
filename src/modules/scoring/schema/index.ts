@@ -756,3 +756,6 @@ builder.mutationFields((t) => ({
   }),
 }));
 import './field.js';
+
+/** Shared with casual-game results: the same score, side and rule types (games R14). */
+export { GameScoreInput, GameScoreRef, MatchSideEnum, ScoringRuleRef };

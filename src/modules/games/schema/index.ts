@@ -15,8 +15,9 @@ import type { PublicProfile } from '../../profile/index.js';
 import { SportRef } from '../../sport/schema/index.js';
 import { sport } from '../../sport/index.js';
 import { VenueRef } from '../../venues/schema/index.js';
-import { gameCursor, games } from '../index.js';
-import type { Game, GameComment } from '../index.js';
+import { GameScoreInput, GameScoreRef, MatchSideEnum, ScoringRuleRef } from '../../scoring/schema/index.js';
+import { gameCursor, gameResults, games } from '../index.js';
+import type { Game, GameComment, GameResult, Tally } from '../index.js';
 
 const GameStatusEnum = builder.enumType('GameStatus', {
   description: 'OPEN — places left. FULL — every place taken. COMPLETED — its end time has passed, or the host marked it played.',
@@ -443,6 +444,223 @@ builder.mutationFields((t) => ({
       const actor = requireActor(ctx);
       const { data, userError } = await attempt(() => games.addComment(actor, String(args.gameId), args.body));
       return { comment: data, userError };
+    },
+  }),
+}));
+
+// ─── results: the "unranked matches" (games R12–R17) ────────────────────────────────
+
+const GameResultStatusEnum = builder.enumType('GameResultStatus', {
+  description:
+    'PENDING — waiting for the other side (it confirms itself after an hour). CONFIRMED — it counts. ' +
+    'DISPUTED — the other side said it is not right; it counts for nothing.',
+  values: {
+    PENDING: { value: 'pending' },
+    CONFIRMED: { value: 'confirmed' },
+    DISPUTED: { value: 'disputed' },
+  } as const,
+});
+
+const GameResultRef = builder.objectRef<GameResult>('GameResult').implement({
+  description:
+    'One match played inside a casual game. Unranked: it never moves a rating, a ranking or a badge.',
+  fields: (t) => ({
+    id: t.exposeID('id'),
+    gameId: t.exposeID('gameId'),
+    game: t.field({
+      type: GameRef,
+      nullable: true,
+      description: 'The game it was played in: its sport, place and day.',
+      resolve: (r) => games.findById(r.gameId),
+    }),
+    sideA: t.field({
+      type: [PlayerProfileRef],
+      resolve: async (r, _args, ctx) => present(await ctx.loaders.publicProfileByUser.loadMany(r.sideA)),
+    }),
+    sideB: t.field({
+      type: [PlayerProfileRef],
+      resolve: async (r, _args, ctx) => present(await ctx.loaders.publicProfileByUser.loadMany(r.sideB)),
+    }),
+    games: t.field({
+      type: [GameScoreRef],
+      description: 'Games, sets, frames, or one final score, as the sport is scored. `a` is side A.',
+      resolve: (r) => r.games,
+    }),
+    winner: t.field({ type: MatchSideEnum, nullable: true, description: 'Null is a draw.', resolve: (r) => r.winner }),
+    method: t.exposeString('method', { nullable: true, description: 'How a bout ended early (ko, tko…).' }),
+    status: t.field({ type: GameResultStatusEnum, resolve: (r) => r.status }),
+    enteredBy: t.field({
+      type: PlayerProfileRef,
+      nullable: true,
+      resolve: (r, _args, ctx) => ctx.loaders.publicProfileByUser.load(r.enteredBy),
+    }),
+    autoConfirmAt: t.field({
+      type: 'DateTime',
+      description: 'games R15 — when an unanswered result confirms itself.',
+      resolve: (r) => r.autoConfirmAt,
+    }),
+    playedAt: t.field({ type: 'DateTime', resolve: (r) => r.playedAt }),
+    createdAt: t.field({ type: 'DateTime', resolve: (r) => r.createdAt }),
+    viewerSide: t.field({
+      type: MatchSideEnum,
+      nullable: true,
+      description: 'The side the viewer played on; null when they were not in this match.',
+      resolve: (r, _args, ctx) => gameResults.viewerCan(r, ctx.actor?.userId ?? null).side,
+    }),
+    viewerCanConfirm: t.boolean({
+      description: 'The viewer is on the side that did not enter it, and it is still waiting.',
+      resolve: (r, _args, ctx) => gameResults.viewerCan(r, ctx.actor?.userId ?? null).confirm,
+    }),
+    viewerCanRemove: t.boolean({
+      description: 'The viewer entered it and nobody has confirmed it.',
+      resolve: (r, _args, ctx) => gameResults.viewerCan(r, ctx.actor?.userId ?? null).remove,
+    }),
+  }),
+});
+
+builder.objectFields(GameRef, (t) => ({
+  results: t.field({
+    type: [GameResultRef],
+    description:
+      'Confirmed results for anyone; unanswered and disputed ones only for the players in that match. Oldest first.',
+    resolve: (g, _args, ctx) => gameResults.forGame(g.id, ctx.actor?.userId ?? null),
+  }),
+  resultsOpenAt: t.field({
+    type: 'DateTime',
+    description: 'games R12 — results can be entered from an hour after the start.',
+    resolve: (g) => gameResults.windowOf(g).opensAt,
+  }),
+  viewerCanAddResult: t.boolean({
+    description: 'The viewer joined, the results window is open, and this sport is played as matches.',
+    resolve: (g, _args, ctx) => gameResults.canAdd(g, ctx.actor?.userId ?? null),
+  }),
+  scoringRule: t.field({
+    type: ScoringRuleRef,
+    nullable: true,
+    description:
+      'games R14 — how this sport is scored, so the result form can speak it (games to 11, sets, goals…). ' +
+      'Null when the sport has no rule.',
+    resolve: async (g) => {
+      const rule = await sport.scoringRuleFor(g.sportId).catch(() => null);
+      return rule ? { kind: rule.kind, definition: JSON.stringify(rule) } : null;
+    },
+  }),
+}));
+
+const TallyRef = builder.objectRef<Tally>('UnrankedTally').implement({
+  description: 'games R16 — across every confirmed unranked result. Separate from the ranked record.',
+  fields: (t) => ({
+    played: t.exposeInt('played'),
+    won: t.exposeInt('won'),
+    lost: t.exposeInt('lost'),
+    drawn: t.exposeInt('drawn'),
+  }),
+});
+
+/** A profile is a player id; results are stored by user id. */
+async function userIdOf(playerId: string): Promise<string | null> {
+  return (await profile.briefById(playerId))?.userId ?? null;
+}
+
+builder.objectFields(PlayerProfileRef, (t) => ({
+  unrankedResults: t.field({
+    type: [GameResultRef],
+    description: 'games R16 — confirmed results of casual games this player was in, newest game first.',
+    args: { first: t.arg.int({ defaultValue: 10 }) },
+    resolve: async (p, args) => {
+      const userId = await userIdOf(p.id);
+      return userId ? gameResults.forUser(userId, { first: args.first ?? 10 }) : [];
+    },
+  }),
+  unrankedTally: t.field({
+    type: TallyRef,
+    resolve: async (p) => {
+      const userId = await userIdOf(p.id);
+      return userId ? gameResults.tallyFor(userId) : { played: 0, won: 0, lost: 0, drawn: 0 };
+    },
+  }),
+}));
+
+const GameResultPayload = builder
+  .objectRef<{ result: GameResult | null; game: Game | null; userError: UserErrorShape | null }>('GameResultPayload')
+  .implement({
+    fields: (t) => ({
+      result: t.field({ type: GameResultRef, nullable: true, resolve: (p) => p.result }),
+      game: t.field({ type: GameRef, nullable: true, description: 'The game, with its results as they now stand.', resolve: (p) => p.game }),
+      userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
+    }),
+  });
+
+const AddGameResultInput = builder.inputType('AddGameResultInput', {
+  description:
+    'games R13, R14 — sides are joined players (player ids) and whoever enters it must be on one. ' +
+    'The score is held to the sport’s rule; a casual match may be shorter than the full format, or level.',
+  fields: (t) => ({
+    gameId: t.id({ required: true }),
+    sideA: t.idList({ required: true }),
+    sideB: t.idList({ required: true }),
+    games: t.field({ type: [GameScoreInput], required: true }),
+    finish: t.string({ description: 'A bout that ended early: one of the rule’s finishes. Needs `winner`.' }),
+    winner: t.field({ type: MatchSideEnum }),
+  }),
+});
+
+builder.mutationFields((t) => ({
+  addGameResult: t.field({
+    type: GameResultPayload,
+    description:
+      'Enters one match of a casual game. The other side is asked to confirm; unanswered, it confirms itself after an hour. ' +
+      'RESULTS_NOT_OPEN, RESULTS_CLOSED, RESULTS_NOT_SUPPORTED, INVALID_RESULT.',
+    args: { input: t.arg({ type: AddGameResultInput, required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const i = args.input;
+      const gameId = String(i.gameId);
+      const [sideA, sideB] = await Promise.all([userIdsOf(i.sideA.map(String)), userIdsOf(i.sideB.map(String))]);
+      const { data, userError } = await attempt(() =>
+        gameResults.add(actor, {
+          gameId,
+          sideA,
+          sideB,
+          games: i.games.map((g) => ({ a: g.a, b: g.b })),
+          finish: i.finish ?? null,
+          winner: i.winner ?? null,
+        }),
+      );
+      return { result: data, game: data ? await games.findById(gameId) : null, userError };
+    },
+  }),
+
+  confirmGameResult: t.field({
+    type: GameResultPayload,
+    description: 'games R15 — a player on the side that did not enter it says it is right.',
+    args: { resultId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() => gameResults.confirm(actor, String(args.resultId)));
+      return { result: data, game: data ? await games.findById(data.gameId) : null, userError };
+    },
+  }),
+
+  disputeGameResult: t.field({
+    type: GameResultPayload,
+    description: 'games R15 — "not right": the result counts for nothing and whoever entered it is told.',
+    args: { resultId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() => gameResults.dispute(actor, String(args.resultId)));
+      return { result: data, game: data ? await games.findById(data.gameId) : null, userError };
+    },
+  }),
+
+  removeGameResult: t.field({
+    type: GamePayload,
+    description: 'Whoever entered a result takes it back, while nobody has confirmed it.',
+    args: { gameId: t.arg.id({ required: true }), resultId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { userError } = await attempt(() => gameResults.remove(actor, String(args.resultId)));
+      return { game: await games.findById(String(args.gameId)), userError };
     },
   }),
 }));

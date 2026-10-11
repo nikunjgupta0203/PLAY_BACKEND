@@ -135,6 +135,10 @@ export interface TemplatePayloads {
   'game.cancelled': { sportName: string; placeName: string; startsAt: string; reason?: string | null };
   /** games — one hour before the start, to the host and every player. */
   'game.reminder': { sportName: string; placeName: string; startsAt: string };
+  /** games R15 — to the other side: a result was entered. `score` is from the reader's side. */
+  'game.result_pending': { enteredByName: string; sportName: string; score: string; autoConfirmMinutes: number };
+  /** games R15 — to whoever entered it: the other side said it is not right. */
+  'game.result_disputed': { byName: string; sportName: string; score: string };
 }
 
 export type TemplateKey = keyof TemplatePayloads;
@@ -480,6 +484,20 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
     render: (p) => ({
       title: 'Your game starts in an hour',
       body: `${p.sportName} at ${p.placeName} · ${istWhen(p.startsAt)}.`,
+    }),
+  },
+  'game.result_pending': {
+    render: (p) => ({
+      title: `${p.enteredByName} entered a result`,
+      body: `${p.sportName}, your score first: ${p.score}. Confirm it, or say it is not right. It confirms itself in ${
+        p.autoConfirmMinutes === 60 ? 'an hour' : `${p.autoConfirmMinutes} minutes`
+      }.`,
+    }),
+  },
+  'game.result_disputed': {
+    render: (p) => ({
+      title: 'Your result was not accepted',
+      body: `${p.byName} said ${p.sportName} ${p.score} is not right, so it is on nobody’s profile. Enter it again if it was a slip.`,
     }),
   },
 };

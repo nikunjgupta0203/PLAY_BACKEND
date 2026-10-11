@@ -523,6 +523,76 @@ export function winnerOf(units: GameScore[], rule: ScoringRule): Side | null {
   return tally.a > tally.b ? 'a' : 'b';
 }
 
+/**
+ * games — the winner a casual result implies, or null for a draw.
+ *
+ * Held to the sport's own rule one unit at a time: a rally game or a set has
+ * to be one the engine would have ended exactly there, a frame has to be a
+ * finished frame. What is relaxed is the match around them. A casual match
+ * need not run its full length (one game to 11 is a result) and may end
+ * level, so the side with more units wins and equal is a draw.
+ */
+export function casualWinnerOf(units: GameScore[], rule: ScoringRule): Side | null {
+  if (units.length === 0) throw new ScoringInputError('a result needs a score');
+  for (const u of units) {
+    if (!Number.isInteger(u.a) || !Number.isInteger(u.b) || u.a < 0 || u.b < 0) {
+      throw new ScoringInputError('scores are whole numbers, never negative');
+    }
+  }
+  if (rule.kind === 'performance' || rule.kind === 'scorecard') {
+    throw new ScoringInputError('this sport is scored in heats, not matches');
+  }
+  const byMost = (tally: GameScore): Side | null => (tally.a === tally.b ? null : tally.a > tally.b ? 'a' : 'b');
+
+  if (rule.kind === 'goals' || rule.kind === 'innings' || rule.kind === 'bouts') {
+    // One final score a side (or a score per period): the higher total wins, level is a draw.
+    return byMost(units.reduce((s, u) => ({ a: s.a + u.a, b: s.b + u.b }), zero()));
+  }
+
+  const name = rule.kind === 'rally' ? 'game' : rule.kind === 'sets' ? 'set' : rule.unitName;
+  const most =
+    rule.kind === 'rally'
+      ? 2 * rule.gamesToWin - 1
+      : rule.kind === 'sets'
+        ? 2 * rule.setsToWin - 1
+        : (rule.maxUnits ?? 2 * rule.unitsToWin - 1);
+  if (units.length > most) {
+    throw new ScoringInputError(`a match is at most ${most} ${name}${most === 1 ? '' : 's'}`);
+  }
+
+  const tally = zero();
+  for (const [i, u] of units.entries()) {
+    if (u.a === u.b) {
+      // Only a series whose units can be drawn (a chess game) may be level.
+      if (rule.kind === 'series' && rule.allowDraws) continue;
+      throw new ScoringInputError(`${name} ${i + 1} has no winner`);
+    }
+    const w: Side = u.a > u.b ? 'a' : 'b';
+    if (rule.kind === 'rally') {
+      const before: GameScore = { ...u, [w]: u[w] - 1 };
+      if (!rallyGameWon(u, w, rule, i) || rallyGameWon(before, w, rule, i)) {
+        throw new ScoringInputError(`game ${i + 1} (${u.a}–${u.b}) is not a finished game`);
+      }
+    } else if (rule.kind === 'sets') {
+      const g = u[w];
+      const og = u[other(w)];
+      const mtb = rule.finalSetMatchTiebreak;
+      const outright = g >= rule.setGamesToWin && g - og >= rule.setWinBy;
+      const byTiebreak = rule.setTiebreakAt !== null && og === rule.setTiebreakAt && g === rule.setTiebreakAt + 1;
+      // The last set a match can reach may be a match tiebreak (10–8) in place of a set.
+      const byMatchTiebreak =
+        !!mtb && isFinalSet(rule, i) && g >= mtb.pointsToWin && g - og >= mtb.winBy && (g === mtb.pointsToWin || g - og === mtb.winBy);
+      if (!outright && !byTiebreak && !byMatchTiebreak) {
+        throw new ScoringInputError(`set ${i + 1} (${u.a}–${u.b}) is not a finished set`);
+      }
+    } else if (rule.unitScore && !validUnitScore(u, rule)) {
+      throw new ScoringInputError(`${name} ${i + 1} (${u.a}–${u.b}) is not a finished ${name}`);
+    }
+    tally[w] += 1;
+  }
+  return byMost(tally);
+}
+
 // --- how a match was won -------------------------------------------------------
 
 /**

@@ -16,11 +16,13 @@ export const chat = createChatService({
     // chat R2. registration imports profile, which chat imports, so it is
     // reached lazily like every other cross-module port. Both asked at once.
     async sharePlay(a, b) {
-      const [played, teammates] = await Promise.all([
+      const [played, teammates, casual] = await Promise.all([
         profile.havePlayedTogether(a.id, b.id),
         import('../registration/index.js').then(({ registration }) => registration.areTeammates(a.userId, b.userId)),
+        // games R17 — a confirmed casual result between them counts too.
+        import('../games/index.js').then(({ gameResults }) => gameResults.haveShared(a.userId, b.userId)),
       ]);
-      return played || teammates;
+      return played || teammates || casual;
     },
   },
   limiter: { consume },

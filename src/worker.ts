@@ -719,9 +719,11 @@ export async function startWorkers(): Promise<() => void> {
         return;
       }
       case 'sweep-games': {
-        const { games } = await import('./modules/games/index.js');
+        const { games, gameResults } = await import('./modules/games/index.js');
         const result = await games.sweep();
-        if (result.completed + result.reminded > 0) logger.info(result, 'swept casual games');
+        // games R15 — a result nobody answered within the hour is confirmed.
+        const confirmed = await gameResults.sweep();
+        if (result.completed + result.reminded + confirmed > 0) logger.info({ ...result, confirmed }, 'swept casual games');
         return;
       }
       case 'expire-invite': {

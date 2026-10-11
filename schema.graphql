@@ -6,6 +6,19 @@ type Achievement {
   sport: Sport
 }
 
+"""
+games R13, R14 — sides are joined players (player ids) and whoever enters it must be on one. The score is held to the sport’s rule; a casual match may be shorter than the full format, or level.
+"""
+input AddGameResultInput {
+  """A bout that ended early: one of the rule’s finishes. Needs `winner`."""
+  finish: String
+  gameId: ID!
+  games: [GameScoreInput!]!
+  sideA: [ID!]!
+  sideB: [ID!]!
+  winner: MatchSide
+}
+
 type AddOrganisationMemberPayload {
   """Set instead of `member` when the address has no account yet."""
   invite: OrganisationInvite
@@ -1106,6 +1119,19 @@ type Game {
 
   """Joined players, the host first."""
   players: [PlayerProfile!]!
+
+  """
+  Confirmed results for anyone; unanswered and disputed ones only for the players in that match. Oldest first.
+  """
+  results: [GameResult!]!
+
+  """games R12 — results can be entered from an hour after the start."""
+  resultsOpenAt: DateTime!
+
+  """
+  games R14 — how this sport is scored, so the result form can speak it (games to 11, sets, goals…). Null when the sport has no rule.
+  """
+  scoringRule: ScoringRule
   skillBand: String
   sport: Sport!
   spotsLeft: Int!
@@ -1113,6 +1139,11 @@ type Game {
   status: GameStatus!
   timezone: String!
   venue: Venue
+
+  """
+  The viewer joined, the results window is open, and this sport is played as matches.
+  """
+  viewerCanAddResult: Boolean!
   viewerHasJoined: Boolean!
   viewerIsHost: Boolean!
   viewerIsInvited: Boolean!
@@ -1145,6 +1176,63 @@ type GameEdge {
 type GamePayload {
   game: Game
   userError: UserError
+}
+
+"""
+One match played inside a casual game. Unranked: it never moves a rating, a ranking or a badge.
+"""
+type GameResult {
+  """games R15 — when an unanswered result confirms itself."""
+  autoConfirmAt: DateTime!
+  createdAt: DateTime!
+  enteredBy: PlayerProfile
+
+  """The game it was played in: its sport, place and day."""
+  game: Game
+  gameId: ID!
+
+  """
+  Games, sets, frames, or one final score, as the sport is scored. `a` is side A.
+  """
+  games: [GameScore!]!
+  id: ID!
+
+  """How a bout ended early (ko, tko…)."""
+  method: String
+  playedAt: DateTime!
+  sideA: [PlayerProfile!]!
+  sideB: [PlayerProfile!]!
+  status: GameResultStatus!
+
+  """
+  The viewer is on the side that did not enter it, and it is still waiting.
+  """
+  viewerCanConfirm: Boolean!
+
+  """The viewer entered it and nobody has confirmed it."""
+  viewerCanRemove: Boolean!
+
+  """The side the viewer played on; null when they were not in this match."""
+  viewerSide: MatchSide
+
+  """Null is a draw."""
+  winner: MatchSide
+}
+
+type GameResultPayload {
+  """The game, with its results as they now stand."""
+  game: Game
+  result: GameResult
+  userError: UserError
+}
+
+"""
+PENDING — waiting for the other side (it confirms itself after an hour). CONFIRMED — it counts. DISPUTED — the other side said it is not right; it counts for nothing.
+"""
+enum GameResultStatus {
+  CONFIRMED
+  DISPUTED
+  PENDING
 }
 
 type GameScore {
@@ -1752,6 +1840,11 @@ type Mutation {
   addGameComment(body: String!, gameId: ID!): GameCommentPayload!
 
   """
+  Enters one match of a casual game. The other side is asked to confirm; unanswered, it confirms itself after an hour. RESULTS_NOT_OPEN, RESULTS_CLOSED, RESULTS_NOT_SUPPORTED, INVALID_RESULT.
+  """
+  addGameResult(input: AddGameResultInput!): GameResultPayload!
+
+  """
   Owner or manager. Seats a player who paid at the desk (OFFLINE) or plays free (COMP), until the draw is made. F20 — by account email, or by name with no account (a guest); a doubles walk-in names both players; a team walk-in names its captain, and optionally its name and teammates (N14). No money moves through PL4Y for it.
   """
   addOfflineRegistration(
@@ -1899,6 +1992,11 @@ type Mutation {
   completeGame(gameId: ID!): GamePayload!
 
   """
+  games R15 — a player on the side that did not enter it says it is right.
+  """
+  confirmGameResult(resultId: ID!): GameResultPayload!
+
+  """
   R6 — the other side, or an owner/manager 15 minutes after submission (at once when disputed). Advances the bracket.
   """
   confirmMatchResult(matchId: ID!): MatchResultPayload!
@@ -1964,6 +2062,11 @@ type Mutation {
   venues R5 — soft delete. Completed tournaments keep resolving their venue.
   """
   deleteVenue(venueId: ID!): VenuePayload!
+
+  """
+  games R15 — "not right": the result counts for nothing and whoever entered it is told.
+  """
+  disputeGameResult(resultId: ID!): GameResultPayload!
   disputeMatchResult(input: DisputeMatchResultInput!): MatchResultPayload!
 
   """
@@ -2108,6 +2211,9 @@ type Mutation {
 
   """Host only. The removed player cannot rejoin (games R5)."""
   removeGamePlayer(gameId: ID!, playerId: ID!): GamePayload!
+
+  """Whoever entered a result takes it back, while nobody has confirmed it."""
+  removeGameResult(gameId: ID!, resultId: ID!): GamePayload!
   removeOrganisationMember(organisationId: ID!, userId: ID!): OrganisationOkPayload!
 
   """
@@ -2341,6 +2447,8 @@ enum NotificationKind {
   GAME_INVITE
   GAME_PLAYER_JOINED
   GAME_REMINDER
+  GAME_RESULT_DISPUTED
+  GAME_RESULT_PENDING
   HOST_DRAW_CANCELLED
   HOST_DRAW_MADE
   HOST_DRAW_SHORT
@@ -2870,6 +2978,12 @@ type PlayerProfile implements Node {
 
   """profile R8 — one materialised snapshot per selected sport."""
   stats: [StatsSnapshot!]!
+
+  """
+  games R16 — confirmed results of casual games this player was in, newest game first.
+  """
+  unrankedResults(first: Int = 10): [GameResult!]!
+  unrankedTally: UnrankedTally!
 
   """Null on your own profile and when signed out."""
   viewerMessaging: Messaging
@@ -3925,6 +4039,16 @@ type Tournament {
 input UndoPointInput {
   expectedSeq: Int!
   matchId: ID!
+}
+
+"""
+games R16 — across every confirmed unranked result. Separate from the ranked record.
+"""
+type UnrankedTally {
+  drawn: Int!
+  lost: Int!
+  played: Int!
+  won: Int!
 }
 
 input UpdateCourtInput {

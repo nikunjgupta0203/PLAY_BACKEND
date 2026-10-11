@@ -18,11 +18,21 @@ import {
   type GamesService,
 } from '../src/modules/games/service/index.js';
 import { createIdentityService } from '../src/modules/identity/service/index.js';
-import { PICKLEBALL, seedSport } from '../src/modules/sport/seed.js';
+import { FOOTBALL, PICKLEBALL, RUNNING, seedSport, TENNIS } from '../src/modules/sport/seed.js';
+import { UserError } from '../src/platform/errors/index.js';
+import { casualWinnerOf, ScoringInputError } from '../src/modules/scoring/engine.js';
+import {
+  createGameResults,
+  RESULT_AUTO_CONFIRM_MS,
+  ResultCode,
+  RESULTS_OPEN_AFTER_MS,
+  type GameResultsService,
+} from '../src/modules/games/service/results.js';
 
 let prisma: PrismaClient;
 let modules: ReturnType<typeof buildModules>;
 let games: GamesService;
+let results: GameResultsService;
 let clock: Date;
 let sportId: string;
 const notices: { userId: string; template: string; payload: Record<string, unknown> }[] = [];
@@ -35,7 +45,7 @@ const PIN = { lat: 23.0225, lng: 72.5714 }; // Ahmedabad
 async function user(name: string, phone?: string): Promise<{ userId: string }> {
   const userId = newId();
   await prisma.user.create({
-    data: { id: userId, email: `${name}-${userId.slice(0, 8)}@example.com`.toLowerCase(), displayName: name, phoneE164: phone ?? null },
+    data: { id: userId, email: `${name}-${userId}@example.com`.toLowerCase(), displayName: name, phoneE164: phone ?? null },
   });
   return { userId };
 }
@@ -113,6 +123,41 @@ beforeEach(async () => {
       findByPhone: (phone) => identity.findByPhone(phone),
     },
     limiter: { consume: async () => ({ allowed: true, retryAfterSeconds: 0, remaining: 99 }) },
+    async notify(userIds, template, payload) {
+      for (const userId of userIds) notices.push({ userId, template, payload });
+    },
+    now: () => clock,
+  });
+  const ruleOf = (id: string) => modules.sport.scoringRuleFor(id);
+  results = createGameResults({
+    db,
+    games: { byId: (id) => games.byId(id) },
+    rules: {
+      supported: async (id) => {
+        const rule = await ruleOf(id);
+        return rule.kind !== 'performance' && rule.kind !== 'scorecard';
+      },
+      // The real judge: held to the seeded sport's own rule.
+      judge: async (id, units) => {
+        try {
+          return casualWinnerOf(units, await ruleOf(id));
+        } catch (err) {
+          if (err instanceof ScoringInputError) throw new UserError(ResultCode.INVALID_RESULT, err.message);
+          throw err;
+        }
+      },
+      finishes: async (id) => {
+        const rule = await ruleOf(id);
+        return rule.kind === 'bouts' ? rule.finishes : [];
+      },
+    },
+    users: {
+      async namesByIds(ids) {
+        const rows = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, displayName: true } });
+        return new Map(rows.map((r) => [r.id, r.displayName]));
+      },
+    },
+    sportName: async (id) => (await modules.sport.byId(id)).name,
     async notify(userIds, template, payload) {
       for (const userId of userIds) notices.push({ userId, template, payload });
     },
@@ -451,5 +496,194 @@ describe('games — discover and my games', () => {
 
     await games.cancel(host, soon.id);
     expect((await games.nextForUser(host.userId))?.id).toBe(later.id);
+  });
+});
+
+describe('games — results (unranked matches)', () => {
+  /** A doubles game of four that started 90 minutes ago, so results are open. */
+  async function played(over: Partial<GameInput> = {}) {
+    const host = await user('Asha');
+    const [b, c, d] = [await user('Bina'), await user('Chirag'), await user('Dev')];
+    const game = await games.create(host, input({ maxPlayers: 4, ...over }));
+    for (const p of [b, c, d]) await games.join(p, game.id);
+    clock = new Date(game.startsAt.getTime() + 90 * MIN);
+    notices.length = 0;
+    return { game, host, b, c, d };
+  }
+  const doubles = (g: Awaited<ReturnType<typeof played>>, scores: { a: number; b: number }[]) => ({
+    gameId: g.game.id,
+    sideA: [g.host.userId, g.b.userId],
+    sideB: [g.c.userId, g.d.userId],
+    games: scores,
+  });
+
+  it('R12: results open an hour after the start and close a week after the end', async () => {
+    const g = await played();
+    const entry = doubles(g, [{ a: 11, b: 8 }]);
+
+    clock = new Date(g.game.startsAt.getTime() + RESULTS_OPEN_AFTER_MS - MIN);
+    expect(await results.canAdd(await games.byId(g.game.id), g.host.userId)).toBe(false);
+    expect(await codeOf(() => results.add(g.host, entry))).toBe(ResultCode.RESULTS_NOT_OPEN);
+
+    clock = new Date(g.game.startsAt.getTime() + RESULTS_OPEN_AFTER_MS);
+    expect(await results.canAdd(await games.byId(g.game.id), g.host.userId)).toBe(true);
+    expect((await results.add(g.host, entry)).status).toBe('pending');
+
+    clock = new Date(g.game.endsAt.getTime() + 8 * 24 * HOUR);
+    expect(await results.canAdd(await games.byId(g.game.id), g.host.userId)).toBe(false);
+    expect(await codeOf(() => results.add(g.host, entry))).toBe(ResultCode.RESULTS_CLOSED);
+  });
+
+  it('R13: sides are joined players, nobody twice, and whoever enters it played in it', async () => {
+    const g = await played();
+    const outsider = await user('Esha');
+    const ok = doubles(g, [{ a: 11, b: 8 }]);
+
+    expect(await codeOf(() => results.add(g.host, { ...ok, sideB: [] }))).toBe(ResultCode.INVALID_RESULT);
+    expect(await codeOf(() => results.add(g.host, { ...ok, sideB: [g.b.userId, g.c.userId] }))).toBe(ResultCode.INVALID_RESULT);
+    expect(await codeOf(() => results.add(g.host, { ...ok, sideB: [g.c.userId, outsider.userId] }))).toBe(ResultCode.INVALID_RESULT);
+    // Bina and Chirag played singles; the host cannot enter a match she was not in.
+    expect(await codeOf(() => results.add(g.host, { ...ok, sideA: [g.b.userId], sideB: [g.c.userId] }))).toBe('FORBIDDEN');
+    expect(await results.canAdd(await games.byId(g.game.id), outsider.userId)).toBe(false);
+  });
+
+  it('R14: each game is held to the sport\'s rule; the match may be short, or level', async () => {
+    const g = await played();
+    // Pickleball as seeded: games to 11, win by 2, and a deciding third game to 15. One game is a result.
+    expect((await results.add(g.host, doubles(g, [{ a: 11, b: 8 }]))).winner).toBe('a');
+    expect((await results.add(g.host, doubles(g, [{ a: 9, b: 11 }, { a: 13, b: 11 }, { a: 9, b: 15 }]))).winner).toBe('b');
+    // One game each is a draw: nobody played a decider.
+    expect((await results.add(g.host, doubles(g, [{ a: 11, b: 5 }, { a: 4, b: 11 }]))).winner).toBeNull();
+
+    // Not a finished game, played on past the end, or a score that says the other side won.
+    expect(await codeOf(() => results.add(g.host, doubles(g, [{ a: 9, b: 11 }, { a: 13, b: 11 }, { a: 7, b: 11 }])))).toBe(ResultCode.INVALID_RESULT); // the decider goes to 15
+    expect(await codeOf(() => results.add(g.host, doubles(g, [{ a: 11, b: 10 }])))).toBe(ResultCode.INVALID_RESULT);
+    expect(await codeOf(() => results.add(g.host, doubles(g, [{ a: 14, b: 8 }])))).toBe(ResultCode.INVALID_RESULT);
+    expect(await codeOf(() => results.add(g.host, doubles(g, [{ a: 10, b: 10 }])))).toBe(ResultCode.INVALID_RESULT);
+    expect(await codeOf(() => results.add(g.host, doubles(g, [])))).toBe(ResultCode.INVALID_RESULT);
+    expect(await codeOf(() => results.add(g.host, { ...doubles(g, [{ a: 11, b: 8 }]), winner: 'b' }))).toBe(ResultCode.INVALID_RESULT);
+  });
+
+  it('R14: every sport is scored its own way — sets, goals, and no result for a race', async () => {
+    const tennis = await seedSport(prisma, TENNIS);
+    const football = await seedSport(prisma, FOOTBALL);
+    const running = await seedSport(prisma, RUNNING);
+    modules.sport.refresh();
+
+    const t = await played({ sportId: tennis });
+    expect((await results.add(t.host, doubles(t, [{ a: 6, b: 4 }, { a: 7, b: 6 }]))).winner).toBe('a');
+    expect(await codeOf(() => results.add(t.host, doubles(t, [{ a: 6, b: 5 }])))).toBe(ResultCode.INVALID_RESULT);
+
+    clock = new Date('2026-10-11T04:30:00.000Z');
+    const f = await played({ sportId: football });
+    expect((await results.add(f.host, doubles(f, [{ a: 3, b: 1 }]))).winner).toBe('a');
+    expect((await results.add(f.host, doubles(f, [{ a: 2, b: 2 }]))).winner).toBeNull();
+
+    clock = new Date('2026-10-11T04:30:00.000Z');
+    const r = await played({ sportId: running });
+    expect(await results.canAdd(await games.byId(r.game.id), r.host.userId)).toBe(false);
+    expect(await codeOf(() => results.add(r.host, doubles(r, [{ a: 1, b: 0 }])))).toBe(ResultCode.RESULTS_NOT_SUPPORTED);
+  });
+
+  it('R15: the other side is asked, and confirms; the side that entered it cannot', async () => {
+    const g = await played();
+    const result = await results.add(g.host, doubles(g, [{ a: 11, b: 8 }, { a: 11, b: 6 }]));
+
+    // Only the other side is told, with the score from their side.
+    expect(sentTo('game.result_pending').sort()).toEqual([g.c.userId, g.d.userId].sort());
+    expect(notices[0]!.payload).toMatchObject({ enteredByName: 'Asha', score: '8–11, 6–11', autoConfirmMinutes: 60 });
+    expect(results.viewerCan(result, g.c.userId)).toEqual({ side: 'b', confirm: true, remove: false });
+    expect(results.viewerCan(result, g.b.userId)).toEqual({ side: 'a', confirm: false, remove: false });
+    expect(results.viewerCan(result, g.host.userId)).toEqual({ side: 'a', confirm: false, remove: true });
+
+    expect(await codeOf(() => results.confirm(g.b, result.id))).toBe('FORBIDDEN');
+    const confirmed = await results.confirm(g.d, result.id);
+    expect(confirmed).toMatchObject({ status: 'confirmed', confirmedVia: 'opponent' });
+    // Settled: it can no longer be disputed or taken back.
+    expect(await codeOf(() => results.dispute(g.c, result.id))).toBe(ResultCode.RESULT_SETTLED);
+    expect(await codeOf(() => results.remove(g.host, result.id))).toBe(ResultCode.RESULT_SETTLED);
+  });
+
+  it('R15: unanswered, a result confirms itself after an hour — read that way at once, written by the sweep', async () => {
+    const g = await played();
+    const result = await results.add(g.host, doubles(g, [{ a: 11, b: 8 }]));
+    expect(await results.forUser(g.c.userId, { first: 10 })).toEqual([]);
+
+    clock = new Date(clock.getTime() + RESULT_AUTO_CONFIRM_MS + MIN);
+    expect((await results.forGame(g.game.id, null))[0]).toMatchObject({ id: result.id, status: 'confirmed', confirmedVia: 'auto' });
+    expect((await prisma.gameResult.findUniqueOrThrow({ where: { id: result.id } })).status).toBe('pending');
+    // Too late to say it is not right.
+    expect(await codeOf(() => results.dispute(g.c, result.id))).toBe(ResultCode.RESULT_SETTLED);
+
+    expect(await results.sweep()).toBe(1);
+    expect((await prisma.gameResult.findUniqueOrThrow({ where: { id: result.id } })).confirmedVia).toBe('auto');
+    expect(await results.sweep()).toBe(0);
+  });
+
+  it('R15, R16: "not right" tells whoever entered it, and the result counts for nothing', async () => {
+    const g = await played();
+    const result = await results.add(g.host, doubles(g, [{ a: 11, b: 0 }]));
+    notices.length = 0;
+
+    expect((await results.dispute(g.c, result.id)).status).toBe('disputed');
+    expect(sentTo('game.result_disputed')).toEqual([g.host.userId]);
+    expect(notices[0]!.payload).toMatchObject({ byName: 'Chirag', score: '11–0' });
+
+    // Never confirmed by time, on nobody's profile, and hidden from everyone outside the match.
+    clock = new Date(clock.getTime() + 3 * HOUR);
+    expect(await results.sweep()).toBe(0);
+    expect(await results.forUser(g.host.userId, { first: 10 })).toEqual([]);
+    expect(await results.tallyFor(g.host.userId)).toEqual({ played: 0, won: 0, lost: 0, drawn: 0 });
+    expect(await results.forGame(g.game.id, null)).toEqual([]);
+    expect((await results.forGame(g.game.id, g.d.userId)).map((r) => r.status)).toEqual(['disputed']);
+    // Whoever entered it can clear it away.
+    await results.remove(g.host, result.id);
+    expect(await prisma.gameResult.count()).toBe(0);
+  });
+
+  it('R16: a profile lists confirmed results only, with its own tally', async () => {
+    const g = await played();
+    const win = await results.add(g.host, doubles(g, [{ a: 11, b: 8 }]));
+    const loss = await results.add(g.host, doubles(g, [{ a: 5, b: 11 }]));
+    const draw = await results.add(g.c, doubles(g, [{ a: 11, b: 5 }, { a: 4, b: 11 }]));
+    const waiting = await results.add(g.host, doubles(g, [{ a: 11, b: 9 }]));
+    await results.confirm(g.c, win.id);
+    await results.confirm(g.c, loss.id);
+    await results.confirm(g.host, draw.id);
+
+    expect((await results.forUser(g.host.userId, { first: 10 })).map((r) => r.id).sort()).toEqual([win.id, loss.id, draw.id].sort());
+    expect(await results.tallyFor(g.host.userId)).toEqual({ played: 3, won: 1, lost: 1, drawn: 1 });
+    // The same three, seen from the other side.
+    expect(await results.tallyFor(g.d.userId)).toEqual({ played: 3, won: 1, lost: 1, drawn: 1 });
+    // Before the hour is up, the fourth is for its players only.
+    expect((await results.forGame(g.game.id, null)).map((r) => r.id)).not.toContain(waiting.id);
+    expect((await results.forGame(g.game.id, g.b.userId)).map((r) => r.id)).toContain(waiting.id);
+    // Ranked history is untouched.
+    expect(await prisma.playerMatchHistory.count()).toBe(0);
+  });
+
+  it('R17: a confirmed result makes its players "played together"; an unanswered one does not', async () => {
+    const g = await played();
+    const result = await results.add(g.host, doubles(g, [{ a: 11, b: 8 }]));
+    expect(await results.haveShared(g.host.userId, g.c.userId)).toBe(false);
+
+    await results.confirm(g.c, result.id);
+    expect(await results.haveShared(g.host.userId, g.c.userId)).toBe(true);
+    expect(await results.haveShared(g.b.userId, g.host.userId)).toBe(true); // partners count too
+    const stranger = await user('Esha');
+    expect(await results.haveShared(g.host.userId, stranger.userId)).toBe(false);
+  });
+
+  it('a cancelled game has no results', async () => {
+    const host = await user('Asha');
+    const b = await user('Bina');
+    const game = await games.create(host, input());
+    await games.join(b, game.id);
+    await games.cancel(host, game.id);
+    clock = new Date(game.startsAt.getTime() + 2 * HOUR);
+    expect(await results.canAdd(await games.byId(game.id), host.userId)).toBe(false);
+    expect(
+      await codeOf(() => results.add(host, { gameId: game.id, sideA: [host.userId], sideB: [b.userId], games: [{ a: 11, b: 8 }] })),
+    ).toBe(ResultCode.RESULTS_CLOSED);
   });
 });

@@ -1845,3 +1845,33 @@ model GameComment {
   @@index([gameId, createdAt], map: "game_comments_game_idx")
   @@map("game_comments")
 }
+
+/// games — one match played inside a casual game (migration 043). Unranked:
+/// never read by rating, rankings or badges.
+model GameResult {
+  id            String    @id @db.Uuid
+  gameId        String    @map("game_id") @db.Uuid
+  sportId       String    @map("sport_id") @db.Uuid
+  /// User ids, like game_participants.
+  sideA         String[]  @map("side_a") @db.Uuid
+  sideB         String[]  @map("side_b") @db.Uuid
+  /// [{ a, b }] — games, sets, frames, or one final score.
+  games         Json
+  /// a | b; null is a draw.
+  winner        String?
+  method        String?
+  /// pending | confirmed | disputed
+  status        String    @default("pending")
+  enteredBy     String    @map("entered_by") @db.Uuid
+  autoConfirmAt DateTime  @map("auto_confirm_at") @db.Timestamptz(6)
+  confirmedAt   DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  /// opponent | auto
+  confirmedVia  String?   @map("confirmed_via")
+  disputedBy    String?   @map("disputed_by") @db.Uuid
+  disputedAt    DateTime? @map("disputed_at") @db.Timestamptz(6)
+  playedAt      DateTime  @map("played_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([gameId, createdAt], map: "game_results_game_idx")
+  @@map("game_results")
+}

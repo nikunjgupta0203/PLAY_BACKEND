@@ -38,7 +38,22 @@ this gives them something to do in the six weeks between.
 > Statuses: `open · full · cancelled · completed`. Notifications: `game.invite`, `game.player_joined`,
 > `game.full`, `game.changed`, `game.cancelled`, `game.reminder` — nothing else.
 >
-> **Not built, on purpose (v2 §6):** waitlist, ratings and match scores, recurring games (series),
+> **2026-10-11, later — results ("unranked matches").** Asked for after v2 shipped; it replaces v2 §6's
+> "no match scores". Migration 043 (`game_results`), `service/results.ts`, `scoring/engine.ts`
+> `casualWinnerOf`.
+>
+> | | |
+> |---|---|
+> | **R12** | Results open one hour after the game starts and close a week after it ends. A cancelled game has none. |
+> | **R13** | Sides are joined players, nobody twice, and whoever enters a result played in it. One game holds many results. |
+> | **R14** | The score is held to the sport's own rule one unit at a time (a finished game to 11, a finished set, a finished frame). The match around it is relaxed: it may be shorter than the full format, and may end level (a draw). A sport scored in heats (a race, a scorecard) has no match results: `RESULTS_NOT_SUPPORTED`. |
+> | **R15** | The other side confirms, or says "not right" (the result then counts for nothing and its author is told). Unanswered, it confirms itself after one hour: read that way at once, written by `sweep-games`. |
+> | **R16** | A profile lists confirmed results only (`PlayerProfile.unrankedResults`, `unrankedTally`). They never touch rating, rankings, badges, `player_match_history` or the ranked W–L. |
+> | **R17** | A confirmed result makes its players "played together" for chat R2: they can message without a request. |
+>
+> Notifications added: `game.result_pending` (to the other side), `game.result_disputed` (to the author).
+>
+> **Not built, on purpose (v2 §6):** waitlist, ratings from casual results, recurring games (series),
 > no-show penalties. `left` and `removed` rows are kept in `game_participants`, which is the no-show
 > data to look at before deciding on penalties. Open play, community games and visibility (R3, R8–R12
 > below) are also not built. `Game` is a plain type, not a `Node`.
