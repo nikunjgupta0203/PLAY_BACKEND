@@ -31,7 +31,7 @@ this gives them something to do in the six weeks between.
 > | **R6** | `completed` once `ends_at` passes: read that way at once, written by `sweep-games` every minute. The host may also mark it played once it has started. |
 > | **R7** | A new time or place is told to every joined player. Other edits are silent. |
 > | **R8** | The host's contact number and the comment thread are for joined players only. |
-> | **R9** | A game is at a listed venue, or at a pin with a name. Never free text alone. |
+> | **R9** | A game is at a listed venue, or at a place the host names (2–80 characters). A pin for it is optional: the app's map is off for now (migration 044). |
 > | **R10** | One reminder, an hour before the start; moving the start arms it again. It overrides quiet hours. |
 > | **R11** | Invites are the host's, to reachable accounts only. `playerByPhone` finds an account by the contact number it gave (rate limited). |
 >

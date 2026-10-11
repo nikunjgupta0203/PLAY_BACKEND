@@ -176,10 +176,16 @@ describe('games — create', () => {
     expect(game.placeName).toBe('Law Garden courts');
   });
 
-  it('R9: a game is at a listed venue or a named pin, never free text alone', async () => {
+  it('R9: a game is at a listed venue or a place the host names; the pin is optional', async () => {
     const host = await user('Asha');
-    expect(await codeOf(() => games.create(host, input({ location: null })))).toBe(GameCode.INVALID_GAME);
     expect(await codeOf(() => games.create(host, input({ placeName: '' })))).toBe(GameCode.INVALID_GAME);
+    expect(await codeOf(() => games.create(host, input({ location: null, placeName: null })))).toBe(GameCode.INVALID_GAME);
+    expect(await codeOf(() => games.create(host, input({ location: { lat: 123, lng: 72 } })))).toBe(GameCode.INVALID_GAME);
+
+    const typed = await games.create(host, input({ location: null, placeName: ' City park, Ahmedabad ' }));
+    expect(typed.placeName).toBe('City park, Ahmedabad');
+    expect(typed.location).toBeNull();
+    expect((await games.findById(typed.id))?.location).toBeNull();
 
     const venue = await modules.venues.create(host, {
       name: 'Smash Arena',
@@ -342,6 +348,13 @@ describe('games — editing', () => {
 
     await games.update(host, game.id, { placeName: 'Parimal Garden courts', location: { lat: 23.02, lng: 72.56 } });
     expect(notices.at(-1)?.payload).toMatchObject({ timeChanged: false, placeChanged: true, placeName: 'Parimal Garden courts' });
+
+    // A new name with no pin drops the old pin; the same name keeps it.
+    const kept = await games.update(host, game.id, { placeName: 'Parimal Garden courts', notes: 'Gate 2' });
+    expect(kept.location).toEqual({ lat: 23.02, lng: 72.56 });
+    const typed = await games.update(host, game.id, { placeName: 'City park' });
+    expect(typed.location).toBeNull();
+    expect(notices.at(-1)?.payload).toMatchObject({ placeChanged: true, placeName: 'City park' });
     expect(await codeOf(() => games.update(b, game.id, { notes: 'x' }))).toBe('FORBIDDEN');
   });
 

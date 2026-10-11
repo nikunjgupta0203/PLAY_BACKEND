@@ -1775,14 +1775,14 @@ model CourtBooking {
 // ─────────────────────────────────────────────────────────────────────────────
 // games — casual games (docs/modules/12-games.md). No money, no bracket, no
 // rating. The CHECKs (status, place, capacity) and the gist index on `geo` are
-// in migration 042.
+// in migration 042; the place CHECK was loosened in 044.
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Game {
   id             String                                 @id @db.Uuid
   hostUserId     String                                 @map("host_user_id") @db.Uuid
   sportId        String                                 @map("sport_id") @db.Uuid
-  /// A listed venue, or a pin (`geo` + `place_name`). Never free text alone.
+  /// A listed venue, or a place the host names (`place_name`); `geo` is its pin, when it has one.
   venueId        String?                                @map("venue_id") @db.Uuid
   geo            Unsupported("geography(Point, 4326)")?
   placeName      String?                                @map("place_name")

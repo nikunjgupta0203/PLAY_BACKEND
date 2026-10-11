@@ -173,8 +173,9 @@ const PlayerByPhonePayload = builder
 // --- inputs ----------------------------------------------------------------------
 
 const placeFields = {
-  venueId: 'A listed venue. Leave out to use a pin.',
-  location: 'games R9 — the pin, when the game is not at a listed venue. Needs placeName.',
+  venueId: 'A listed venue. Leave out to name the place.',
+  location: 'games R9 — an optional pin for placeName.',
+  placeName: 'games R9 — where the game is, when it is not at a listed venue.',
 } as const;
 
 const CreateGameInput = builder.inputType('CreateGameInput', {
@@ -182,7 +183,7 @@ const CreateGameInput = builder.inputType('CreateGameInput', {
     sportId: t.id({ required: true }),
     venueId: t.id({ description: placeFields.venueId }),
     location: t.field({ type: GeoPointInput, description: placeFields.location }),
-    placeName: t.string(),
+    placeName: t.string({ description: placeFields.placeName }),
     city: t.string(),
     startsAt: t.field({ type: 'DateTime', required: true }),
     endsAt: t.field({ type: 'DateTime', required: true }),
@@ -201,7 +202,7 @@ const UpdateGameInput = builder.inputType('UpdateGameInput', {
     sportId: t.id(),
     venueId: t.id({ description: placeFields.venueId }),
     location: t.field({ type: GeoPointInput, description: placeFields.location }),
-    placeName: t.string(),
+    placeName: t.string({ description: placeFields.placeName }),
     city: t.string(),
     startsAt: t.field({ type: 'DateTime' }),
     endsAt: t.field({ type: 'DateTime' }),

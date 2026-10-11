@@ -61,8 +61,9 @@ export interface GameComment {
 export interface GameInput {
   sportId: string;
   venueId?: string | null;
-  /** With `placeName`, when the game is not at a listed venue (R9). */
+  /** The pin for `placeName`, when the host gave one (R9). */
   location?: GeoPoint | null;
+  /** Where the game is, when it is not at a listed venue (R9). */
   placeName?: string | null;
   city?: string | null;
   startsAt: Date;
@@ -189,7 +190,7 @@ export function createGamesService(deps: GamesDeps) {
     const sport = await deps.sport.findById(input.sportId);
     if (!sport || !sport.active) throw invalid('Choose a sport.');
 
-    // R9 — a listed venue, or a pin with a name for it.
+    // R9 — a listed venue, or a place the host names; a pin for it is optional.
     let venueId: string | null = null;
     let placeName: string | null = null;
     let city = (input.city ?? '').trim();
@@ -201,11 +202,10 @@ export function createGamesService(deps: GamesDeps) {
       city = venue.city;
     } else {
       placeName = (input.placeName ?? '').trim();
-      if (!input.location || !isValidPoint(input.location)) throw invalid('Choose a venue, or drop a pin on the map.');
-      if (placeName.length < 2 || placeName.length > PLACE_NAME_MAX) {
-        throw invalid(`Give the place a name, up to ${PLACE_NAME_MAX} characters.`);
-      }
-      location = input.location;
+      if (placeName.length < 2) throw invalid('Choose a venue, or type the location.');
+      if (placeName.length > PLACE_NAME_MAX) throw invalid(`The location can be up to ${PLACE_NAME_MAX} characters.`);
+      if (input.location && !isValidPoint(input.location)) throw invalid('That pin is not a place on the map.');
+      location = input.location ?? null;
     }
 
     const { startsAt, endsAt } = input;
@@ -333,12 +333,14 @@ export function createGamesService(deps: GamesDeps) {
     const before = await hostGame(actor, gameId);
     if (before.status !== 'open' && before.status !== 'full') throw closed('A finished or cancelled game cannot be edited.');
 
-    // A patch that names a pin clears the venue, and the other way round.
+    // A patch that names a place clears the venue, and the other way round. A
+    // new name with no pin drops the old pin: it marks the place the game left.
     const placeGiven = patch.venueId !== undefined || patch.location !== undefined || patch.placeName !== undefined;
+    const renamed = patch.placeName != null && patch.placeName.trim() !== (before.placeName ?? '');
     const merged: GameInput = {
       sportId: patch.sportId ?? before.sportId,
       venueId: placeGiven ? (patch.venueId ?? null) : before.venueId,
-      location: placeGiven ? (patch.venueId ? null : (patch.location ?? before.location)) : before.location,
+      location: placeGiven ? (patch.venueId ? null : (patch.location ?? (renamed ? null : before.location))) : before.location,
       placeName: placeGiven ? (patch.venueId ? null : (patch.placeName ?? before.placeName)) : before.placeName,
       city: patch.city ?? before.city,
       startsAt: patch.startsAt ?? before.startsAt,

@@ -518,19 +518,19 @@ input CreateGameInput {
   """Players to invite as the game is published. Player ids."""
   inviteUserIds: [ID!]
 
-  """
-  games R9 — the pin, when the game is not at a listed venue. Needs placeName.
-  """
+  """games R9 — an optional pin for placeName."""
   location: GeoPointInput
   maxPlayers: Int!
   minPlayers: Int
   notes: String
+
+  """games R9 — where the game is, when it is not at a listed venue."""
   placeName: String
   skillBand: String
   sportId: ID!
   startsAt: DateTime!
 
-  """A listed venue. Leave out to use a pin."""
+  """A listed venue. Leave out to name the place."""
   venueId: ID
 }
 
@@ -4110,9 +4110,7 @@ input UpdateGameInput {
   endsAt: DateTime
   gameId: ID!
 
-  """
-  games R9 — the pin, when the game is not at a listed venue. Needs placeName.
-  """
+  """games R9 — an optional pin for placeName."""
   location: GeoPointInput
   maxPlayers: Int
 
@@ -4121,6 +4119,8 @@ input UpdateGameInput {
 
   """Null clears them."""
   notes: String
+
+  """games R9 — where the game is, when it is not at a listed venue."""
   placeName: String
 
   """Null clears it."""
@@ -4128,7 +4128,7 @@ input UpdateGameInput {
   sportId: ID
   startsAt: DateTime
 
-  """A listed venue. Leave out to use a pin."""
+  """A listed venue. Leave out to name the place."""
   venueId: ID
 }
 
