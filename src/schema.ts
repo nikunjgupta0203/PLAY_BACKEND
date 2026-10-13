@@ -11,6 +11,7 @@ import './modules/venues/schema/index.js';
 import './modules/events/schema/index.js';
 import './modules/registration/schema/index.js';
 import './modules/payments/schema/index.js';
+import './modules/venues/schema/hostApplications.js';
 import './modules/tournament/schema/index.js';
 import './modules/scoring/schema/index.js';
 import './modules/notifications/schema/index.js';

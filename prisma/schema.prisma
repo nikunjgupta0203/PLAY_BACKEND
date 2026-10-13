@@ -137,6 +137,8 @@ model User {
   venueVisits             VenueVisit[]
   payoutAccounts          PayoutAccount[]           @relation("payoutAccountUser")
   payoutAccountsReviewed  PayoutAccount[]           @relation("payoutAccountReviewer")
+  venueHostApplications   VenueHostApplication[]    @relation("venueHostApplicant")
+  venueHostReviews        VenueHostApplication[]    @relation("venueHostReviewer")
   eventReports            EventReport[]             @relation("eventReportAuthor")
   eventReportsResolved    EventReport[]             @relation("eventReportResolver")
 
@@ -521,11 +523,12 @@ model Venue {
   deletedAt      DateTime?                             @map("deleted_at") @db.Timestamptz(6)
   createdAt      DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  creator User          @relation(fields: [createdBy], references: [id])
-  courts  VenueCourt[]
-  events  Event[]
-  reviews VenueReview[]
-  visits  VenueVisit[]
+  creator          User                   @relation(fields: [createdBy], references: [id])
+  courts           VenueCourt[]
+  events           Event[]
+  reviews          VenueReview[]
+  visits           VenueVisit[]
+  hostApplications VenueHostApplication[]
 
   /// The migration makes this partial on `deleted_at IS NULL`, which Prisma
   /// cannot express. Discovery only reads live venues, so neither should the
@@ -576,6 +579,45 @@ model VenueVisit {
   @@id([source, sourceId, userId])
   @@index([venueId, userId, visitedAt(sort: Desc)])
   @@map("venue_visits")
+}
+
+/// venue hosts R1–R6 — someone asks to list their venue. PL4Y staff review it
+/// in the portal; approving creates the venue with the applicant as its owner.
+/// The bank details are not here: they are the applicant's payout account
+/// (payouts R2), so the PAN and account number are sealed in one place only.
+model VenueHostApplication {
+  id           String    @id @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  venueName    String    @map("venue_name")
+  address      String
+  city         String
+  /// Both or neither (CHECK). The applicant may not have a pin; staff give one when approving.
+  lat          Float?
+  lng          Float?
+  sportIds     String[]  @default([]) @map("sport_ids") @db.Uuid
+  courtCount   Int       @map("court_count") @db.SmallInt
+  contactPhone String    @map("contact_phone")
+  description  String?
+  /// pending | approved | rejected. CHECK in the migration.
+  status       String    @default("pending")
+  /// The sentence the applicant reads when rejected.
+  statusReason String?   @map("status_reason")
+  reviewedBy   String?   @map("reviewed_by") @db.Uuid
+  reviewedAt   DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  /// Set on approval: the venue that was created from this application.
+  venueId      String?   @map("venue_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user     User   @relation("venueHostApplicant", fields: [userId], references: [id])
+  reviewer User?  @relation("venueHostReviewer", fields: [reviewedBy], references: [id])
+  venue    Venue? @relation(fields: [venueId], references: [id])
+
+  /// The migration adds a partial unique index on (user_id) WHERE status =
+  /// 'pending' — one open application per person — which Prisma cannot express.
+  @@index([status, createdAt])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("venue_host_applications")
 }
 
 /// venues R6–R8 — one review per user per venue, editable; one staff reply.
@@ -1522,11 +1564,11 @@ model Conversation {
 
 /// chat R9 — append-only.
 model Message {
-  id             String   @id @db.Uuid
-  conversationId String   @map("conversation_id") @db.Uuid
-  senderId       String   @map("sender_id") @db.Uuid
+  id             String    @id @db.Uuid
+  conversationId String    @map("conversation_id") @db.Uuid
+  senderId       String    @map("sender_id") @db.Uuid
   body           String
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   /// chat R11 — the sender changed the body (within 15 minutes of sending).
   editedAt       DateTime? @map("edited_at") @db.Timestamptz(6)
   /// chat R12 — deleted for everyone. Soft: the body stays for moderation, never sent to players.

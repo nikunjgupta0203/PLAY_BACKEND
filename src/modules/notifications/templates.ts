@@ -28,6 +28,8 @@ export const DEEP_LINK_ROUTES = [
   'court_booking',
   /** N2 — an event's draw and schedule; `id` is the event's slug. */
   'event_draw',
+  /** venue hosts — the application to list a venue, and what was decided. */
+  'venue_host',
 ] as const;
 export type DeepLinkRoute = (typeof DEEP_LINK_ROUTES)[number];
 
@@ -103,6 +105,8 @@ export interface TemplatePayloads {
   'organizer.message': { eventTitle: string; message: string };
   /** payouts R3, R6 — the host's bank details were checked or reviewed. */
   'payout_account.status': { status: 'checking' | 'verified' | 'needs_review' | 'rejected' | 'suspended'; reason: string | null };
+  /** venue hosts R5 — PL4Y decided on an application to list a venue. `reason` is staff's own words. */
+  'venue_host.status': { status: 'approved' | 'rejected'; venueName: string; reason: string | null };
   /** payouts R13 — money sent, or a transfer that failed. */
   'payout.status': {
     eventTitle: string;
@@ -386,6 +390,12 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
           return { title: 'Checking your bank details', body: 'This usually takes under a minute.' };
       }
     },
+  },
+  'venue_host.status': {
+    render: (p) =>
+      p.status === 'approved'
+        ? { title: `${p.venueName} is on PL4Y`, body: 'Your venue is listed. Open it to add photos, opening hours and court prices.' }
+        : { title: `We couldn’t list ${p.venueName}`, body: p.reason ?? 'Open the app to see why, and apply again.' },
   },
   'payout.status': {
     render: (p) => {

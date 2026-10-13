@@ -53,6 +53,7 @@ interface Overview {
   moderationCases: number;
   openTickets: number;
   fraudCases: number;
+  venueHostApplications: number;
 }
 
 const OverviewRef = builder.objectRef<Overview>('AdminOverview').implement({
@@ -67,6 +68,7 @@ const OverviewRef = builder.objectRef<Overview>('AdminOverview').implement({
     moderationCases: t.exposeInt('moderationCases', { description: '15-admin R6 — reported people, reviews and messages waiting.' }),
     openTickets: t.exposeInt('openTickets', { description: '15-admin R7 — tickets waiting on support.' }),
     fraudCases: t.exposeInt('fraudCases', { description: '15-admin R8 — subjects over the review threshold.' }),
+    venueHostApplications: t.exposeInt('venueHostApplications', { description: 'venue hosts — applications to list a venue, waiting.' }),
   }),
 });
 
@@ -286,6 +288,7 @@ builder.queryFields((t) => ({
       await requirePlatformStaff(ctx);
       const { scoring } = await import('../../scoring/index.js');
       const { admin } = await import('../index.js');
+      const { venueHosts } = await import('../../venues/index.js');
       const [
         openReports,
         escalated,
@@ -296,6 +299,7 @@ builder.queryFields((t) => ({
         moderationCases,
         openTickets,
         fraudCases,
+        venueHostApplications,
       ] = await Promise.all([
           db.eventReport.count({ where: { status: 'open' } }),
           scoring.escalatedResults(),
@@ -306,6 +310,7 @@ builder.queryFields((t) => ({
           admin.openReportCount(),
           admin.openTicketCount(),
           admin.openFraudCaseCount(),
+          venueHosts.pendingCount(),
         ]);
       return {
         openReports,
@@ -317,6 +322,7 @@ builder.queryFields((t) => ({
         moderationCases,
         openTickets,
         fraudCases,
+        venueHostApplications,
       };
     },
   }),

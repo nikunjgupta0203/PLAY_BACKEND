@@ -122,6 +122,44 @@ stored as null when blank. Both are edited by whoever may edit the venue (R3).
 windows; a day with none is closed. An update replaces the whole week, and a malformed window is
 `INVALID_OPENING_HOURS` rather than a partial write.
 
+### Venue hosts (rule prefix `venue hosts R*`)
+
+Someone who owns or runs a venue asks, from the app's Home, for PL4Y to list it. The application
+(`venue_host_applications`, migration 045) waits in the portal's **Venue hosts** page; staff approve
+or reject it. Service: `venueHosts` (`service/hostApplications.ts`). GraphQL: `applyToHostVenue`,
+`myVenueHostApplication` for the app; `venueHostApplications`, `approveVenueHostApplication`,
+`rejectVenueHostApplication` for the portal (admin and support decide; both are audited).
+
+**venue hosts R1** — One application carries the venue (name, address, city, sports, number of
+courts, phone, optional description and map point) and where its earnings go. It is stored
+`pending`; nothing is listed until staff approve.
+
+**venue hosts R2** — Every venue field is checked before anything is saved: name 2–120 characters,
+address 5–300, city 2–80, at least one existing sport, 1–50 courts, a phone number of 10–13 digits,
+a description of at most 2,000 characters.
+
+**venue hosts R3** — The bank details are **not** stored on the application. They are saved as the
+applicant's payout account (`payments`, payouts R1–R2), so the PAN and account number are sealed
+once and reviewed once. An applicant who already has a payout account sends none and that account
+is used; with no account, or a rejected one, the application is refused with
+`BANK_DETAILS_REQUIRED`. The venue fields are checked first, so a typo in the address never spends
+one of the day's bank-detail changes.
+
+**venue hosts R4** — One open application per person (a partial unique index on `user_id` where
+`status = 'pending'`). A second submit is `HOST_APPLICATION_PENDING`. After a decision they may
+apply again.
+
+**venue hosts R5** — A decision is made once: approve and reject both claim the row out of
+`pending`, and the loser of a race gets `HOST_APPLICATION_DECIDED`. A rejection's reason is the
+sentence the applicant reads. Either way they are notified (`venue_host.status`). If the venue
+cannot be created, the application goes back to `pending`.
+
+**venue hosts R6** — Approving creates the venue with the applicant as its owner (`created_by`),
+with "Court 1" … "Court N" for every sport they named, and their phone and description. A venue
+needs a map point: staff may give one when approving, which replaces the applicant's; with neither,
+the approval is refused with `VENUE_LOCATION_REQUIRED`. The owner then runs the venue from the
+app's venue desk (19-bookings R7). The bank account is approved separately (payouts R6).
+
 ---
 
 ## Schema
@@ -218,6 +256,11 @@ CREATE UNIQUE INDEX venue_claim_one_pending ON venue_claims (venue_id) WHERE sta
 | `REVIEW_NOT_ELIGIBLE` | user | Explain "play here first" — R6 |
 | `VENUE_ALREADY_CLAIMED` | user | R9 |
 | `CLAIM_PENDING` | user | R9 |
+| `INVALID_VENUE_NAME`, `INVALID_ADDRESS`, `INVALID_CITY`, `INVALID_SPORTS`, `INVALID_COURT_COUNT`, `INVALID_PHONE` | user | venue hosts R2 |
+| `BANK_DETAILS_REQUIRED` | user | venue hosts R3 |
+| `HOST_APPLICATION_PENDING` | user | venue hosts R4 |
+| `HOST_APPLICATION_NOT_FOUND`, `HOST_APPLICATION_DECIDED` | user | venue hosts R5 |
+| `VENUE_LOCATION_REQUIRED` | user | venue hosts R6 — staff must give the map point |
 
 ## Emits
 

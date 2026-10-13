@@ -1,8 +1,10 @@
 /** The ONLY surface other modules may import (conventions.md §1). */
 import { db } from '../../platform/db.js';
 import { cloudinary } from '../../platform/cloudinary.js';
+import { logger } from '../../platform/logging/index.js';
 import { createVenueRepo } from './repo/index.js';
 import { createVenueService, type SchedulePort, type VisitsPort } from './service/index.js';
+import { createHostApplicationService, type HostBankPort } from './service/hostApplications.js';
 
 /**
  * `court_assignments` and `matches` belong to `tournament`, so venues asks
@@ -73,6 +75,49 @@ export const venues = createVenueService({
   },
 });
 
+/**
+ * venue hosts R3 — `payout_accounts` belongs to payments. Lazy for the same
+ * cycle reason as `schedule`.
+ */
+const hostBank: HostBankPort = {
+  async accountFor(userId) {
+    const { payouts } = await import('../payments/index.js');
+    const account = await payouts.myAccount(userId);
+    return account ? { id: account.id, status: account.status } : null;
+  },
+  async save(userId, details) {
+    const { payouts } = await import('../payments/index.js');
+    await payouts.saveAccount({ userId }, details);
+  },
+};
+
+/** venue hosts — applications to list a venue, reviewed in the portal. */
+export const venueHosts = createHostApplicationService({
+  db,
+  venues,
+  bank: hostBank,
+  async sportExists(sportId) {
+    const { sport } = await import('../sport/index.js');
+    return sport.byId(sportId).then(
+      () => true,
+      () => false,
+    );
+  },
+  async notify(userId, payload, venueId) {
+    const { notifications } = await import('../notifications/index.js');
+    await notifications
+      .emit(
+        userId,
+        'venue_host.status',
+        payload,
+        venueId ? { kind: 'venue', id: venueId } : { kind: 'route', route: 'venue_host' },
+      )
+      .catch((err: unknown) => logger.warn({ err, userId }, 'venue host decision: the notification was not sent'));
+  },
+});
+
+export { HostApplicationCode, HOST_APPLICATION_STATUSES, MAX_COURTS } from './service/hostApplications.js';
+export type { HostApplication, HostApplicationService, HostApplicationStatus } from './service/hostApplications.js';
 export {
   COURT_KINDS,
   MIN_REVIEWS_FOR_RATING,

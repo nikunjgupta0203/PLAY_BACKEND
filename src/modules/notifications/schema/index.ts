@@ -41,6 +41,7 @@ const DeepLinkRouteEnum = builder.enumType('DeepLinkRoute', {
     ORGANISATION: { value: 'organisation' as DeepLinkRoute },
     COURT_BOOKING: { value: 'court_booking' as DeepLinkRoute },
     EVENT_DRAW: { value: 'event_draw' as DeepLinkRoute },
+    VENUE_HOST: { value: 'venue_host' as DeepLinkRoute },
   },
 });
 

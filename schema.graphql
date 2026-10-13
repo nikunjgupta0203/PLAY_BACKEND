@@ -231,6 +231,9 @@ type AdminOverview {
   openTickets: Int!
   payoutsNeedingAttention: Int!
   suspendedOrganisations: Int!
+
+  """venue hosts — applications to list a venue, waiting."""
+  venueHostApplications: Int!
 }
 
 """
@@ -354,6 +357,32 @@ enum AdminUserStatus {
   DEACTIVATED
   DELETED
   SUSPENDED
+}
+
+input ApplyToHostVenueInput {
+  address: String!
+
+  """
+  Required for someone with no payout account (BANK_DETAILS_REQUIRED). Leave it out when myPayoutAccount already has one: that account is the one reviewed.
+  """
+  bank: HostBankDetailsInput
+  city: String!
+  contactPhone: String!
+
+  """1 to 50."""
+  courtCount: Int!
+
+  """At most 2,000 characters."""
+  description: String
+
+  """
+  Optional — the phone’s position when the applicant is at the venue. Staff set the point otherwise.
+  """
+  location: GeoPointInput
+
+  """At least one."""
+  sportIds: [ID!]!
+  venueName: String!
 }
 
 """
@@ -848,6 +877,7 @@ enum DeepLinkRoute {
   ORGANIZER_PAYOUTS
   PAYMENT_HISTORY
   SUPPORT_TICKET
+  VENUE_HOST
 }
 
 enum DevicePlatform {
@@ -1648,6 +1678,16 @@ type HomeHero {
   registration: Registration
 }
 
+"""
+payouts R1 — the same four fields savePayoutAccount takes. They are sealed; reads return masks only.
+"""
+input HostBankDetailsInput {
+  accountNumber: String!
+  ifsc: String!
+  legalName: String!
+  pan: String!
+}
+
 type HostRepaymentPayload {
   """What the host still owes after this repayment."""
   openPaise: Int
@@ -2248,7 +2288,17 @@ type Mutation {
   The next round from a round whose heats are all final: the top `perHeat` of each heat, then the `best` of the rest across heats.
   """
   advanceHeats(best: Int, eventCategoryId: ID!, name: String, perHeat: Int!): HeatPayload!
+
+  """
+  venue hosts R1–R4 — asks PL4Y to list your venue. Saves the bank details as your payout account (the errors of savePayoutAccount apply), then queues the application for review. One open application at a time (HOST_APPLICATION_PENDING).
+  """
+  applyToHostVenue(input: ApplyToHostVenueInput!): VenueHostApplicationPayload!
   approvePayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
+
+  """
+  portal — lists the venue: creates it with the applicant as its owner and the courts they counted. Their bank account is reviewed separately (approvePayoutAccount). `location` is the venue’s map point: required when the application has none (VENUE_LOCATION_REQUIRED), and it replaces the applicant’s when given.
+  """
+  approveVenueHostApplication(id: ID!, location: GeoPointInput, reason: String!): VenueHostApplicationPayload!
 
   """R13 — an organizer moving a match by hand. This is the normal case."""
   assignCourt(input: AssignCourtInput!): MatchPayload!
@@ -2537,6 +2587,11 @@ type Mutation {
   registerDevice(input: RegisterDeviceInput!): RegisterDevicePayload!
   reinstatePayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
   rejectPayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
+
+  """
+  portal — turns the application down. The applicant reads `reason`, and may apply again.
+  """
+  rejectVenueHostApplication(id: ID!, reason: String!): VenueHostApplicationPayload!
   releasePayout(id: ID!, reason: String!): PayoutPayload!
   removeCourtBlackout(
     blackoutId: ID!
@@ -2867,6 +2922,7 @@ enum NotificationKind {
   REGISTRATION_CONFIRMED
   REGISTRATION_EXPIRED
   SUPPORT_REPLY
+  VENUE_HOST_STATUS
   WAITLIST_OFFER
 }
 
@@ -3611,6 +3667,11 @@ type Query {
   mySupportTickets(first: Int, offset: Int): SupportTicketPage!
 
   """
+  venue hosts — your latest application to list a venue, whatever was decided. Null if you never applied.
+  """
+  myVenueHostApplication: VenueHostApplication
+
+  """
   app States — "no availability that day" offers the next date that has some.
   """
   nextAvailableBookingDate(durationMinutes: Int, from: String, venueId: ID!): String
@@ -3689,6 +3750,11 @@ type Query {
   """
   venueBookingSetup(venueId: ID!): VenueBookingSetup!
   venueDashboard(from: String!, to: String!, venueId: ID!): VenueDashboard!
+
+  """
+  portal — applications to list a venue. PENDING is oldest first (first come, first reviewed); the others, and no status, newest first. At most 200.
+  """
+  venueHostApplications(status: VenueHostApplicationStatus): [VenueHostApplication!]!
   venueSchedule(date: String!, venueId: ID!): VenueSchedule!
   venueStaff(venueId: ID!): [VenueStaffMember!]!
 
@@ -4698,6 +4764,61 @@ type VenueDashboard {
 type VenueEdge {
   cursor: String!
   node: Venue!
+}
+
+"""
+portal — who applied. Their contact details are on their user record, masked (15-admin R4).
+"""
+type VenueHostApplicant {
+  displayName: String!
+  id: ID!
+}
+
+"""
+venue hosts R1 — a request to list a venue, waiting for or decided by PL4Y staff.
+"""
+type VenueHostApplication {
+  address: String!
+
+  """portal — null outside it."""
+  applicant: VenueHostApplicant
+  city: String!
+  contactPhone: String!
+  courtCount: Int!
+  createdAt: DateTime!
+  description: String
+  id: ID!
+
+  """
+  Null when the applicant gave no map point; staff give one when approving.
+  """
+  location: GeoPoint
+
+  """
+  R3 — where the venue’s earnings go, masked. The applicant’s own, and staff’s to review; null to anyone else.
+  """
+  payoutAccount: PayoutAccount
+  reviewedAt: DateTime
+  sports: [Sport!]!
+  status: VenueHostApplicationStatus!
+
+  """When rejected: why, in staff’s words, for the applicant to read."""
+  statusReason: String
+
+  """R6 — the venue an approved application became."""
+  venue: Venue
+  venueName: String!
+}
+
+type VenueHostApplicationPayload {
+  application: VenueHostApplication
+  userError: UserError
+}
+
+enum VenueHostApplicationStatus {
+  APPROVED
+  PENDING
+  REJECTED
 }
 
 type VenuePayload {

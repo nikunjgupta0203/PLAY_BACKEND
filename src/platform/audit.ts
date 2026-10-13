@@ -36,6 +36,7 @@ export interface AuditEntry {
     | 'moderation_report'
     | 'support_ticket'
     | 'fraud_signal'
+    | 'venue_host_application'
     | 'venue'
     | 'court_booking'
     | 'game';
