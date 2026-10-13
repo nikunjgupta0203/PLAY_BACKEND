@@ -72,7 +72,7 @@ const OverviewRef = builder.objectRef<Overview>('AdminOverview').implement({
 
 // --- users -------------------------------------------------------------------------------
 
-interface AdminUser {
+export interface AdminUser {
   id: string;
   displayName: string;
   email: string;
@@ -81,16 +81,27 @@ interface AdminUser {
   isGuest: boolean;
   avatarPublicId: string | null;
   createdAt: Date;
+  deactivatedAt: Date | null;
+  deletionRequestedAt: Date | null;
 }
 
-const AdminUserRef = builder.objectRef<AdminUser>('AdminUser').implement({
+/** The statuses an account can be in; "deleted" is a deletion asked for, erased later by its job. */
+const USER_STATUSES = ['active', 'suspended', 'deactivated', 'deleted'] as const;
+
+const AdminUserStatusEnum = builder.enumType('AdminUserStatus', {
+  values: { ACTIVE: { value: 'active' }, SUSPENDED: { value: 'suspended' }, DEACTIVATED: { value: 'deactivated' }, DELETED: { value: 'deleted' } } as const,
+});
+
+export const AdminUserRef = builder.objectRef<AdminUser>('AdminUser').implement({
   description: 'portal — a person, with contact details masked (15-admin R4). adminRevealContact shows them, audited.',
   fields: (t) => ({
     id: t.exposeID('id'),
     displayName: t.exposeString('displayName'),
     emailMasked: t.string({ resolve: (u) => maskEmail(u.email) }),
     phoneMasked: t.string({ nullable: true, resolve: (u) => maskPhone(u.phone) }),
-    status: t.exposeString('status', { description: 'active | suspended | deleted' }),
+    status: t.exposeString('status', { description: USER_STATUSES.join(' | ') }),
+    deactivatedAt: t.field({ type: 'DateTime', nullable: true, resolve: (u) => u.deactivatedAt }),
+    deletionRequestedAt: t.field({ type: 'DateTime', nullable: true, resolve: (u) => u.deletionRequestedAt }),
     isGuest: t.exposeBoolean('isGuest'),
     avatarUrl: t.string({ nullable: true, resolve: (u) => cloudinary.url(u.avatarPublicId, TRANSFORMS.avatarSm) }),
     createdAt: t.field({ type: 'DateTime', resolve: (u) => u.createdAt }),
@@ -117,9 +128,22 @@ const USER_SELECT = {
   isGuest: true,
   avatarPublicId: true,
   createdAt: true,
+  deactivatedAt: true,
+  deletionRequestedAt: true,
 } as const;
 
-type UserRow = { id: string; displayName: string; email: string; phoneE164: string | null; status: string; isGuest: boolean; avatarPublicId: string | null; createdAt: Date };
+type UserRow = {
+  id: string;
+  displayName: string;
+  email: string;
+  phoneE164: string | null;
+  status: string;
+  isGuest: boolean;
+  avatarPublicId: string | null;
+  createdAt: Date;
+  deactivatedAt: Date | null;
+  deletionRequestedAt: Date | null;
+};
 
 const toAdminUser = (u: UserRow): AdminUser => ({ ...u, phone: u.phoneE164 });
 
@@ -299,20 +323,34 @@ builder.queryFields((t) => ({
 
   adminUsers: t.field({
     type: AdminUserPage,
-    description: 'portal — find people by email or name, newest first.',
-    args: { search: t.arg.string({ required: true }), first: t.arg.int(), offset: t.arg.int() },
+    description:
+      'portal — find people by email, name, phone or id, newest first. With a status and no search, everyone in that status.',
+    args: {
+      search: t.arg.string({ required: true }),
+      status: t.arg({ type: AdminUserStatusEnum }),
+      first: t.arg.int(),
+      offset: t.arg.int(),
+    },
     resolve: async (_root, args, ctx) => {
       await requirePlatformStaff(ctx);
       const q = args.search.trim();
       const first = clampFirst(args.first, 25);
-      if (q.length < 2) return { nodes: [], hasNextPage: false };
+      if (q.length < 2 && !args.status) return { nodes: [], hasNextPage: false };
+      // A phone as typed ("98765 43210", "+91-98765…"): matched on its digits, four or more.
+      const digits = /^[+\d\s()-]+$/.test(q) ? q.replace(/\D/g, '') : '';
       const rows = await db.user.findMany({
         where: {
-          OR: [
-            { email: { contains: q, mode: 'insensitive' } },
-            { displayName: { contains: q, mode: 'insensitive' } },
-            ...(/^[0-9a-f-]{36}$/i.test(q) ? [{ id: q }] : []),
-          ],
+          ...(args.status ? { status: args.status } : {}),
+          ...(q.length >= 2
+            ? {
+                OR: [
+                  { email: { contains: q, mode: 'insensitive' } },
+                  { displayName: { contains: q, mode: 'insensitive' } },
+                  ...(digits.length >= 4 ? [{ phoneE164: { contains: digits } }] : []),
+                  ...(/^[0-9a-f-]{36}$/i.test(q) ? [{ id: q }] : []),
+                ],
+              }
+            : {}),
         },
         select: USER_SELECT,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -456,6 +494,45 @@ builder.mutationFields((t) => ({
       const { data, userError } = await attempt(() =>
         audited(staff, { action: 'user.reinstate', targetType: 'user', targetId: userId }, args.reason, async (reason) => {
           await identity.reinstate(userId, reason);
+          return adminUserById(userId);
+        }),
+      );
+      return { user: data, userError };
+    },
+  }),
+
+  adminCancelUserDeletion: t.field({
+    type: AdminUserPayload,
+    description:
+      'identity R18 — the player asked to keep their account after all. Only before its details are erased; the account comes back as it was.',
+    args: { userId: t.arg.id({ required: true }), reason: t.arg.string({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const staff = await requirePlatformStaff(ctx, ['admin', 'support']);
+      const userId = String(args.userId);
+      const { data, userError } = await attempt(() =>
+        audited(staff, { action: 'user.cancel_deletion', targetType: 'user', targetId: userId }, args.reason, async () => {
+          if (!(await identity.cancelDeletionByStaff(userId))) {
+            throw new UserError(AdminCode.USER_NOT_FOUND, 'This account is not waiting to be deleted, or its details are already erased.');
+          }
+          return adminUserById(userId);
+        }),
+      );
+      return { user: data, userError };
+    },
+  }),
+
+  adminReactivateUser: t.field({
+    type: AdminUserPayload,
+    description: 'identity R19 — brings a deactivated account back when the player asks. They sign in as usual afterwards.',
+    args: { userId: t.arg.id({ required: true }), reason: t.arg.string({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const staff = await requirePlatformStaff(ctx, ['admin', 'support']);
+      const userId = String(args.userId);
+      const { data, userError } = await attempt(() =>
+        audited(staff, { action: 'user.reactivate', targetType: 'user', targetId: userId }, args.reason, async () => {
+          if (!(await identity.reactivateByStaff(userId))) {
+            throw new UserError(AdminCode.USER_NOT_FOUND, 'This account is not deactivated.');
+          }
           return adminUserById(userId);
         }),
       );

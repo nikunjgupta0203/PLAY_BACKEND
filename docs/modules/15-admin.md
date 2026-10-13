@@ -281,6 +281,49 @@ suspending anyone.
 
 ---
 
+## Added for the portal gap plan (2026-10-11)
+
+The plan and what is ticked: `PLAY_FRONTEND/apps/admin/docs/portal-gaps.md`. No migration.
+
+**Shared with a venue's or an event's own people.** These already let portal staff act as the owner.
+Each now takes an optional `reason`: from a portal session it is required and the call is audited
+(R2); from the app it is ignored. One helper does it, `auditedWhenStaff` in `src/graphql/staff.ts`.
+
+| Area | Operations |
+|---|---|
+| Events | `updateEvent`, `updateEventCategory`, `addEventCourt`, `removeEventCourt`, `cancelEvent`, `closeEventRegistration` |
+| Venues | `updateVenue`, `addVenuePhoto`, `deleteVenue`; `Venue.photos { publicId url }` is new |
+| Court bookings | `venueCancelCourtBooking`, `createWalkInBooking`, `checkInCourtBooking`, `markCourtBookingNoShow`, `addCourtBlackout`, `removeCourtBlackout` |
+
+**Staff only, read** (`src/modules/admin/schema/records.ts`; not audited, they write nothing):
+`adminUsers(status)` and phone search; on `AdminUser`: `city`, `sports`, `entries`, `courtBookings`,
+`games`, `payments`, `deactivatedAt`, `deletionRequestedAt`; `adminGames`, `adminGame`;
+`adminEventEntries`; `adminNumbers` (computed on request, at most 92 days — R9's nightly table is
+still not built).
+
+**Staff only, write** (reason required, audited):
+
+| Operation | What it does |
+|---|---|
+| `adminCancelGame` | Cancels a casual game; everyone who joined is told, the host too |
+| `adminRemoveGameComment` | Deletes one comment from a game's thread; the audit row keeps what it said |
+| `adminCancelUserDeletion` | Undoes a deletion the player asked for, until the scrub job has run |
+| `adminReactivateUser` | Brings a deactivated account back |
+| `adminResolveModeration(removeMessage: true)` | Also deletes the reported chat message for both people |
+| `staffRefundCourtBooking` | Refunds a court booking by hand, up to what is left; does not cancel it |
+
+Also opened to portal staff with a reason: `replyToVenueReview` (audit action `venue.review_reply`). And
+`AdminUser.notifications` reads what a person was sent, without marking it read.
+
+New audit target type: `game`. New audit actions: `event.update`, `event.draw_update`,
+`event.court_add`, `event.court_remove`, `event.cancel`, `event.close_registration`, `venue.update`,
+`venue.photo_add`, `venue.delete`, `venue.blackout_add`, `venue.blackout_remove`,
+`court_booking.cancel`, `court_booking.walk_in`, `court_booking.check_in`, `court_booking.no_show`,
+`court_booking.refund`, `game.cancel`, `game.comment_remove`, `user.cancel_deletion`,
+`user.reactivate`.
+
+---
+
 ## Implementation checklist
 
 - [ ] Migration `015_admin.sql`; revoke `UPDATE`/`DELETE` on `audit_log` from the app role (R2)

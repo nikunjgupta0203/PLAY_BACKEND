@@ -10,6 +10,7 @@
  */
 import { builder, clampFirst } from '../../../graphql/builder.js';
 import type { Ctx } from '../../../graphql/context.js';
+import { auditedWhenStaff } from '../../../graphql/staff.js';
 import { attempt, requireActor, UserErrorRef, type UserErrorShape } from '../../../graphql/userError.js';
 import { db } from '../../../platform/db.js';
 import { forbidden } from '../../../platform/errors/index.js';
@@ -26,6 +27,11 @@ async function actorOf(ctx: Ctx) {
   const platformStaff = actor.client === 'portal' && (await ctx.loaders.platformRole.load(actor.userId)) !== null;
   return { userId: actor.userId, platformStaff };
 }
+
+/** On the fields a venue's desk and portal staff share: staff must say why (portal R3). */
+const STAFF_REASON = 'PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.';
+
+const bookingTarget = (bookingId: string, action: string) => ({ action, targetType: 'court_booking', targetId: bookingId }) as const;
 
 // --- enums ------------------------------------------------------------------------------
 
@@ -449,7 +455,12 @@ builder.mutationFields((t) => ({
     args: { bookingId: t.arg.id({ required: true }), reason: t.arg.string({ required: true }) },
     resolve: async (_root, args, ctx) => {
       const actor = await actorOf(ctx);
-      const { data, userError } = await attempt(() => bookings.venueCancel(actor, String(args.bookingId), args.reason));
+      const bookingId = String(args.bookingId);
+      const { data, userError } = await attempt(() =>
+        auditedWhenStaff(actor, bookingTarget(bookingId, 'court_booking.cancel'), args.reason, () =>
+          bookings.venueCancel(actor, bookingId, args.reason),
+        ),
+      );
       return { booking: data, userError };
     },
   }),
@@ -457,40 +468,57 @@ builder.mutationFields((t) => ({
   createWalkInBooking: t.field({
     type: BookingPayload,
     description: 'bookings R8 — the desk books a court for someone in person or on the phone. Same constraint, no bypass.',
-    args: { input: t.arg({ type: WalkInInput, required: true }) },
+    args: { input: t.arg({ type: WalkInInput, required: true }), reason: t.arg.string({ description: STAFF_REASON }) },
     resolve: async (_root, args, ctx) => {
       const actor = await actorOf(ctx);
       const i = args.input;
-      const { data, userError } = await attempt(() =>
-        bookings.walkIn(actor, {
-          courtId: String(i.courtId),
-          startsAt: i.startsAt,
-          endsAt: i.endsAt,
-          name: i.name,
-          phone: i.phone,
-          paymentMode: i.payment === 'comp' ? 'comp' : 'offline',
-        }),
-      );
+      const courtId = String(i.courtId);
+      const { data, userError } = await attempt(async () => {
+        // The booking has no id yet, so the trail is kept on its venue.
+        const venueId = actor.platformStaff ? ((await venues.findCourtById(courtId))?.venueId ?? '') : '';
+        const what = {
+          action: 'court_booking.walk_in',
+          targetType: 'venue',
+          targetId: venueId,
+          details: { courtId, startsAt: i.startsAt.toISOString(), endsAt: i.endsAt.toISOString(), payment: i.payment },
+        } as const;
+        return auditedWhenStaff(actor, what, args.reason, () =>
+          bookings.walkIn(actor, {
+            courtId,
+            startsAt: i.startsAt,
+            endsAt: i.endsAt,
+            name: i.name,
+            phone: i.phone,
+            paymentMode: i.payment === 'comp' ? 'comp' : 'offline',
+          }),
+        );
+      });
       return { booking: data, userError };
     },
   }),
 
   checkInCourtBooking: t.field({
     type: BookingPayload,
-    args: { bookingId: t.arg.id({ required: true }) },
+    args: { bookingId: t.arg.id({ required: true }), reason: t.arg.string({ description: STAFF_REASON }) },
     resolve: async (_root, args, ctx) => {
       const actor = await actorOf(ctx);
-      const { data, userError } = await attempt(() => bookings.checkIn(actor, String(args.bookingId)));
+      const bookingId = String(args.bookingId);
+      const { data, userError } = await attempt(() =>
+        auditedWhenStaff(actor, bookingTarget(bookingId, 'court_booking.check_in'), args.reason, () => bookings.checkIn(actor, bookingId)),
+      );
       return { booking: data, userError };
     },
   }),
 
   markCourtBookingNoShow: t.field({
     type: BookingPayload,
-    args: { bookingId: t.arg.id({ required: true }) },
+    args: { bookingId: t.arg.id({ required: true }), reason: t.arg.string({ description: STAFF_REASON }) },
     resolve: async (_root, args, ctx) => {
       const actor = await actorOf(ctx);
-      const { data, userError } = await attempt(() => bookings.markNoShow(actor, String(args.bookingId)));
+      const bookingId = String(args.bookingId);
+      const { data, userError } = await attempt(() =>
+        auditedWhenStaff(actor, bookingTarget(bookingId, 'court_booking.no_show'), args.reason, () => bookings.markNoShow(actor, bookingId)),
+      );
       return { booking: data, userError };
     },
   }),
@@ -546,20 +574,22 @@ builder.mutationFields((t) => ({
 
   addCourtBlackout: t.field({
     type: SetupPayload,
-    args: { input: t.arg({ type: BlackoutInput, required: true }) },
+    args: { input: t.arg({ type: BlackoutInput, required: true }), reason: t.arg.string({ description: STAFF_REASON }) },
     resolve: async (_root, args, ctx) => {
       const actor = await actorOf(ctx);
       const i = args.input;
       const venueId = String(i.venueId);
+      const courtId = i.courtId ? String(i.courtId) : null;
+      const what = {
+        action: 'venue.blackout_add',
+        targetType: 'venue',
+        targetId: venueId,
+        details: { courtId, kind: i.kind, startsAt: i.startsAt.toISOString(), endsAt: i.endsAt.toISOString() },
+      } as const;
       const { data, userError } = await attempt(async () => {
-        await bookings.addBlackout(actor, {
-          venueId,
-          courtId: i.courtId ? String(i.courtId) : null,
-          kind: i.kind,
-          startsAt: i.startsAt,
-          endsAt: i.endsAt,
-          note: i.note,
-        });
+        await auditedWhenStaff(actor, what, args.reason, () =>
+          bookings.addBlackout(actor, { venueId, courtId, kind: i.kind, startsAt: i.startsAt, endsAt: i.endsAt, note: i.note }),
+        );
         return setupFor(actor, venueId);
       });
       return { setup: data, userError };
@@ -568,9 +598,24 @@ builder.mutationFields((t) => ({
 
   removeCourtBlackout: t.field({
     type: 'Boolean',
-    args: { blackoutId: t.arg.id({ required: true }) },
+    args: { blackoutId: t.arg.id({ required: true }), reason: t.arg.string({ description: STAFF_REASON }) },
     resolve: async (_root, args, ctx) => {
-      await bookings.removeBlackout(await actorOf(ctx), String(args.blackoutId));
+      const actor = await actorOf(ctx);
+      const blackoutId = String(args.blackoutId);
+      if (!actor.platformStaff) {
+        await bookings.removeBlackout(actor, blackoutId);
+        return true;
+      }
+      // Already gone: nothing to do, and nothing to record.
+      const row = await db.courtBlackout.findUnique({ where: { id: blackoutId } });
+      if (!row) return true;
+      const what = {
+        action: 'venue.blackout_remove',
+        targetType: 'venue',
+        targetId: row.venueId,
+        details: { blackoutId, courtId: row.courtId, startsAt: row.startsAt.toISOString(), endsAt: row.endsAt.toISOString() },
+      } as const;
+      await auditedWhenStaff(actor, what, args.reason, () => bookings.removeBlackout(actor, blackoutId));
       return true;
     },
   }),

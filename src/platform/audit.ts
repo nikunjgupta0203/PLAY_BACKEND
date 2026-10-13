@@ -37,7 +37,8 @@ export interface AuditEntry {
     | 'support_ticket'
     | 'fraud_signal'
     | 'venue'
-    | 'court_booking';
+    | 'court_booking'
+    | 'game';
   targetId: string;
   reason?: string | null;
   details?: Record<string, unknown>;

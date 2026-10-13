@@ -65,3 +65,18 @@ export async function audited<T>(
   await settleAudit(db, auditId);
   return result;
 }
+
+/**
+ * portal R3 — for fields a venue's or an event's own people call from the app
+ * and PL4Y staff call from the portal (`platformStaff`). Staff say why and the
+ * call is audited; anyone else runs it as it is, with no reason asked.
+ */
+export async function auditedWhenStaff<T>(
+  actor: { userId: string; platformStaff?: boolean },
+  what: Omit<AuditEntry, 'actorUserId' | 'reason'>,
+  rawReason: string | null | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!actor.platformStaff) return fn();
+  return audited(actor, what, rawReason, fn);
+}

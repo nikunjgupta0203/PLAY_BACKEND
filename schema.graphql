@@ -26,6 +26,14 @@ type AddOrganisationMemberPayload {
   userError: UserError
 }
 
+type AdminCityNumbers {
+  bookings: Int!
+  city: String!
+  entries: Int!
+  games: Int!
+  signups: Int!
+}
+
 type AdminClosedPayload {
   closed: Int
   userError: UserError
@@ -37,10 +45,173 @@ type AdminContactPayload {
   userError: UserError
 }
 
+type AdminDayNumbers {
+  """Court bookings made that went ahead or still stand."""
+  bookings: Int!
+
+  """The India day, YYYY-MM-DD."""
+  date: String!
+
+  """Event entries confirmed that day."""
+  entries: Int!
+
+  """Casual games created."""
+  games: Int!
+
+  """Captured in the app."""
+  paidPaise: Int!
+  refundedPaise: Int!
+  signups: Int!
+}
+
+type AdminEntryLedgerLine {
+  amountPaise: Int!
+  createdAt: DateTime!
+  kind: String!
+}
+
+"""
+portal — one entry on an event: who, where it stands, and every money movement against it.
+"""
+type AdminEventEntry {
+  amountPaise: Int!
+  captainId: ID!
+  captainName: String!
+  checkedInAt: DateTime
+  confirmedAt: DateTime
+  createdAt: DateTime!
+  drawName: String!
+  id: ID!
+
+  """Partners invited who have not answered, by masked email."""
+  invitesPending: [String!]!
+
+  """Oldest first."""
+  ledger: [AdminEntryLedgerLine!]!
+
+  """Team-mates who have joined, by name."""
+  partners: [String!]!
+  paymentMode: String!
+  status: String!
+
+  """1 is next. Null when not waiting."""
+  waitlistPlace: Int
+  withdrawnReason: String
+}
+
 type AdminEventPage {
   hasNextPage: Boolean!
   nodes: [Event!]!
   total: Int!
+}
+
+"""portal — a casual game, any status."""
+type AdminGame {
+  cancelReason: String
+  cancelledAt: DateTime
+  city: String!
+
+  """The game’s thread, oldest first."""
+  comments: [AdminGameComment!]!
+  createdAt: DateTime!
+  endsAt: DateTime!
+  hostId: ID!
+  hostName: String!
+  id: ID!
+  joinedCount: Int!
+  maxPlayers: Int!
+  notes: String
+
+  """The venue’s name, else what the host typed."""
+  place: String!
+
+  """Everyone who joined, including those who left."""
+  players: [AdminGamePlayer!]!
+  results: [AdminGameResult!]!
+
+  """On a player’s record: host, joined, or how they left."""
+  role: String
+  skillBand: String
+  sportName: String!
+  startsAt: DateTime!
+
+  """open | full | cancelled | completed"""
+  status: String!
+  venueId: ID
+}
+
+type AdminGameComment {
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+  name: String!
+  userId: ID!
+}
+
+type AdminGamePage {
+  hasNextPage: Boolean!
+  nodes: [AdminGame!]!
+}
+
+type AdminGamePayload {
+  game: AdminGame
+  userError: UserError
+}
+
+type AdminGamePlayer {
+  joinedAt: DateTime!
+  name: String!
+
+  """joined, or how they left."""
+  status: String!
+  userId: ID!
+}
+
+"""games — a result players entered. Unranked: it counts for no rating."""
+type AdminGameResult {
+  confirmedAt: DateTime
+  disputedAt: DateTime
+
+  """Who said it is not right."""
+  disputedBy: String
+  enteredBy: String!
+  id: ID!
+  playedAt: DateTime!
+
+  """
+  "21–15, 18–21, 21–19"
+  """
+  score: String!
+
+  """Names."""
+  sideA: [String!]!
+  sideB: [String!]!
+
+  """pending | confirmed | disputed"""
+  status: String!
+
+  """A | B; null is a draw."""
+  winner: String
+}
+
+enum AdminGameStatus {
+  CANCELLED
+  COMPLETED
+  FULL
+  OPEN
+}
+
+"""
+portal — sign-ups, entries, games, bookings and money, by India day and by city. Computed on request.
+"""
+type AdminNumbers {
+  """Busiest first."""
+  cities: [AdminCityNumbers!]!
+
+  """Every day in the range, oldest first."""
+  days: [AdminDayNumbers!]!
+  from: String!
+  to: String!
 }
 
 """portal — what is waiting on someone."""
@@ -67,22 +238,71 @@ portal — a person, with contact details masked (15-admin R4). adminRevealConta
 """
 type AdminUser {
   avatarUrl: String
+  city: String
+
+  """Courts they booked, newest first."""
+  courtBookings: [AdminUserCourtBooking!]!
   createdAt: DateTime!
+  deactivatedAt: DateTime
+  deletionRequestedAt: DateTime
   displayName: String!
   emailMasked: String!
 
+  """Event entries they made or are a partner on, newest first."""
+  entries: [AdminUserEntry!]!
+
   """Registrations they made, in any state."""
   entriesCount: Int!
+
+  """Casual games they hosted or joined, newest first."""
+  games: [AdminGame!]!
 
   """Events they own, manage or score, newest first."""
   hostedEvents: [Event!]!
   id: ID!
   isGuest: Boolean!
+
+  """
+  What PL4Y sent them, as their own feed shows it, newest first. Reading it here does not mark anything read.
+  """
+  notifications: [Notification!]!
   organisations: [OrganisationMembership!]!
+
+  """What they paid in the app, for entries and for courts, newest first."""
+  payments: [AdminUserPayment!]!
   phoneMasked: String
   platformRole: String
 
-  """active | suspended | deleted"""
+  """The sports on their profile, with the rating in each."""
+  sports: [AdminUserSport!]!
+
+  """active | suspended | deactivated | deleted"""
+  status: String!
+}
+
+type AdminUserCourtBooking {
+  amountPaise: Int!
+  courtName: String!
+  endsAt: DateTime!
+  id: ID!
+  paymentMode: String!
+  startsAt: DateTime!
+  status: String!
+  venueId: ID!
+  venueName: String!
+}
+
+type AdminUserEntry {
+  amountPaise: Int!
+  createdAt: DateTime!
+  drawName: String!
+  eventSlug: String!
+  eventTitle: String!
+  id: ID!
+
+  """False: a partner on someone else’s entry."""
+  paidByThem: Boolean!
+  paymentMode: String!
   status: String!
 }
 
@@ -94,6 +314,46 @@ type AdminUserPage {
 type AdminUserPayload {
   user: AdminUser
   userError: UserError
+}
+
+"""
+One payment as its receipt reads: what it was for, how it splits, what went back.
+"""
+type AdminUserPayment {
+  amountPaise: Int!
+  capturedAt: DateTime
+  createdAt: DateTime!
+
+  """The entry fee, or the court price."""
+  entryFeePaise: Int!
+  eventSlug: String
+
+  """The gateway’s own id, to find it in Razorpay."""
+  gatewayPaymentId: String!
+  id: ID!
+  method: String
+  paidFor: String!
+  platformFeePaise: Int!
+  refundedPaise: Int!
+  status: String!
+  taxPaise: Int!
+}
+
+type AdminUserSport {
+  isProvisional: Boolean!
+  matchesPlayed: Int!
+
+  """Null until they have a rated match."""
+  rating: Float
+  skillBand: String!
+  sportName: String!
+}
+
+enum AdminUserStatus {
+  ACTIVE
+  DEACTIVATED
+  DELETED
+  SUSPENDED
 }
 
 """
@@ -1820,13 +2080,28 @@ type Mutation {
   """
   acceptPartnerInvite(token: String!): RegistrationPayload!
   addCourt(input: CourtInput!, venueId: ID!): CourtPayload!
-  addCourtBlackout(input: CourtBlackoutInput!): VenueBookingSetupPayload!
+  addCourtBlackout(
+    input: CourtBlackoutInput!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): VenueBookingSetupPayload!
   addEventCategory(eventId: ID!, input: EventCategoryInput!): EventCategoryPayload!
 
   """
   F14 — a court the host has for this event ("Court 1"). The scheduler uses these first.
   """
-  addEventCourt(eventId: ID!, name: String!): EventCourtPayload!
+  addEventCourt(
+    eventId: ID!
+    name: String!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): EventCourtPayload!
 
   """A Cloudinary public_id, never a URL (ADR 0003 §C3)."""
   addEventMedia(eventId: ID!, kind: EventMediaKind!, publicId: String!, sortOrder: Int): EventPayload!
@@ -1871,13 +2146,28 @@ type Mutation {
   addVenuePhoto(
     """Never a URL (ADR 0003 §C3)."""
     publicId: String!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
     venueId: ID!
   ): VenuePayload!
   adminAddOrganisationMember(email: String!, organisationId: ID!, reason: String!, role: OrganisationAddableRole!): AddOrganisationMemberPayload!
 
   """Take a ticket (assign it to yourself), or let it go (toMe false)."""
   adminAssignSupportTicket(ticketId: ID!, toMe: Boolean!): StaffSupportTicketPayload!
+
+  """
+  games — PL4Y cancels a casual game. Everyone who joined is told, the host too, with the reason, as when the host cancels.
+  """
+  adminCancelGame(gameId: ID!, reason: String!): AdminGamePayload!
   adminCancelOrganisationInvite(inviteId: ID!, reason: String!): OrganisationOkPayload!
+
+  """
+  identity R18 — the player asked to keep their account after all. Only before its details are erased; the account comes back as it was.
+  """
+  adminCancelUserDeletion(reason: String!, userId: ID!): AdminUserPayload!
 
   """
   portal — PL4Y staff create a draft hosted by an organisation (required). Its draws, edits and publishing then go through the usual mutations, which staff may call on any event.
@@ -1891,8 +2181,18 @@ type Mutation {
   portal — PL4Y staff add a venue. With `ownerEmail`, that PL4Y account owns it: edits it and runs its desk from the app. Without, staff manage it from the portal.
   """
   adminCreateVenue(input: CreateVenueInput!, ownerEmail: String, reason: String!): VenuePayload!
+
+  """
+  identity R19 — brings a deactivated account back when the player asks. They sign in as usual afterwards.
+  """
+  adminReactivateUser(reason: String!, userId: ID!): AdminUserPayload!
   adminReinstateOrganisation(organisationId: ID!, reason: String!): OrganisationPayload!
   adminReinstateUser(reason: String!, userId: ID!): AdminUserPayload!
+
+  """
+  games — takes one comment out of a game’s thread, for everyone. What it said is kept in the audit log.
+  """
+  adminRemoveGameComment(commentId: ID!, reason: String!): AdminGamePayload!
   adminRemoveOrganisationMember(organisationId: ID!, reason: String!, userId: ID!): OrganisationOkPayload!
 
   """
@@ -1902,9 +2202,17 @@ type Mutation {
   adminResendOrganisationInvite(inviteId: ID!, reason: String!): OrganisationOkPayload!
 
   """
-  admin R6 — close every open report on a target. Acting on a review keeps it hidden; dismissing shows it.
+  admin R6 — close every open report on a target. Acting on a review keeps it hidden; dismissing shows it. Acting on a message with `removeMessage` also deletes it for everyone.
   """
-  adminResolveModeration(outcome: ModerationStatus!, reason: String!, targetId: ID!, targetType: ReportTarget!): AdminClosedPayload!
+  adminResolveModeration(
+    outcome: ModerationStatus!
+    reason: String!
+
+    """A reported chat message, acted on: delete it as its sender could."""
+    removeMessage: Boolean
+    targetId: ID!
+    targetType: ReportTarget!
+  ): AdminClosedPayload!
 
   """
   15-admin R4 — a person’s full email and phone, for a reason that is audited.
@@ -1979,12 +2287,26 @@ type Mutation {
   registration R13 — a staff scan of an entrant’s QR. Idempotent: a re-scan returns the entry with its original check-in time.
   """
   checkInByToken(token: String!): RegistrationPayload!
-  checkInCourtBooking(bookingId: ID!): CourtBookingPayload!
+  checkInCourtBooking(
+    bookingId: ID!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): CourtBookingPayload!
 
   """
   Owner or manager. Closes registration now so the draws can be made. Draws below their minimum entries are cancelled and refunded, exactly as at the deadline.
   """
-  closeEventRegistration(eventId: ID!): EventPayload!
+  closeEventRegistration(
+    eventId: ID!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): EventPayload!
 
   """
   Host only, once the game has started. A game also completes by itself when its end time passes.
@@ -2044,7 +2366,14 @@ type Mutation {
   """
   bookings R8 — the desk books a court for someone in person or on the phone. Same constraint, no bypass.
   """
-  createWalkInBooking(input: WalkInBookingInput!): CourtBookingPayload!
+  createWalkInBooking(
+    input: WalkInBookingInput!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): CourtBookingPayload!
 
   """
   identity R19 — temporary. Ends every session and hides the profile; ratings, history, entries and payments are kept. Signing in again offers to reactivate. Permanent deletion is requestAccountDeletion.
@@ -2061,7 +2390,13 @@ type Mutation {
   """
   venues R5 — soft delete. Completed tournaments keep resolving their venue.
   """
-  deleteVenue(venueId: ID!): VenuePayload!
+  deleteVenue(
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+    venueId: ID!
+  ): VenuePayload!
 
   """
   games R15 — "not right": the result counts for nothing and whoever entered it is told.
@@ -2122,7 +2457,14 @@ type Mutation {
   logout(allDevices: Boolean = false): OkPayload!
   markAllNotificationsRead: MarkReadPayload!
   markConversationRead(conversationId: ID!): ConversationPayload!
-  markCourtBookingNoShow(bookingId: ID!): CourtBookingPayload!
+  markCourtBookingNoShow(
+    bookingId: ID!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): CourtBookingPayload!
 
   """At most 100 ids. Ids that are not the viewer’s are ignored (R8)."""
   markNotificationsRead(ids: [ID!]!): MarkReadPayload!
@@ -2196,7 +2538,14 @@ type Mutation {
   reinstatePayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
   rejectPayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
   releasePayout(id: ID!, reason: String!): PayoutPayload!
-  removeCourtBlackout(blackoutId: ID!): Boolean!
+  removeCourtBlackout(
+    blackoutId: ID!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): Boolean!
 
   """
   F19 — deletes a draw nobody has entered. A published event keeps at least one.
@@ -2206,7 +2555,15 @@ type Mutation {
   """
   F14 — retires one of the event’s courts. Matches already on it keep it.
   """
-  removeEventCourt(courtId: ID!, eventId: ID!): OrganizerOkPayload!
+  removeEventCourt(
+    courtId: ID!
+    eventId: ID!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): OrganizerOkPayload!
   removeEventStaff(eventId: ID!, userId: ID!): EventStaffPayload!
 
   """Host only. The removed player cannot rejoin (games R5)."""
@@ -2223,7 +2580,14 @@ type Mutation {
   replySupportTicket(body: String!, ticketId: ID!): SupportTicketPayload!
 
   """venues R8 — the venue’s one public reply to a review."""
-  replyToVenueReview(input: ReplyVenueReviewInput!): VenueReviewPayload!
+  replyToVenueReview(
+    input: ReplyVenueReviewInput!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): VenueReviewPayload!
 
   """admin R6 — report a player, a venue review or a chat message."""
   reportContent(note: String, reason: ReportReason!, targetId: ID!, targetType: ReportTarget!): ReportContentPayload!
@@ -2320,6 +2684,11 @@ type Mutation {
   ): MatchResultPayload!
 
   """
+  portal — PL4Y staff refund a court booking by hand, up to what is left of its payment. Money only: it does not cancel the booking. Admin web only.
+  """
+  staffRefundCourtBooking(amountPaise: Int!, bookingId: ID!, reason: String!): StaffRefundPayload!
+
+  """
   gap #33 — PL4Y staff refund one entry by hand, up to what is left of its payment. Admin web only.
   """
   staffRefundRegistration(amountPaise: Int!, reason: String!, registrationId: ID!): StaffRefundPayload!
@@ -2348,8 +2717,24 @@ type Mutation {
   """
   unregisterDevice(token: String!): RegisterDevicePayload!
   updateCourt(courtId: ID!, input: UpdateCourtInput!): CourtPayload!
-  updateEvent(eventId: ID!, input: UpdateEventInput!): EventPayload!
-  updateEventCategory(categoryId: ID!, input: UpdateEventCategoryInput!): EventCategoryPayload!
+  updateEvent(
+    eventId: ID!
+    input: UpdateEventInput!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): EventPayload!
+  updateEventCategory(
+    categoryId: ID!
+    input: UpdateEventCategoryInput!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): EventCategoryPayload!
 
   """
   Host only. A new time or place notifies every joined player (games R7).
@@ -2363,7 +2748,15 @@ type Mutation {
   updateProfileDetails(input: UpdateProfileDetailsInput!): ProfilePayload!
   updateProfileLocation(input: UpdateProfileLocationInput!): ProfilePayload!
   updateProfileSports(input: UpdateProfileSportsInput!): ProfilePayload!
-  updateVenue(input: UpdateVenueInput!, venueId: ID!): VenuePayload!
+  updateVenue(
+    input: UpdateVenueInput!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+    venueId: ID!
+  ): VenuePayload!
 
   """
   bookings R6 — the venue cancels; everything is refunded, the platform fee too. Managers.
@@ -3066,13 +3459,29 @@ type Query {
   """
   adminAuditLog(first: Int, offset: Int, targetId: String, targetType: String): AuditPage!
 
+  """
+  portal — every entry on an event, newest first, with its partners, its place on the waitlist and its money.
+  """
+  adminEventEntries(eventId: ID!): [AdminEventEntry!]!
+
   """portal — any event, any status, by title or link; soonest start first."""
   adminEvents(first: Int, offset: Int, search: String, status: EventStatus): AdminEventPage!
   adminFraudQueue(first: Int, offset: Int, reviewed: Boolean): FraudCasePage!
 
   """Every signal on one person, for their page in the portal."""
   adminFraudSignalsFor(userId: ID!): [FraudSignal!]!
+  adminGame(id: ID!): AdminGame
+
+  """
+  portal — casual games, any status, newest start first. Search matches the place, the city or the host’s name.
+  """
+  adminGames(first: Int, hostId: ID, offset: Int, search: String, sportId: ID, status: AdminGameStatus): AdminGamePage!
   adminModerationQueue(first: Int, offset: Int, status: ModerationStatus): ModerationPage!
+
+  """
+  portal — the platform by day and by city. Dates are India days (YYYY-MM-DD), at most 92 of them.
+  """
+  adminNumbers(from: String!, to: String!): AdminNumbers!
   adminOrganisation(id: ID!): Organisation
 
   """portal — every organisation, newest first. Staff only."""
@@ -3083,8 +3492,10 @@ type Query {
   adminSupportTickets(first: Int, offset: Int, search: String, status: SupportTicketStatus): StaffSupportTicketPage!
   adminUser(id: ID!): AdminUser
 
-  """portal — find people by email or name, newest first."""
-  adminUsers(first: Int, offset: Int, search: String!): AdminUserPage!
+  """
+  portal — find people by email, name, phone or id, newest first. With a status and no search, everyone in that status.
+  """
+  adminUsers(first: Int, offset: Int, search: String!, status: AdminUserStatus): AdminUserPage!
 
   """
   registration R13 — every confirmed entry, for scanning offline. Any staff grant on the event. Check-ins made offline replay through `checkInByToken`.
@@ -4199,6 +4610,11 @@ type Venue {
   openingHours: [OpeningHours!]!
   photoUrls: [String!]!
 
+  """
+  The same photos as photoUrls, in order, each with the id updateVenue(photoPublicIds) takes: send the list without one to remove it, or reordered to reorder.
+  """
+  photos: [VenuePhoto!]!
+
   """venues R7 — the average of visible reviews. Null until there are 3."""
   rating: Float
   reviewCount: Int!
@@ -4287,6 +4703,11 @@ type VenueEdge {
 type VenuePayload {
   userError: UserError
   venue: Venue
+}
+
+type VenuePhoto {
+  publicId: String!
+  url: String!
 }
 
 """venues R6–R8 — one player’s review of a venue they played at."""

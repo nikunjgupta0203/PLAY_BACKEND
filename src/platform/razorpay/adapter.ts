@@ -21,7 +21,8 @@
  * pages, 3-D Secure) would never find their way back.
  *
  * Test and live mode are the key, not a host: `rzp_test_…` keys never move
- * money. config.ts refuses a test key in production.
+ * money. config.ts refuses a test key in production unless
+ * RAZORPAY_ALLOW_TEST_KEY=true.
  */
 import { GatewayError } from '../gatewayError.js';
 import type {

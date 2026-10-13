@@ -569,6 +569,31 @@ export function createGamesService(deps: GamesDeps) {
     return db.gameComment.findMany({ where: { gameId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: 200 });
   }
 
+  /**
+   * portal — PL4Y cancels a game (unsafe, a scam, the host has gone). The same
+   * as the host cancelling, except everyone who joined is told, the host too.
+   */
+  async function cancelByStaff(gameId: string, reason: string): Promise<Game> {
+    const game = await byId(gameId);
+    if (game.status === 'cancelled') return game;
+    if (game.status === 'completed') throw closed('This game has already been played.');
+    const why = reason.trim().slice(0, 200) || null;
+    await db.game.updateMany({
+      where: { id: gameId, status: { in: ['open', 'full'] } },
+      data: { status: 'cancelled', cancelReason: why, cancelledAt: now(), updatedAt: now() },
+    });
+    await tell(game.playerUserIds, 'game.cancelled', { ...(await facts(game)), reason: why }, gameId);
+    return byId(gameId);
+  }
+
+  /** portal — a comment that should not be in a game's thread. Gone for everyone; null when it already was. */
+  async function removeCommentByStaff(commentId: string): Promise<GameComment | null> {
+    const row = await db.gameComment.findUnique({ where: { id: commentId } });
+    if (!row) return null;
+    await db.gameComment.delete({ where: { id: commentId } });
+    return row;
+  }
+
   async function addComment(actor: Actor, gameId: string, body: string): Promise<GameComment> {
     const text = body.trim();
     if (text.length < 1 || text.length > COMMENT_MAX) throw invalid(`A message is 1 to ${COMMENT_MAX} characters.`);
@@ -630,6 +655,8 @@ export function createGamesService(deps: GamesDeps) {
     leave,
     removePlayer,
     cancel,
+    cancelByStaff,
+    removeCommentByStaff,
     complete,
     invite,
     lookupByPhone,

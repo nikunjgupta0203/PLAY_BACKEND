@@ -109,6 +109,10 @@ export const configSchema = z.object({
   // Test or live is the key itself: rzp_test_… never moves money.
   RAZORPAY_KEY_ID: z.string().default(''),
   RAZORPAY_KEY_SECRET: z.string().default(''),
+  // `true` lets production boot on an rzp_test_… key, to try checkout on the
+  // live deploy. While it is on, anyone can "pay" with a test UPI id and hold
+  // a confirmed entry, so startup warns. Remove it with the test key.
+  RAZORPAY_ALLOW_TEST_KEY: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
   // The secret set on the webhook in the Razorpay dashboard — not the key secret.
   RAZORPAY_WEBHOOK_SECRET: z.string().default(''),
   // The backend's public origin. The app opens checkout at
@@ -189,9 +193,18 @@ export const configSchema = z.object({
     message: 'razorpay needs RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET and PUBLIC_API_URL',
   },
 ).refine(
-  // A production deploy must never take real players to a test-mode checkout.
-  (c) => c.NODE_ENV !== 'production' || c.PAYMENT_PROVIDER !== 'razorpay' || c.RAZORPAY_KEY_ID.startsWith('rzp_live_'),
-  { path: ['RAZORPAY_KEY_ID'], message: 'must be a live key (rzp_live_…) in production when PAYMENT_PROVIDER=razorpay' },
+  // A production deploy must never take real players to a test-mode checkout
+  // by accident — only when RAZORPAY_ALLOW_TEST_KEY says it is meant.
+  (c) =>
+    c.NODE_ENV !== 'production' ||
+    c.PAYMENT_PROVIDER !== 'razorpay' ||
+    c.RAZORPAY_KEY_ID.startsWith('rzp_live_') ||
+    c.RAZORPAY_ALLOW_TEST_KEY,
+  {
+    path: ['RAZORPAY_KEY_ID'],
+    message:
+      'must be a live key (rzp_live_…) in production when PAYMENT_PROVIDER=razorpay (RAZORPAY_ALLOW_TEST_KEY=true to override)',
+  },
 ).refine(
   // The app opens checkout here, and Razorpay posts the player back here.
   (c) => c.NODE_ENV !== 'production' || c.PAYMENT_PROVIDER !== 'razorpay' || c.PUBLIC_API_URL.startsWith('https://'),
@@ -252,6 +265,13 @@ export function silentTransports(c: Pick<Config, 'NODE_ENV' | 'PUSH_TRANSPORT' |
   if (c.PUSH_TRANSPORT === 'console') off.push('PUSH_TRANSPORT=console — push notifications are logged, never sent (set expo)');
   if (c.EMAIL_TRANSPORT === 'console') off.push('EMAIL_TRANSPORT=console — emails and sign-in codes are logged, never sent (set resend)');
   return off;
+}
+
+/** Production running Razorpay on a test key (RAZORPAY_ALLOW_TEST_KEY). Startup warns: no payment is real. */
+export function testModePayments(
+  c: Pick<Config, 'NODE_ENV' | 'PAYMENT_PROVIDER' | 'RAZORPAY_KEY_ID'> = config,
+): boolean {
+  return c.NODE_ENV === 'production' && c.PAYMENT_PROVIDER === 'razorpay' && !c.RAZORPAY_KEY_ID.startsWith('rzp_live_');
 }
 
 /**

@@ -10,6 +10,10 @@ export const admin = createAdminService({
     const { venues } = await import('../venues/index.js');
     return venues.setReviewHidden(reviewId, hidden);
   },
+  async removeMessage(messageId) {
+    const { chat } = await import('../chat/index.js');
+    return chat.removeByStaff(messageId);
+  },
   async notifySupportReply(userId, ticketId, subject) {
     const { notifications } = await import('../notifications/index.js');
     await notifications.emit(userId, 'support.reply', { subject }, { kind: 'route', route: 'support_ticket', id: ticketId });

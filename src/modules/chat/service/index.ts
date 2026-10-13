@@ -795,6 +795,29 @@ export function createChatService(deps: ChatDeps) {
   }
 
   /**
+   * portal — a moderator deletes a reported message. Deleted for everyone, as
+   * the sender's own delete (R12) leaves it, and the other side's thread is
+   * nudged the same way. False when there is no such message.
+   */
+  async function removeByStaff(messageId: string): Promise<boolean> {
+    const found = await db.message.findUnique({ where: { id: messageId } });
+    if (!found) return false;
+    if (found.deletedAt) return true;
+    const sender = await profiles.findById(found.senderId);
+    try {
+      if (sender) {
+        await remove({ userId: sender.userId }, messageId);
+        return true;
+      }
+    } catch (err) {
+      // The sender can no longer see the conversation (hidden, or their account is gone): delete it directly.
+      if (!(err instanceof UserError)) throw err;
+    }
+    await db.message.update({ where: { id: messageId }, data: { deletedAt: now() } });
+    return true;
+  }
+
+  /**
    * R14 — tells the other side the viewer is typing. Silent (no error, no
    * signal) when the viewer cannot send there, has been blocked (R6), or is
    * over the limit: a missed "typing…" costs nothing.
@@ -846,6 +869,7 @@ export function createChatService(deps: ChatDeps) {
     send,
     edit,
     remove,
+    removeByStaff,
     typing,
     accept,
     decline,

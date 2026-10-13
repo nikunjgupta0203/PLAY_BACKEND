@@ -1340,6 +1340,30 @@ export function createPaymentsService(deps: PaymentsDeps) {
     });
   }
 
+  /**
+   * portal — the same for a court booking (portal-gaps C6): PL4Y refunds an
+   * amount by hand, up to what is left of the booking's payment. Money only;
+   * the booking itself is cancelled, or not, on the venue's day.
+   */
+  async function staffRefundBooking(
+    staff: { userId: string; role: string },
+    input: { bookingId: string; amountPaise: bigint; reason: string },
+  ): Promise<Refund> {
+    if (!['admin', 'finance', 'support'].includes(staff.role)) {
+      throw new SystemError('FORBIDDEN', 'Only PL4Y staff can issue a refund.');
+    }
+    const reason = input.reason.trim();
+    if (reason.length === 0) {
+      throw new UserError(PaymentCode.NOTHING_TO_REFUND, 'Say why this refund is being made.');
+    }
+    const payment = await repo.capturedPaymentForBooking(input.bookingId);
+    if (!payment) {
+      throw new UserError(PaymentCode.PAYMENT_NOT_FOUND, 'This booking has no payment that can be refunded.');
+    }
+    logger.info({ staff: staff.userId, bookingId: input.bookingId, reason }, 'staff booking refund');
+    return refund(null, { paymentId: payment.id, amountPaise: input.amountPaise, reason: `staff:${reason}` });
+  }
+
   // --- reconciliation (R9) ---------------------------------------------------
 
   /**
@@ -1551,6 +1575,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
     refreshBookingPayment,
     refundForBooking,
     staffRefund,
+    staffRefundBooking,
     ingestWebhook,
     applyWebhook,
     refund,

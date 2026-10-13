@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { configSchema, silentTransports } from './config.js';
+import { configSchema, silentTransports, testModePayments } from './config.js';
 
 const BASE = {
   DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
@@ -26,6 +26,15 @@ describe('config — Razorpay in production', () => {
     expect(issuesFor({ NODE_ENV: 'production', PUBLIC_API_URL: 'https://api.pl4y.app' })).toContain(
       'RAZORPAY_KEY_ID',
     );
+  });
+
+  it('accepts a test key in production only when RAZORPAY_ALLOW_TEST_KEY is true', () => {
+    const prod = { NODE_ENV: 'production', PUBLIC_API_URL: 'https://api.pl4y.app' };
+    expect(issuesFor({ ...prod, RAZORPAY_ALLOW_TEST_KEY: 'true' })).toEqual([]);
+    expect(issuesFor({ ...prod, RAZORPAY_ALLOW_TEST_KEY: 'false' })).toContain('RAZORPAY_KEY_ID');
+    expect(testModePayments({ NODE_ENV: 'production', PAYMENT_PROVIDER: 'razorpay', RAZORPAY_KEY_ID: 'rzp_test_abc' })).toBe(true);
+    expect(testModePayments({ NODE_ENV: 'production', PAYMENT_PROVIDER: 'razorpay', RAZORPAY_KEY_ID: 'rzp_live_abc' })).toBe(false);
+    expect(testModePayments({ NODE_ENV: 'development', PAYMENT_PROVIDER: 'razorpay', RAZORPAY_KEY_ID: 'rzp_test_abc' })).toBe(false);
   });
 
   it('refuses a non-https PUBLIC_API_URL in production', () => {

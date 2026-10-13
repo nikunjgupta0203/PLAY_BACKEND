@@ -138,6 +138,8 @@ export interface AdminDeps {
   now?: () => Date;
   /** venues — hide or show a review (venues R7 keeps the rating right). */
   setReviewHidden(reviewId: string, hidden: boolean): Promise<boolean>;
+  /** chat — delete a reported message for everyone, as its sender's own delete does. */
+  removeMessage?(messageId: string): Promise<boolean>;
   /** notifications — R7: a staff reply reaches the person's feed. */
   notifySupportReply(userId: string, ticketId: string, subject: string): Promise<void>;
   /** R7 — and their inbox. Best effort. */
@@ -277,7 +279,14 @@ export function createAdminService(deps: AdminDeps) {
    */
   async function resolveReports(
     staff: { userId: string },
-    input: { targetType: ReportTarget; targetId: string; outcome: 'actioned' | 'dismissed'; resolution: string },
+    input: {
+      targetType: ReportTarget;
+      targetId: string;
+      outcome: 'actioned' | 'dismissed';
+      resolution: string;
+      /** A message, acted on: also delete it for everyone. */
+      removeMessage?: boolean;
+    },
   ): Promise<{ closed: number }> {
     const at = now();
     const { count } = await db.moderationReport.updateMany({
@@ -287,6 +296,9 @@ export function createAdminService(deps: AdminDeps) {
     if (count === 0) throw new UserError(AdminServiceCode.REPORT_CLOSED, 'There is nothing open on this any more.');
     if (input.targetType === 'venue_review') {
       await deps.setReviewHidden(input.targetId, input.outcome === 'actioned');
+    }
+    if (input.targetType === 'message' && input.outcome === 'actioned' && input.removeMessage) {
+      await deps.removeMessage?.(input.targetId);
     }
     return { closed: count };
   }

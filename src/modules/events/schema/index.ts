@@ -19,7 +19,7 @@
 import { builder, clampFirst } from '../../../graphql/builder.js';
 import type { Ctx } from '../../../graphql/context.js';
 import { GeoPointInput, GeoPointRef } from '../../../graphql/geo.js';
-import { audited, requirePlatformStaff, requireReason } from '../../../graphql/staff.js';
+import { audited, auditedWhenStaff, requirePlatformStaff, requireReason } from '../../../graphql/staff.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { recordAudit } from '../../../platform/audit.js';
@@ -594,10 +594,19 @@ function createInputOf(i: typeof CreateEventInput.$inferInput): Parameters<typeo
  */
 async function eventActor(ctx: Ctx) {
   const actor = requireActor(ctx);
-  if (actor.client !== 'portal') return actor;
+  if (actor.client !== 'portal') return { ...actor, platformStaff: false };
   const role = await ctx.loaders.platformRole.load(actor.userId);
   return { ...actor, platformStaff: role === 'admin' || role === 'support' };
 }
+
+/** On the fields the host's people and portal staff share: staff must say why (portal R3). */
+const STAFF_REASON = 'PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.';
+
+/** The names of the fields a patch carries, for the audit row: what changed, not the values. */
+const presentFields = (input: object): string[] =>
+  Object.entries(input)
+    .filter(([, v]) => v !== undefined)
+    .map(([k]) => k);
 
 const UpdateEventInput = builder.inputType('UpdateEventInput', {
   description:
@@ -880,12 +889,14 @@ builder.mutationFields((t) => ({
     args: {
       eventId: t.arg.id({ required: true }),
       input: t.arg({ type: UpdateEventInput, required: true }),
+      reason: t.arg.string({ description: STAFF_REASON }),
     },
     resolve: async (_root, args, ctx) => {
       const actor = await eventActor(ctx);
       const i = args.input;
+      const what = { action: 'event.update', targetType: 'event', targetId: String(args.eventId), details: { fields: presentFields(i) } } as const;
       const { data, userError } = await attempt(() =>
-        events.update(actor, args.eventId, {
+        auditedWhenStaff(actor, what, args.reason, () => events.update(actor, args.eventId, {
           title: i.title ?? undefined,
           description: i.description === undefined ? undefined : i.description,
           city: i.city ?? undefined,
@@ -905,7 +916,7 @@ builder.mutationFields((t) => ({
           locationNote: i.locationNote === undefined ? undefined : i.locationNote,
           acceptHostTerms: i.acceptHostTerms ?? undefined,
           refundPolicy: i.refundPolicy ?? undefined,
-        }),
+        })),
       );
       return { event: data, userError };
     },
@@ -950,9 +961,10 @@ builder.mutationFields((t) => ({
       reason: t.arg.string({ required: true }),
     },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
+      const actor = await eventActor(ctx);
+      const what = { action: 'event.cancel', targetType: 'event', targetId: String(args.eventId) } as const;
       const { data, userError } = await attempt(() =>
-        events.cancel(actor, args.eventId, args.reason),
+        auditedWhenStaff(actor, what, args.reason, () => events.cancel(actor, args.eventId, args.reason)),
       );
       return { event: data, userError };
     },
@@ -995,12 +1007,17 @@ builder.mutationFields((t) => ({
     args: {
       categoryId: t.arg.id({ required: true }),
       input: t.arg({ type: UpdateEventCategoryInput, required: true }),
+      reason: t.arg.string({ description: STAFF_REASON }),
     },
     resolve: async (_root, args, ctx) => {
       const actor = await eventActor(ctx);
       const i = args.input;
-      const { data, userError } = await attempt(() =>
-        events.updateCategory(actor, args.categoryId, {
+      const { data, userError } = await attempt(async () => {
+        const categoryId = String(args.categoryId);
+        // The trail is kept per event: a draw is looked up under the event it belongs to.
+        const eventId = actor.platformStaff ? (await events.categoryById(categoryId)).eventId : '';
+        const what = { action: 'event.draw_update', targetType: 'event', targetId: eventId, details: { categoryId, fields: presentFields(i) } } as const;
+        return auditedWhenStaff(actor, what, args.reason, () => events.updateCategory(actor, args.categoryId, {
           name: i.name ?? undefined,
           drawType: i.drawType ?? undefined,
           skillMin: i.skillMin === undefined ? undefined : i.skillMin,
@@ -1015,8 +1032,8 @@ builder.mutationFields((t) => ({
           prizes: i.prizes === undefined ? undefined : i.prizes,
           rulesNote: i.rulesNote === undefined ? undefined : i.rulesNote,
           tweaks: i.tweaks ?? undefined,
-        }),
-      );
+        }));
+      });
       return { category: data, userError };
     },
   }),
@@ -1026,11 +1043,15 @@ builder.mutationFields((t) => ({
     description:
       'Owner or manager. Closes registration now so the draws can be made. Draws below ' +
       'their minimum entries are cancelled and refunded, exactly as at the deadline.',
-    args: { eventId: t.arg.id({ required: true }) },
+    args: { eventId: t.arg.id({ required: true }), reason: t.arg.string({ description: STAFF_REASON }) },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
-      const { userError } = await attempt(() => events.closeRegistrationNow(actor, String(args.eventId)));
-      return { event: await events.findById(String(args.eventId)), userError };
+      const actor = await eventActor(ctx);
+      const eventId = String(args.eventId);
+      const what = { action: 'event.close_registration', targetType: 'event', targetId: eventId } as const;
+      const { userError } = await attempt(() =>
+        auditedWhenStaff(actor, what, args.reason, () => events.closeRegistrationNow(actor, eventId)),
+      );
+      return { event: await events.findById(eventId), userError };
     },
   }),
 
@@ -1135,10 +1156,18 @@ builder.mutationFields((t) => ({
   addEventCourt: t.field({
     type: EventCourtPayload,
     description: 'F14 — a court the host has for this event ("Court 1"). The scheduler uses these first.',
-    args: { eventId: t.arg.id({ required: true }), name: t.arg.string({ required: true }) },
+    args: {
+      eventId: t.arg.id({ required: true }),
+      name: t.arg.string({ required: true }),
+      reason: t.arg.string({ description: STAFF_REASON }),
+    },
     resolve: async (_root, args, ctx) => {
       const actor = await eventActor(ctx);
-      const { data, userError } = await attempt(() => events.addCourt(actor, String(args.eventId), args.name));
+      const eventId = String(args.eventId);
+      const what = { action: 'event.court_add', targetType: 'event', targetId: eventId, details: { name: args.name.trim() } } as const;
+      const { data, userError } = await attempt(() =>
+        auditedWhenStaff(actor, what, args.reason, () => events.addCourt(actor, eventId, args.name)),
+      );
       return { court: data, userError };
     },
   }),
@@ -1146,11 +1175,18 @@ builder.mutationFields((t) => ({
   removeEventCourt: t.field({
     type: OkPayload,
     description: 'F14 — retires one of the event’s courts. Matches already on it keep it.',
-    args: { eventId: t.arg.id({ required: true }), courtId: t.arg.id({ required: true }) },
+    args: {
+      eventId: t.arg.id({ required: true }),
+      courtId: t.arg.id({ required: true }),
+      reason: t.arg.string({ description: STAFF_REASON }),
+    },
     resolve: async (_root, args, ctx) => {
       const actor = await eventActor(ctx);
+      const eventId = String(args.eventId);
+      const courtId = String(args.courtId);
+      const what = { action: 'event.court_remove', targetType: 'event', targetId: eventId, details: { courtId } } as const;
       const { userError } = await attempt(() =>
-        events.retireCourt(actor, String(args.eventId), String(args.courtId)),
+        auditedWhenStaff(actor, what, args.reason, () => events.retireCourt(actor, eventId, courtId)),
       );
       return { ok: userError === null, userError };
     },

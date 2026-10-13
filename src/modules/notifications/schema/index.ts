@@ -69,7 +69,7 @@ const TargetRef = builder.objectRef<Target>('NotificationTarget').implement({
   }),
 });
 
-const NotificationRef = builder.objectRef<Notification>('Notification').implement({
+export const NotificationRef = builder.objectRef<Notification>('Notification').implement({
   description:
     'R4 — `title` and `body` are rendered on the server from versioned templates. ' +
     'R11 — `body` may carry user-written text: render it as plain text, never markup.',

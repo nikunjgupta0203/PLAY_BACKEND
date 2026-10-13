@@ -477,12 +477,15 @@ builder.mutationFields((t) => ({
 
   adminResolveModeration: t.field({
     type: ClosedPayload,
-    description: 'admin R6 — close every open report on a target. Acting on a review keeps it hidden; dismissing shows it.',
+    description:
+      'admin R6 — close every open report on a target. Acting on a review keeps it hidden; dismissing shows it. ' +
+      'Acting on a message with `removeMessage` also deletes it for everyone.',
     args: {
       targetType: t.arg({ type: ReportTargetEnum, required: true }),
       targetId: t.arg.id({ required: true }),
       outcome: t.arg({ type: ModerationStatusEnum, required: true }),
       reason: t.arg.string({ required: true }),
+      removeMessage: t.arg.boolean({ description: 'A reported chat message, acted on: delete it as its sender could.' }),
     },
     resolve: async (_root, args, ctx) => {
       const staff = await requirePlatformStaff(ctx, ['admin', 'support']);
@@ -490,7 +493,12 @@ builder.mutationFields((t) => ({
       const { data, userError } = await attempt(() =>
         audited(
           staff,
-          { action: `moderation.${args.outcome}`, targetType: 'moderation_report', targetId, details: { targetType: args.targetType } },
+          {
+            action: `moderation.${args.outcome}`,
+            targetType: 'moderation_report',
+            targetId,
+            details: { targetType: args.targetType, ...(args.removeMessage ? { messageDeleted: true } : {}) },
+          },
           args.reason,
           (reason) =>
             admin.resolveReports(staff, {
@@ -498,6 +506,7 @@ builder.mutationFields((t) => ({
               targetId,
               outcome: args.outcome === 'actioned' ? 'actioned' : 'dismissed',
               resolution: reason,
+              removeMessage: args.removeMessage ?? false,
             }),
         ),
       );

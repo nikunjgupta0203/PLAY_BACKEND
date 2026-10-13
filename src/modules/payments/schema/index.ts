@@ -261,6 +261,31 @@ builder.mutationFields((t) => ({
       return { refundId: data?.id ?? null, userError };
     },
   }),
+
+  staffRefundCourtBooking: t.field({
+    type: StaffRefundPayload,
+    description:
+      'portal — PL4Y staff refund a court booking by hand, up to what is left of its payment. ' +
+      'Money only: it does not cancel the booking. Admin web only.',
+    args: {
+      bookingId: t.arg.id({ required: true }),
+      amountPaise: t.arg.int({ required: true }),
+      reason: t.arg.string({ required: true }),
+    },
+    resolve: async (_root, args, ctx) => {
+      const staff = await requireStaff(ctx);
+      const bookingId = String(args.bookingId);
+      const { data, userError } = await attempt(() =>
+        audited(
+          staff,
+          { action: 'court_booking.refund', targetType: 'court_booking', targetId: bookingId, details: { amountPaise: args.amountPaise } },
+          args.reason,
+          (reason) => payments.staffRefundBooking(staff, { bookingId, amountPaise: BigInt(args.amountPaise), reason }),
+        ),
+      );
+      return { refundId: data?.id ?? null, userError };
+    },
+  }),
 }));
 
 const RefreshPaymentPayload = builder

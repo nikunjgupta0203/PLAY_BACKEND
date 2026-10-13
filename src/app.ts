@@ -17,7 +17,7 @@ import { pinoHttp } from 'pino-http';
 import { ApolloServer } from '@apollo/server';
 import { expressMiddleware } from '@as-integrations/express5';
 
-import { config, isProd, silentTransports } from './platform/config.js';
+import { config, isProd, silentTransports, testModePayments } from './platform/config.js';
 import { logger } from './platform/logging/index.js';
 import { db, disconnectDb } from './platform/db.js';
 import { closeQueues } from './platform/queue.js';
@@ -33,6 +33,9 @@ import { schema } from './schema.js';
 
 export async function createApp() {
   for (const warning of silentTransports()) logger.warn(warning);
+  if (testModePayments()) {
+    logger.warn('RAZORPAY_ALLOW_TEST_KEY — Razorpay is on a test key: no payment is real, and a test UPI id confirms a paid entry');
+  }
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1); // behind the platform load balancer

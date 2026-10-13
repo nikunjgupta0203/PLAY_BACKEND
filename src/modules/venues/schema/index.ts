@@ -9,7 +9,7 @@
 import { builder, clampFirst } from '../../../graphql/builder.js';
 import type { Ctx } from '../../../graphql/context.js';
 import { GeoPointInput, GeoPointRef } from '../../../graphql/geo.js';
-import { requirePlatformStaff, requireReason } from '../../../graphql/staff.js';
+import { auditedWhenStaff, requirePlatformStaff, requireReason } from '../../../graphql/staff.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { recordAudit } from '../../../platform/audit.js';
@@ -113,6 +113,13 @@ const CourtRef = builder.objectRef<Court>('Court').implement({
   }),
 });
 
+const VenuePhotoRef = builder.objectRef<{ publicId: string; url: string }>('VenuePhoto').implement({
+  fields: (t) => ({
+    publicId: t.exposeString('publicId'),
+    url: t.exposeString('url'),
+  }),
+});
+
 const VenueRef = builder.objectRef<Venue>('Venue').implement({
   fields: (t) => ({
     id: t.exposeID('id'),
@@ -129,6 +136,16 @@ const VenueRef = builder.objectRef<Venue>('Venue').implement({
         const ids = await venues.sportsAt(v.id);
         return Promise.all(ids.map((id) => sport.byId(id)));
       },
+    }),
+    photos: t.field({
+      type: [VenuePhotoRef],
+      description:
+        'The same photos as photoUrls, in order, each with the id updateVenue(photoPublicIds) takes: ' +
+        'send the list without one to remove it, or reordered to reorder.',
+      resolve: (v) =>
+        v.photoPublicIds
+          .map((publicId) => ({ publicId, url: cloudinary.url(publicId, TRANSFORMS.venuePhoto) }))
+          .filter((p): p is { publicId: string; url: string } => p.url !== null),
     }),
     /** ADR 0003 §C1 — built at render from a named transformation, never stored. */
     photoUrls: t.stringList({
@@ -344,6 +361,9 @@ async function venueActor(ctx: Ctx) {
   return { ...actor, platformStaff: role === 'admin' || role === 'support' };
 }
 
+/** On the fields a venue's owner and portal staff share: staff must say why (portal R3). */
+const STAFF_REASON = 'PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.';
+
 const UpdateVenueInput = builder.inputType('UpdateVenueInput', {
   description: 'Only the fields present are written.',
   fields: (t) => ({
@@ -503,11 +523,16 @@ builder.mutationFields((t) => ({
     args: {
       venueId: t.arg.id({ required: true }),
       input: t.arg({ type: UpdateVenueInput, required: true }),
+      reason: t.arg.string({ description: STAFF_REASON }),
     },
     resolve: async (_root, args, ctx) => {
       const actor = await venueActor(ctx);
+      const fields = Object.entries(args.input)
+        .filter(([, v]) => v !== undefined)
+        .map(([k]) => k);
+      const what = { action: 'venue.update', targetType: 'venue', targetId: String(args.venueId), details: { fields } } as const;
       const { data, userError } = await attempt(() =>
-        venues.update(actor, args.venueId, {
+        auditedWhenStaff(actor, what, args.reason, () => venues.update(actor, args.venueId, {
           name: args.input.name ?? undefined,
           address: args.input.address ?? undefined,
           city: args.input.city ?? undefined,
@@ -519,7 +544,7 @@ builder.mutationFields((t) => ({
           description: args.input.description === undefined ? undefined : args.input.description,
           openingHours: args.input.openingHours ?? undefined,
           contactPhone: args.input.contactPhone === undefined ? undefined : args.input.contactPhone,
-        }),
+        })),
       );
       return { venue: data, userError };
     },
@@ -588,11 +613,13 @@ builder.mutationFields((t) => ({
     args: {
       venueId: t.arg.id({ required: true }),
       publicId: t.arg.string({ required: true, description: 'Never a URL (ADR 0003 §C3).' }),
+      reason: t.arg.string({ description: STAFF_REASON }),
     },
     resolve: async (_root, args, ctx) => {
       const actor = await venueActor(ctx);
+      const what = { action: 'venue.photo_add', targetType: 'venue', targetId: String(args.venueId), details: { publicId: args.publicId } } as const;
       const { data, userError } = await attempt(() =>
-        venues.addPhoto(actor, args.venueId, args.publicId),
+        auditedWhenStaff(actor, what, args.reason, () => venues.addPhoto(actor, args.venueId, args.publicId)),
       );
       return { venue: data, userError };
     },
@@ -619,12 +646,19 @@ builder.mutationFields((t) => ({
   replyToVenueReview: t.field({
     type: VenueReviewPayload,
     description: 'venues R8 — the venue’s one public reply to a review.',
-    args: { input: t.arg({ type: ReplyVenueReviewInput, required: true }) },
+    args: { input: t.arg({ type: ReplyVenueReviewInput, required: true }), reason: t.arg.string({ description: STAFF_REASON }) },
     resolve: async (_root, args, ctx) => {
-      const actor = requireActor(ctx);
-      const { data, userError } = await attempt(() =>
-        venues.replyToReview(actor, args.input.reviewId, args.input.body),
-      );
+      const actor = await venueActor(ctx);
+      const reviewId = String(args.input.reviewId);
+      const { data, userError } = await attempt(async () => {
+        // The trail is kept on the venue the review is about.
+        const venueId =
+          'platformStaff' in actor && actor.platformStaff
+            ? ((await db.venueReview.findUnique({ where: { id: reviewId }, select: { venueId: true } }))?.venueId ?? '')
+            : '';
+        const what = { action: 'venue.review_reply', targetType: 'venue', targetId: venueId, details: { reviewId } } as const;
+        return auditedWhenStaff(actor, what, args.reason, () => venues.replyToReview(actor, args.input.reviewId, args.input.body));
+      });
       return { review: data, userError };
     },
   }),
@@ -632,10 +666,13 @@ builder.mutationFields((t) => ({
   deleteVenue: t.field({
     type: VenuePayload,
     description: 'venues R5 — soft delete. Completed tournaments keep resolving their venue.',
-    args: { venueId: t.arg.id({ required: true }) },
+    args: { venueId: t.arg.id({ required: true }), reason: t.arg.string({ description: STAFF_REASON }) },
     resolve: async (_root, args, ctx) => {
       const actor = await venueActor(ctx);
-      const { userError } = await attempt(() => venues.remove(actor, args.venueId));
+      const what = { action: 'venue.delete', targetType: 'venue', targetId: String(args.venueId) } as const;
+      const { userError } = await attempt(() =>
+        auditedWhenStaff(actor, what, args.reason, () => venues.remove(actor, args.venueId)),
+      );
       return { venue: null, userError };
     },
   }),

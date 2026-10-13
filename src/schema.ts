@@ -24,5 +24,7 @@ import './modules/bookings/schema/index.js';
 import './modules/games/schema/index.js';
 import './modules/admin/schema/index.js';
 import './modules/admin/schema/queues.js';
+import './modules/admin/schema/records.js';
+import './modules/admin/schema/actions.js';
 
 export const schema = builder.toSchema();

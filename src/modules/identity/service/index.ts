@@ -694,6 +694,37 @@ export function createIdentityService(deps: IdentityDeps) {
     return { ...pair, isNewUser: false };
   }
 
+  /**
+   * portal — the player wrote in to say they changed their mind. Works only
+   * inside the grace period: once `scrubDeletedUsers` has erased the email
+   * and name there is no account to give back. False when it did not apply.
+   */
+  async function cancelDeletionByStaff(userId: string): Promise<boolean> {
+    const moved = await db.user.updateMany({
+      where: { id: userId, status: 'deleted', NOT: { email: { endsWith: '@invalid' } } },
+      data: { status: 'active', deletionRequestedAt: null },
+    });
+    return moved.count > 0;
+  }
+
+  /**
+   * portal — R19 from the other side: staff bring a deactivated account back
+   * when the player asks and cannot do it themselves. The same account, as
+   * `reactivateAccount` leaves it; they sign in as usual afterwards. False
+   * when it was not deactivated.
+   */
+  async function reactivateByStaff(userId: string): Promise<boolean> {
+    return db.$transaction(async (tx) => {
+      const moved = await tx.user.updateMany({
+        where: { id: userId, status: 'deactivated' },
+        data: { status: 'active', deactivatedAt: null },
+      });
+      if (moved.count === 0) return false;
+      await outboxWrite(tx, { topic: 'user.reactivated', payload: { userId } });
+      return true;
+    });
+  }
+
   /** R19 — the accounts among these that other players should not see or reach right now. */
   async function inactiveUserIds(userIds: string[]): Promise<Set<string>> {
     if (userIds.length === 0) return new Set();
@@ -1031,6 +1062,8 @@ export function createIdentityService(deps: IdentityDeps) {
     requestAccountDeletion,
     deactivateAccount,
     reactivateAccount,
+    cancelDeletionByStaff,
+    reactivateByStaff,
     inactiveUserIds,
     registerDeletionGuard,
     registerSignInHook,
