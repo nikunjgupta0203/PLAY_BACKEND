@@ -376,9 +376,19 @@ input ApplyToHostVenueInput {
   description: String
 
   """
+  R7 — the partner profile. Optional only so the first version of the form keeps working.
+  """
+  details: VenueHostDetailsInput
+
+  """
   Optional — the phone’s position when the applicant is at the venue. Staff set the point otherwise.
   """
   location: GeoPointInput
+
+  """
+  R8 — public_ids from venueHostPhotoUploadSignature uploads, never URLs. Ten at most.
+  """
+  photoPublicIds: [String!]
 
   """At least one."""
   sportIds: [ID!]!
@@ -2819,6 +2829,11 @@ type Mutation {
   venueCancelCourtBooking(bookingId: ID!, reason: String!): CourtBookingPayload!
 
   """
+  venue hosts R8 — a signature for ONE venue photo, uploaded straight to Cloudinary (ADR 0003 §C2). Send `folder/publicId` back in applyToHostVenue(photoPublicIds). Ask once per photo.
+  """
+  venueHostPhotoUploadSignature: MediaUploadPayload!
+
+  """
   ADR 0003 §C2 — the client uploads straight to Cloudinary under this signature, then reports the public_id back through addVenuePhoto.
   """
   venuePhotoUploadSignature(venueId: ID!): MediaUploadPayload!
@@ -4703,6 +4718,18 @@ type Venue {
   viewerReview: VenueReview
 }
 
+"""venue hosts R7 — how the venue takes bookings today."""
+enum VenueBookingMethod {
+  """Another booking app."""
+  OTHER_PLATFORM
+
+  """Its own website or app."""
+  OWN_APP
+  PHONE
+  WALK_IN
+  WHATSAPP
+}
+
 type VenueBookingPolicy {
   advanceDays: Int!
   bookable: Boolean!
@@ -4787,6 +4814,9 @@ type VenueHostApplication {
   courtCount: Int!
   createdAt: DateTime!
   description: String
+
+  """R7 — null for an application sent by the first version of the form."""
+  details: VenueHostDetails
   id: ID!
 
   """
@@ -4798,6 +4828,11 @@ type VenueHostApplication {
   R3 — where the venue’s earnings go, masked. The applicant’s own, and staff’s to review; null to anyone else.
   """
   payoutAccount: PayoutAccount
+
+  """
+  R8 — the venue photos the applicant uploaded, in order. They become the venue’s on approval.
+  """
+  photos: [VenueHostPhoto!]!
   reviewedAt: DateTime
   sports: [Sport!]!
   status: VenueHostApplicationStatus!
@@ -4819,6 +4854,119 @@ enum VenueHostApplicationStatus {
   APPROVED
   PENDING
   REJECTED
+}
+
+"""venue hosts R7 — the partner profile sent with an application."""
+type VenueHostDetails {
+  acceptedTerms: Boolean!
+  advancePolicy: String
+  amenities: [String!]!
+  authorised: Boolean!
+  bookingMethod: VenueBookingMethod
+  cancellationPolicy: String
+  coachingAvailable: Boolean!
+  consentDisplay: Boolean!
+  contactName: String!
+  contactRole: String!
+  email: String!
+  equipmentAvailable: Boolean!
+  existingSoftware: String
+  mapsUrl: String
+  minBookingMinutes: Int
+
+  """A day with no window is a weekly closing day."""
+  openingHours: [OpeningHours!]!
+  partnership: VenuePartnership!
+  peakHours: String
+  pincode: String!
+  playingCapacity: Int
+  prices: [VenueHostPrice!]!
+  setting: VenueSetting!
+  venuesManaged: Int!
+  websiteUrl: String
+
+  """Null when it is the venue’s phone number."""
+  whatsappNumber: String
+}
+
+"""
+venue hosts R7 — the partner profile. All three consents must be true (CONSENT_REQUIRED). Days missing from openingHours are weekly closing days.
+"""
+input VenueHostDetailsInput {
+  acceptedTerms: Boolean!
+  advancePolicy: String
+  amenities: [String!]!
+  authorised: Boolean!
+  bookingMethod: VenueBookingMethod
+  cancellationPolicy: String
+  coachingAvailable: Boolean!
+  consentDisplay: Boolean!
+  contactName: String!
+
+  """"Owner", "Manager" — free text."""
+  contactRole: String!
+  email: String!
+  equipmentAvailable: Boolean!
+  existingSoftware: String
+  mapsUrl: String
+
+  """In steps of 15."""
+  minBookingMinutes: Int
+  openingHours: [OpeningHoursInput!]!
+  partnership: VenuePartnership!
+
+  """When the peak rate applies, in the owner’s words."""
+  peakHours: String
+
+  """6 digits."""
+  pincode: String!
+
+  """Players the venue holds at once."""
+  playingCapacity: Int
+  prices: [VenueHostPriceInput!]!
+  setting: VenueSetting!
+  venuesManaged: Int!
+
+  """Website or a social page."""
+  websiteUrl: String
+
+  """Left out when it is the same as contactPhone."""
+  whatsappNumber: String
+}
+
+type VenueHostPhoto {
+  publicId: String!
+  url: String!
+}
+
+"""
+What the owner said they charge for one sport, per hour. Not a booking price: those are set on the venue.
+"""
+type VenueHostPrice {
+  peakPricePerHourPaise: Int
+  pricePerHourPaise: Int!
+  sport: Sport!
+}
+
+input VenueHostPriceInput {
+  """Left out when there is one rate all day."""
+  peakPricePerHourPaise: Int
+  pricePerHourPaise: Int!
+
+  """One of the application’s sportIds."""
+  sportId: ID!
+}
+
+"""venue hosts R7 — what the venue wants from PL4Y."""
+enum VenuePartnership {
+  """Connect the venue’s own booking software."""
+  API
+
+  """Take court bookings through PL4Y."""
+  BOOKINGS
+
+  """Be found on PL4Y; bookings stay as they are."""
+  LISTING
 }
 
 type VenuePayload {
@@ -4882,6 +5030,12 @@ type VenueSchedule {
   courts: [Court!]!
   date: String!
   rules: [CourtAvailabilityRule!]!
+}
+
+enum VenueSetting {
+  BOTH
+  INDOOR
+  OUTDOOR
 }
 
 type VenueStaffMember {

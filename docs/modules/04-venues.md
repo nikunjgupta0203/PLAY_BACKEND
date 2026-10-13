@@ -158,7 +158,26 @@ cannot be created, the application goes back to `pending`.
 with "Court 1" … "Court N" for every sport they named, and their phone and description. A venue
 needs a map point: staff may give one when approving, which replaces the applicant's; with neither,
 the approval is refused with `VENUE_LOCATION_REQUIRED`. The owner then runs the venue from the
-app's venue desk (19-bookings R7). The bank account is approved separately (payouts R6).
+app's venue desk (19-bookings R7). The bank account is approved separately (payouts R6). What the
+profile (R7) says about the venue itself is copied onto it: amenities, opening hours, the uploaded
+photos (R8), and courts marked indoor when the venue is indoor.
+
+**venue hosts R7** — The application carries a partner profile, stored as one JSON document
+(`details`, migration 046; rules in `service/hostDetails.ts`): contact person, role, WhatsApp number,
+email and number of venues managed; PIN code, Google Maps link, indoor / outdoor / both, website or
+social link; amenities, playing capacity, opening hours per day (a day with no window is a weekly
+closing day), equipment and coaching; a price per hour and an optional peak price for each sport
+offered, peak hours, minimum booking, how bookings are taken today, advance and cancellation
+policies; the partnership wanted (listing, bookings, API) and any existing software. All three
+consents — authorised to list, consent to display, partner terms — must be true
+(`CONSENT_REQUIRED`). Prices and policies stay on the application as what the owner told us; real
+booking prices are set on the venue. `details` is optional in the API only so the first version of
+the form keeps working; such an application reads back with `details: null`.
+
+**venue hosts R8** — Venue photos are uploaded before there is a venue: `venueHostPhotoUploadSignature`
+signs one direct Cloudinary upload into `pl4y/venue-hosts/{userId}/`, and the application sends the
+public_ids back. Only ids under the applicant's own folder are accepted, ten at most
+(`INVALID_PHOTOS`).
 
 ---
 
@@ -261,6 +280,9 @@ CREATE UNIQUE INDEX venue_claim_one_pending ON venue_claims (venue_id) WHERE sta
 | `HOST_APPLICATION_PENDING` | user | venue hosts R4 |
 | `HOST_APPLICATION_NOT_FOUND`, `HOST_APPLICATION_DECIDED` | user | venue hosts R5 |
 | `VENUE_LOCATION_REQUIRED` | user | venue hosts R6 — staff must give the map point |
+| `INVALID_CONTACT`, `INVALID_PINCODE`, `INVALID_LINK`, `INVALID_PRICES`, `INVALID_HOST_DETAILS` | user | venue hosts R7 |
+| `CONSENT_REQUIRED` | user | venue hosts R7 — all three consents |
+| `INVALID_PHOTOS` | user | venue hosts R8 |
 
 ## Emits
 

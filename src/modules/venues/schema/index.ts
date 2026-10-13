@@ -678,4 +678,4 @@ builder.mutationFields((t) => ({
   }),
 }));
 
-export { VenueRef, CourtRef, MediaUpload, MediaUploadPayload };
+export { VenueRef, CourtRef, MediaUpload, MediaUploadPayload, OpeningHoursInput, OpeningHoursRef };

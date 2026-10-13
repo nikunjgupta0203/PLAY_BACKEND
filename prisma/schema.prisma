@@ -586,28 +586,33 @@ model VenueVisit {
 /// The bank details are not here: they are the applicant's payout account
 /// (payouts R2), so the PAN and account number are sealed in one place only.
 model VenueHostApplication {
-  id           String    @id @db.Uuid
-  userId       String    @map("user_id") @db.Uuid
-  venueName    String    @map("venue_name")
-  address      String
-  city         String
+  id             String    @id @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  venueName      String    @map("venue_name")
+  address        String
+  city           String
   /// Both or neither (CHECK). The applicant may not have a pin; staff give one when approving.
-  lat          Float?
-  lng          Float?
-  sportIds     String[]  @default([]) @map("sport_ids") @db.Uuid
-  courtCount   Int       @map("court_count") @db.SmallInt
-  contactPhone String    @map("contact_phone")
-  description  String?
+  lat            Float?
+  lng            Float?
+  sportIds       String[]  @default([]) @map("sport_ids") @db.Uuid
+  courtCount     Int       @map("court_count") @db.SmallInt
+  contactPhone   String    @map("contact_phone")
+  description    String?
+  /// venue hosts R7 — the partner profile (contact, facilities, hours, prices,
+  /// consents) as one document; `{}` for an application from the first form.
+  details        Json      @default("{}")
+  /// venue hosts R8 — Cloudinary public_ids under the applicant's own folder.
+  photoPublicIds String[]  @default([]) @map("photo_public_ids")
   /// pending | approved | rejected. CHECK in the migration.
-  status       String    @default("pending")
+  status         String    @default("pending")
   /// The sentence the applicant reads when rejected.
-  statusReason String?   @map("status_reason")
-  reviewedBy   String?   @map("reviewed_by") @db.Uuid
-  reviewedAt   DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  statusReason   String?   @map("status_reason")
+  reviewedBy     String?   @map("reviewed_by") @db.Uuid
+  reviewedAt     DateTime? @map("reviewed_at") @db.Timestamptz(6)
   /// Set on approval: the venue that was created from this application.
-  venueId      String?   @map("venue_id") @db.Uuid
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  venueId        String?   @map("venue_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user     User   @relation("venueHostApplicant", fields: [userId], references: [id])
   reviewer User?  @relation("venueHostReviewer", fields: [reviewedBy], references: [id])

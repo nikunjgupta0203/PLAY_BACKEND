@@ -96,6 +96,10 @@ export const venueHosts = createHostApplicationService({
   db,
   venues,
   bank: hostBank,
+  media: {
+    signUpload: (opts) => cloudinary.signUpload(opts),
+    hostRoot: (userId) => cloudinary.folders.venueHostRoot(userId),
+  },
   async sportExists(sportId) {
     const { sport } = await import('../sport/index.js');
     return sport.byId(sportId).then(
@@ -118,6 +122,8 @@ export const venueHosts = createHostApplicationService({
 
 export { HostApplicationCode, HOST_APPLICATION_STATUSES, MAX_COURTS } from './service/hostApplications.js';
 export type { HostApplication, HostApplicationService, HostApplicationStatus } from './service/hostApplications.js';
+export { BOOKING_METHODS, HostDetailsCode, MAX_PHOTOS, PARTNERSHIPS, VENUE_SETTINGS } from './service/hostDetails.js';
+export type { BookingMethod, HostDetails, HostPrice, Partnership, VenueSetting } from './service/hostDetails.js';
 export {
   COURT_KINDS,
   MIN_REVIEWS_FOR_RATING,

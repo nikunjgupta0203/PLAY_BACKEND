@@ -14,6 +14,8 @@ import type { Db } from '../../../platform/db.js';
 import { UserError } from '../../../platform/errors/index.js';
 import { isValidPoint, type GeoPoint } from '../../../platform/geo.js';
 import { newId } from '../../../platform/ids.js';
+import type { UploadSignature } from '../../../platform/cloudinary.js';
+import { checkDetails, checkPhotos, detailsFrom, type HostDetails, type HostDetailsInput } from './hostDetails.js';
 import { DESCRIPTION_MAX_CHARS, VenueCode, type Venue, type VenueService } from './index.js';
 
 export const HostApplicationCode = {
@@ -58,6 +60,10 @@ export interface HostApplication {
   courtCount: number;
   contactPhone: string;
   description: string | null;
+  /** R7 — null for an application sent by the first version of the form. */
+  details: HostDetails | null;
+  /** R8 — Cloudinary public_ids, in the order the applicant added them. */
+  photoPublicIds: string[];
   status: HostApplicationStatus;
   /** The sentence the applicant reads when rejected. */
   statusReason: string | null;
@@ -85,8 +91,18 @@ export interface HostApplicationInput {
   courtCount: number;
   contactPhone: string;
   description?: string | null;
+  /** R7 — the partner profile. Left out only by the first version of the form. */
+  details?: HostDetailsInput | null;
+  /** R8 — photos uploaded under `photoUploadSignature`. */
+  photoPublicIds?: string[] | null;
   /** Left out by someone who already has a payout account: that account is the one reviewed. */
   bank?: HostBankDetails | null;
+}
+
+/** R8 — signs a direct upload, and names the folder an applicant's photos live in. */
+export interface HostMediaPort {
+  signUpload(opts: { publicId: string; folder: string }): UploadSignature;
+  hostRoot(userId: string): string;
 }
 
 /** `payout_accounts` belongs to payments, so venues asks rather than writes (conventions.md §1). */
@@ -101,6 +117,7 @@ export interface HostApplicationDeps {
   db: Db;
   venues: Pick<VenueService, 'create' | 'update'>;
   bank: HostBankPort;
+  media: HostMediaPort;
   /** True for a sport PL4Y has, active or not. */
   sportExists(sportId: string): Promise<boolean>;
   /** Tells the applicant what was decided. Best effort: a failed push never undoes a decision. */
@@ -125,6 +142,8 @@ const toView = (r: Row): HostApplication => ({
   courtCount: r.courtCount,
   contactPhone: r.contactPhone,
   description: r.description,
+  details: detailsFrom(r.details),
+  photoPublicIds: r.photoPublicIds,
   status: r.status as HostApplicationStatus,
   statusReason: r.statusReason,
   reviewedBy: r.reviewedBy,
@@ -146,7 +165,7 @@ export function createHostApplicationService(deps: HostApplicationDeps) {
     );
 
   /** R2 — the venue fields, as they will be stored. Throws on the first thing wrong. */
-  async function checked(input: HostApplicationInput) {
+  async function checked(actor: { userId: string }, input: HostApplicationInput) {
     const venueName = clean(input.venueName);
     if (venueName.length < 2 || venueName.length > NAME_MAX) {
       throw new UserError(HostApplicationCode.INVALID_VENUE_NAME, 'Enter the venue’s name.');
@@ -184,6 +203,9 @@ export function createHostApplicationService(deps: HostApplicationDeps) {
     if ((description?.length ?? 0) > DESCRIPTION_MAX_CHARS) {
       throw new UserError(VenueCode.INVALID_DESCRIPTION, `Keep the description under ${DESCRIPTION_MAX_CHARS} characters.`);
     }
+    // R7, R8 — the profile and the photos, when the form sent them.
+    const details = input.details ? checkDetails(input.details, sportIds) : null;
+    const photoPublicIds = checkPhotos(input.photoPublicIds, deps.media.hostRoot(actor.userId));
     return {
       venueName,
       address,
@@ -194,6 +216,8 @@ export function createHostApplicationService(deps: HostApplicationDeps) {
       courtCount: input.courtCount,
       contactPhone,
       description,
+      details: (details ?? {}) as unknown as Prisma.InputJsonValue,
+      photoPublicIds,
     };
   }
 
@@ -203,7 +227,7 @@ export function createHostApplicationService(deps: HostApplicationDeps) {
    * the address never burns one of the day's bank-detail changes.
    */
   async function submit(actor: { userId: string }, input: HostApplicationInput): Promise<HostApplication> {
-    const fields = await checked(input);
+    const fields = await checked(actor, input);
     if (await db.venueHostApplication.findFirst({ where: { userId: actor.userId, status: 'pending' }, select: { id: true } })) {
       throw pending();
     }
@@ -231,6 +255,15 @@ export function createHostApplicationService(deps: HostApplicationDeps) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') throw pending();
       throw err;
     }
+  }
+
+  /**
+   * R8 — a signature for one photo, uploaded straight to Cloudinary into the
+   * applicant's own folder. The public_id it yields is sent back with the
+   * application, and checked against that folder (ADR 0003 §C2).
+   */
+  function photoUploadSignature(actor: { userId: string }): UploadSignature {
+    return deps.media.signUpload({ publicId: newId(), folder: deps.media.hostRoot(actor.userId) });
   }
 
   /** The applicant's latest application, whatever was decided. Null when they never applied. */
@@ -300,6 +333,8 @@ export function createHostApplicationService(deps: HostApplicationDeps) {
     }
     const row = await decide(staff, id, 'approved', null);
     const asStaff = { userId: staff.userId, platformStaff: true };
+    // R6 — what the applicant told us about the venue itself goes onto the venue.
+    const details = detailsFrom(row.details);
     let venue: Venue;
     try {
       const created = await deps.venues.create(
@@ -310,11 +345,22 @@ export function createHostApplicationService(deps: HostApplicationDeps) {
           city: row.city,
           // Present whenever `decide` found the row: checked above.
           location: location!,
-          courts: Array.from({ length: row.courtCount }, (_, i) => ({ name: `Court ${i + 1}`, sportIds: row.sportIds })),
+          amenities: details?.amenities,
+          photoPublicIds: row.photoPublicIds,
+          courts: Array.from({ length: row.courtCount }, (_, i) => ({
+            name: `Court ${i + 1}`,
+            sportIds: row.sportIds,
+            // "Both" cannot be said per court yet: the owner sets each one from the venue desk.
+            indoor: details?.setting === 'indoor',
+          })),
         },
         { ownerId: row.userId },
       );
-      venue = await deps.venues.update(asStaff, created.id, { contactPhone: row.contactPhone, description: row.description });
+      venue = await deps.venues.update(asStaff, created.id, {
+        contactPhone: row.contactPhone,
+        description: row.description,
+        ...(details && details.openingHours.length > 0 ? { openingHours: details.openingHours } : {}),
+      });
     } catch (err) {
       await db.venueHostApplication.update({
         where: { id },
@@ -338,7 +384,7 @@ export function createHostApplicationService(deps: HostApplicationDeps) {
     return toView(row);
   }
 
-  return { submit, mine, list, pendingCount, approve, reject };
+  return { submit, photoUploadSignature, mine, list, pendingCount, approve, reject };
 }
 
 export type HostApplicationService = ReturnType<typeof createHostApplicationService>;

@@ -20,7 +20,9 @@ import {
   type HostApplicationInput,
   type HostApplicationService,
   type HostBankDetails,
+  type HostMediaPort,
 } from '../src/modules/venues/service/hostApplications.js';
+import { HostDetailsCode, type HostDetailsInput } from '../src/modules/venues/service/hostDetails.js';
 import type { Db } from '../src/platform/db.js';
 import { isUserError, UserError } from '../src/platform/errors/index.js';
 import { newId } from '../src/platform/ids.js';
@@ -45,6 +47,22 @@ const bank = {
 };
 let notified: { userId: string; status: string; reason: string | null; venueId: string | null }[] = [];
 
+/** Signs nothing real: an upload is named, and the folder is the applicant's own. */
+const media: HostMediaPort = {
+  hostRoot: (userId) => `pl4y/venue-hosts/${userId}`,
+  signUpload: ({ publicId, folder }) => ({
+    cloudName: 'test',
+    apiKey: 'key',
+    timestamp: 1,
+    publicId,
+    folder,
+    uploadPreset: 'preset',
+    signature: 'sig',
+    uploadUrl: 'https://upload.test',
+    expiresAt: new Date(0),
+  }),
+};
+
 let applicant: { userId: string };
 let staff: { userId: string };
 
@@ -60,6 +78,38 @@ const application = (over: Partial<HostApplicationInput> = {}): HostApplicationI
   contactPhone: '+91 98765 43210',
   description: 'Four covered courts and parking.',
   bank: BANK,
+  ...over,
+});
+
+const WEEKDAYS = [0, 1, 2, 3, 4, 5].map((day) => ({ day, opens: '06:00', closes: '22:00' }));
+
+/** The partner profile, as the longer form sends it. Sunday (6) is the weekly closing day. */
+const profile = (over: Partial<HostDetailsInput> = {}): HostDetailsInput => ({
+  contactName: '  Rahul   Sharma ',
+  contactRole: 'Owner',
+  whatsappNumber: null,
+  email: ' Rahul@SmashArena.in ',
+  venuesManaged: 2,
+  mapsUrl: 'https://maps.app.goo.gl/abc123',
+  pincode: '560038',
+  setting: 'indoor',
+  websiteUrl: 'instagram.com/smasharena',
+  amenities: ['Parking', 'Washrooms', 'Parking'],
+  playingCapacity: 24,
+  openingHours: WEEKDAYS,
+  equipmentAvailable: true,
+  coachingAvailable: false,
+  prices: [{ sportId: pickleballId, pricePerHourPaise: 60_000, peakPricePerHourPaise: 80_000 }],
+  peakHours: '6 pm to 10 pm, and weekends',
+  minBookingMinutes: 60,
+  bookingMethod: 'whatsapp',
+  advancePolicy: 'Up to 7 days ahead, paid in full.',
+  cancellationPolicy: 'Free until 12 hours before.',
+  partnership: 'bookings',
+  existingSoftware: null,
+  authorised: true,
+  consentDisplay: true,
+  acceptedTerms: true,
   ...over,
 });
 
@@ -87,6 +137,7 @@ beforeAll(async () => {
   hosts = createHostApplicationService({
     db: prisma as unknown as Db,
     venues,
+    media,
     bank: {
       accountFor: async (userId) => bank.accounts.get(userId) ?? null,
       save: async (userId, details) => {
@@ -280,6 +331,7 @@ describe('venue hosts', () => {
         update: venues.update,
       },
       bank: { accountFor: async () => null, save: async () => undefined },
+      media,
       sportExists: async () => true,
       notify: async () => undefined,
     });
@@ -290,6 +342,93 @@ describe('venue hosts', () => {
     expect(row?.reviewedAt).toBeNull();
     // And it can still be approved for real.
     expect((await hosts.approve(staff, a.id)).application.status).toBe('approved');
+  });
+
+  it('venue hosts R7: the partner profile is stored as it was checked, and an application without one still reads', async () => {
+    const a = await hosts.submit(applicant, application({ details: profile() }));
+
+    expect(a.details).toMatchObject({
+      contactName: 'Rahul Sharma',
+      email: 'rahul@smasharena.in',
+      venuesManaged: 2,
+      pincode: '560038',
+      setting: 'indoor',
+      // A pasted handle is made a link; a duplicate amenity is said once.
+      websiteUrl: 'https://instagram.com/smasharena',
+      amenities: ['Parking', 'Washrooms'],
+      prices: [{ sportId: pickleballId, pricePerHourPaise: 60_000, peakPricePerHourPaise: 80_000 }],
+      partnership: 'bookings',
+      acceptedTerms: true,
+    });
+    expect(a.details?.openingHours).toHaveLength(6);
+    // Read back from the row, not from what was handed in.
+    expect((await hosts.mine(applicant.userId))?.details?.contactName).toBe('Rahul Sharma');
+
+    const other = await makeUser('first-form@example.com');
+    expect((await hosts.submit(other, application())).details).toBeNull();
+  });
+
+  it('venue hosts R7: each part of the profile is checked, and all three consents are needed', async () => {
+    const cases: [Partial<HostDetailsInput>, string][] = [
+      [{ contactName: ' ' }, HostDetailsCode.INVALID_CONTACT],
+      [{ contactRole: '' }, HostDetailsCode.INVALID_CONTACT],
+      [{ whatsappNumber: '12345' }, HostDetailsCode.INVALID_CONTACT],
+      [{ email: 'not-an-email' }, HostDetailsCode.INVALID_CONTACT],
+      [{ venuesManaged: 0 }, HostDetailsCode.INVALID_CONTACT],
+      [{ pincode: '5600' }, HostDetailsCode.INVALID_PINCODE],
+      [{ mapsUrl: 'not a link' }, HostDetailsCode.INVALID_LINK],
+      [{ setting: 'underwater' as never }, HostDetailsCode.INVALID_HOST_DETAILS],
+      [{ playingCapacity: 0 }, HostDetailsCode.INVALID_HOST_DETAILS],
+      [{ openingHours: [] }, 'INVALID_OPENING_HOURS'],
+      [{ openingHours: [{ day: 0, opens: '22:00', closes: '06:00' }] }, 'INVALID_OPENING_HOURS'],
+      [{ openingHours: [{ day: 7, opens: '06:00', closes: '22:00' }] }, 'INVALID_OPENING_HOURS'],
+      [{ prices: [{ sportId: newId(), pricePerHourPaise: 50_000, peakPricePerHourPaise: null }] }, HostDetailsCode.INVALID_PRICES],
+      [{ prices: [{ sportId: 'PICKLEBALL', pricePerHourPaise: -1, peakPricePerHourPaise: null }] }, HostDetailsCode.INVALID_PRICES],
+      [{ minBookingMinutes: 50 }, HostDetailsCode.INVALID_HOST_DETAILS],
+      [{ cancellationPolicy: 'x'.repeat(501) }, HostDetailsCode.INVALID_HOST_DETAILS],
+      [{ partnership: 'franchise' as never }, HostDetailsCode.INVALID_HOST_DETAILS],
+      [{ authorised: false }, HostDetailsCode.CONSENT_REQUIRED],
+      [{ consentDisplay: false }, HostDetailsCode.CONSENT_REQUIRED],
+      [{ acceptedTerms: false }, HostDetailsCode.CONSENT_REQUIRED],
+    ];
+    for (const [over, code] of cases) {
+      const details = profile(over);
+      // The placeholder stands for "the sport the application names".
+      details.prices = details.prices.map((p) => (p.sportId === 'PICKLEBALL' ? { ...p, sportId: pickleballId } : p));
+      expect(await errorCode(() => hosts.submit(applicant, application({ details }))), JSON.stringify(over)).toBe(code);
+    }
+    expect(bank.saved).toEqual([]);
+    expect(await hosts.mine(applicant.userId)).toBeNull();
+  });
+
+  it('venue hosts R8: photos are signed into the applicant’s own folder, and only those are accepted', async () => {
+    const upload = hosts.photoUploadSignature(applicant);
+    expect(upload.folder).toBe(`pl4y/venue-hosts/${applicant.userId}`);
+    const mine = `${upload.folder}/${upload.publicId}`;
+
+    expect(await errorCode(() => hosts.submit(applicant, application({ photoPublicIds: [`pl4y/venue-hosts/${staff.userId}/x`] })))).toBe(
+      HostDetailsCode.INVALID_PHOTOS,
+    );
+    expect(await errorCode(() => hosts.submit(applicant, application({ photoPublicIds: [`${upload.folder}/`] })))).toBe(
+      HostDetailsCode.INVALID_PHOTOS,
+    );
+    const eleven = Array.from({ length: 11 }, (_, i) => `${upload.folder}/p${i}`);
+    expect(await errorCode(() => hosts.submit(applicant, application({ photoPublicIds: eleven })))).toBe(HostDetailsCode.INVALID_PHOTOS);
+
+    const a = await hosts.submit(applicant, application({ photoPublicIds: [mine, mine] }));
+    expect(a.photoPublicIds).toEqual([mine]);
+  });
+
+  it('venue hosts R6: approving carries the profile onto the venue — amenities, hours, photos, indoor courts', async () => {
+    const photo = `pl4y/venue-hosts/${applicant.userId}/front`;
+    const a = await hosts.submit(applicant, application({ details: profile(), photoPublicIds: [photo] }));
+    const { venue } = await hosts.approve(staff, a.id);
+
+    expect(venue.amenities).toEqual(['Parking', 'Washrooms']);
+    expect(venue.photoPublicIds).toEqual([photo]);
+    expect(venue.openingHours).toHaveLength(6);
+    expect(venue.openingHours.some((h) => h.day === 6)).toBe(false);
+    expect((await venues.courtsFor(venue.id)).every((c) => c.indoor)).toBe(true);
   });
 
   it('venue hosts: the portal lists waiting applications oldest first', async () => {

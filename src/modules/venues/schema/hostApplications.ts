@@ -11,14 +11,23 @@ import { GeoPointInput, GeoPointRef } from '../../../graphql/geo.js';
 import { audited, requirePlatformStaff } from '../../../graphql/staff.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
+import { cloudinary, TRANSFORMS } from '../../../platform/cloudinary.js';
 import { identity } from '../../identity/index.js';
 import { payouts } from '../../payments/index.js';
 import { PayoutAccountRef } from '../../payments/schema/payouts.js';
 import { sport } from '../../sport/index.js';
 import { SportRef } from '../../sport/schema/index.js';
 import { venueHosts, venues } from '../index.js';
-import type { HostApplication, HostApplicationStatus } from '../index.js';
-import { VenueRef } from './index.js';
+import type {
+  BookingMethod,
+  HostApplication,
+  HostApplicationStatus,
+  HostDetails,
+  HostPrice,
+  Partnership,
+  VenueSetting,
+} from '../index.js';
+import { MediaUploadPayload, OpeningHoursInput, OpeningHoursRef, VenueRef } from './index.js';
 
 /** Staff who may read applications: anyone in the portal. Deciding is admin and support (as for venues). */
 const isPortalStaff = async (ctx: Ctx): Promise<boolean> =>
@@ -30,6 +39,89 @@ const StatusEnum = builder.enumType('VenueHostApplicationStatus', {
     APPROVED: { value: 'approved' as HostApplicationStatus },
     REJECTED: { value: 'rejected' as HostApplicationStatus },
   },
+});
+
+const SettingEnum = builder.enumType('VenueSetting', {
+  values: {
+    INDOOR: { value: 'indoor' as VenueSetting },
+    OUTDOOR: { value: 'outdoor' as VenueSetting },
+    BOTH: { value: 'both' as VenueSetting },
+  },
+});
+
+const BookingMethodEnum = builder.enumType('VenueBookingMethod', {
+  description: 'venue hosts R7 — how the venue takes bookings today.',
+  values: {
+    PHONE: { value: 'phone' as BookingMethod },
+    WHATSAPP: { value: 'whatsapp' as BookingMethod },
+    WALK_IN: { value: 'walk_in' as BookingMethod },
+    OWN_APP: { value: 'own_app' as BookingMethod, description: 'Its own website or app.' },
+    OTHER_PLATFORM: { value: 'other_platform' as BookingMethod, description: 'Another booking app.' },
+  },
+});
+
+const PartnershipEnum = builder.enumType('VenuePartnership', {
+  description: 'venue hosts R7 — what the venue wants from PL4Y.',
+  values: {
+    LISTING: { value: 'listing' as Partnership, description: 'Be found on PL4Y; bookings stay as they are.' },
+    BOOKINGS: { value: 'bookings' as Partnership, description: 'Take court bookings through PL4Y.' },
+    API: { value: 'api' as Partnership, description: 'Connect the venue’s own booking software.' },
+  },
+});
+
+const HostPriceRef = builder.objectRef<HostPrice>('VenueHostPrice').implement({
+  description: 'What the owner said they charge for one sport, per hour. Not a booking price: those are set on the venue.',
+  fields: (t) => ({
+    sport: t.field({ type: SportRef, resolve: (p) => sport.byId(p.sportId) }),
+    pricePerHourPaise: t.exposeInt('pricePerHourPaise'),
+    peakPricePerHourPaise: t.int({ nullable: true, resolve: (p) => p.peakPricePerHourPaise }),
+  }),
+});
+
+const DetailsRef = builder.objectRef<HostDetails>('VenueHostDetails').implement({
+  description: 'venue hosts R7 — the partner profile sent with an application.',
+  fields: (t) => ({
+    contactName: t.exposeString('contactName'),
+    contactRole: t.exposeString('contactRole'),
+    whatsappNumber: t.string({
+      nullable: true,
+      description: 'Null when it is the venue’s phone number.',
+      resolve: (d) => d.whatsappNumber,
+    }),
+    email: t.exposeString('email'),
+    venuesManaged: t.exposeInt('venuesManaged'),
+    mapsUrl: t.string({ nullable: true, resolve: (d) => d.mapsUrl }),
+    pincode: t.exposeString('pincode'),
+    setting: t.field({ type: SettingEnum, resolve: (d) => d.setting }),
+    websiteUrl: t.string({ nullable: true, resolve: (d) => d.websiteUrl }),
+    amenities: t.stringList({ resolve: (d) => d.amenities }),
+    playingCapacity: t.int({ nullable: true, resolve: (d) => d.playingCapacity }),
+    openingHours: t.field({
+      type: [OpeningHoursRef],
+      description: 'A day with no window is a weekly closing day.',
+      resolve: (d) => d.openingHours,
+    }),
+    equipmentAvailable: t.exposeBoolean('equipmentAvailable'),
+    coachingAvailable: t.exposeBoolean('coachingAvailable'),
+    prices: t.field({ type: [HostPriceRef], resolve: (d) => d.prices }),
+    peakHours: t.string({ nullable: true, resolve: (d) => d.peakHours }),
+    minBookingMinutes: t.int({ nullable: true, resolve: (d) => d.minBookingMinutes }),
+    bookingMethod: t.field({ type: BookingMethodEnum, nullable: true, resolve: (d) => d.bookingMethod }),
+    advancePolicy: t.string({ nullable: true, resolve: (d) => d.advancePolicy }),
+    cancellationPolicy: t.string({ nullable: true, resolve: (d) => d.cancellationPolicy }),
+    partnership: t.field({ type: PartnershipEnum, resolve: (d) => d.partnership }),
+    existingSoftware: t.string({ nullable: true, resolve: (d) => d.existingSoftware }),
+    authorised: t.exposeBoolean('authorised'),
+    consentDisplay: t.exposeBoolean('consentDisplay'),
+    acceptedTerms: t.exposeBoolean('acceptedTerms'),
+  }),
+});
+
+const HostPhotoRef = builder.objectRef<{ publicId: string; url: string }>('VenueHostPhoto').implement({
+  fields: (t) => ({
+    publicId: t.exposeString('publicId'),
+    url: t.exposeString('url'),
+  }),
 });
 
 const ApplicantRef = builder.objectRef<{ id: string; displayName: string }>('VenueHostApplicant').implement({
@@ -60,6 +152,20 @@ const ApplicationRef = builder.objectRef<HostApplication>('VenueHostApplication'
     courtCount: t.exposeInt('courtCount'),
     contactPhone: t.exposeString('contactPhone'),
     description: t.string({ nullable: true, resolve: (a) => a.description }),
+    details: t.field({
+      type: DetailsRef,
+      nullable: true,
+      description: 'R7 — null for an application sent by the first version of the form.',
+      resolve: (a) => a.details,
+    }),
+    photos: t.field({
+      type: [HostPhotoRef],
+      description: 'R8 — the venue photos the applicant uploaded, in order. They become the venue’s on approval.',
+      resolve: (a) =>
+        a.photoPublicIds
+          .map((publicId) => ({ publicId, url: cloudinary.url(publicId, TRANSFORMS.venuePhoto) }))
+          .filter((p): p is { publicId: string; url: string } => p.url !== null),
+    }),
     status: t.field({ type: StatusEnum, resolve: (a) => a.status }),
     statusReason: t.string({
       nullable: true,
@@ -110,6 +216,47 @@ const HostBankDetailsInput = builder.inputType('HostBankDetailsInput', {
   }),
 });
 
+const HostPriceInput = builder.inputType('VenueHostPriceInput', {
+  fields: (t) => ({
+    sportId: t.id({ required: true, description: 'One of the application’s sportIds.' }),
+    pricePerHourPaise: t.int({ required: true }),
+    peakPricePerHourPaise: t.int({ description: 'Left out when there is one rate all day.' }),
+  }),
+});
+
+const HostDetailsInput = builder.inputType('VenueHostDetailsInput', {
+  description:
+    'venue hosts R7 — the partner profile. All three consents must be true (CONSENT_REQUIRED). ' +
+    'Days missing from openingHours are weekly closing days.',
+  fields: (t) => ({
+    contactName: t.string({ required: true }),
+    contactRole: t.string({ required: true, description: '"Owner", "Manager" — free text.' }),
+    whatsappNumber: t.string({ description: 'Left out when it is the same as contactPhone.' }),
+    email: t.string({ required: true }),
+    venuesManaged: t.int({ required: true }),
+    mapsUrl: t.string(),
+    pincode: t.string({ required: true, description: '6 digits.' }),
+    setting: t.field({ type: SettingEnum, required: true }),
+    websiteUrl: t.string({ description: 'Website or a social page.' }),
+    amenities: t.stringList({ required: true }),
+    playingCapacity: t.int({ description: 'Players the venue holds at once.' }),
+    openingHours: t.field({ type: [OpeningHoursInput], required: true }),
+    equipmentAvailable: t.boolean({ required: true }),
+    coachingAvailable: t.boolean({ required: true }),
+    prices: t.field({ type: [HostPriceInput], required: true }),
+    peakHours: t.string({ description: 'When the peak rate applies, in the owner’s words.' }),
+    minBookingMinutes: t.int({ description: 'In steps of 15.' }),
+    bookingMethod: t.field({ type: BookingMethodEnum }),
+    advancePolicy: t.string(),
+    cancellationPolicy: t.string(),
+    partnership: t.field({ type: PartnershipEnum, required: true }),
+    existingSoftware: t.string(),
+    authorised: t.boolean({ required: true }),
+    consentDisplay: t.boolean({ required: true }),
+    acceptedTerms: t.boolean({ required: true }),
+  }),
+});
+
 const ApplyToHostVenueInput = builder.inputType('ApplyToHostVenueInput', {
   fields: (t) => ({
     venueName: t.string({ required: true }),
@@ -123,6 +270,13 @@ const ApplyToHostVenueInput = builder.inputType('ApplyToHostVenueInput', {
     courtCount: t.int({ required: true, description: '1 to 50.' }),
     contactPhone: t.string({ required: true }),
     description: t.string({ description: 'At most 2,000 characters.' }),
+    details: t.field({
+      type: HostDetailsInput,
+      description: 'R7 — the partner profile. Optional only so the first version of the form keeps working.',
+    }),
+    photoPublicIds: t.stringList({
+      description: 'R8 — public_ids from venueHostPhotoUploadSignature uploads, never URLs. Ten at most.',
+    }),
     bank: t.field({
       type: HostBankDetailsInput,
       description:
@@ -174,12 +328,58 @@ builder.mutationFields((t) => ({
           courtCount: i.courtCount,
           contactPhone: i.contactPhone,
           description: i.description ?? null,
+          details: i.details
+            ? {
+                contactName: i.details.contactName,
+                contactRole: i.details.contactRole,
+                whatsappNumber: i.details.whatsappNumber ?? null,
+                email: i.details.email,
+                venuesManaged: i.details.venuesManaged,
+                mapsUrl: i.details.mapsUrl ?? null,
+                pincode: i.details.pincode,
+                setting: i.details.setting,
+                websiteUrl: i.details.websiteUrl ?? null,
+                amenities: i.details.amenities,
+                playingCapacity: i.details.playingCapacity ?? null,
+                openingHours: i.details.openingHours,
+                equipmentAvailable: i.details.equipmentAvailable,
+                coachingAvailable: i.details.coachingAvailable,
+                prices: i.details.prices.map((p) => ({
+                  sportId: String(p.sportId),
+                  pricePerHourPaise: p.pricePerHourPaise,
+                  peakPricePerHourPaise: p.peakPricePerHourPaise ?? null,
+                })),
+                peakHours: i.details.peakHours ?? null,
+                minBookingMinutes: i.details.minBookingMinutes ?? null,
+                bookingMethod: i.details.bookingMethod ?? null,
+                advancePolicy: i.details.advancePolicy ?? null,
+                cancellationPolicy: i.details.cancellationPolicy ?? null,
+                partnership: i.details.partnership,
+                existingSoftware: i.details.existingSoftware ?? null,
+                authorised: i.details.authorised,
+                consentDisplay: i.details.consentDisplay,
+                acceptedTerms: i.details.acceptedTerms,
+              }
+            : null,
+          photoPublicIds: i.photoPublicIds ?? null,
           bank: i.bank
             ? { legalName: i.bank.legalName, pan: i.bank.pan, accountNumber: i.bank.accountNumber, ifsc: i.bank.ifsc }
             : null,
         }),
       );
       return { application: data, userError };
+    },
+  }),
+
+  venueHostPhotoUploadSignature: t.field({
+    type: MediaUploadPayload,
+    description:
+      'venue hosts R8 — a signature for ONE venue photo, uploaded straight to Cloudinary (ADR 0003 §C2). ' +
+      'Send `folder/publicId` back in applyToHostVenue(photoPublicIds). Ask once per photo.',
+    resolve: async (_root, _args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(async () => venueHosts.photoUploadSignature(actor));
+      return { upload: data, userError };
     },
   }),
 
