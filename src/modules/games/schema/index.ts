@@ -16,7 +16,7 @@ import { SportRef } from '../../sport/schema/index.js';
 import { sport } from '../../sport/index.js';
 import { VenueRef } from '../../venues/schema/index.js';
 import { GameScoreInput, GameScoreRef, MatchSideEnum, ScoringRuleRef } from '../../scoring/schema/index.js';
-import { gameCursor, gameResults, games } from '../index.js';
+import { gameCursor, gameResults, games, matchRuleOf } from '../index.js';
 import type { Game, GameComment, GameResult, Tally } from '../index.js';
 
 const GameStatusEnum = builder.enumType('GameStatus', {
@@ -540,9 +540,9 @@ builder.objectFields(GameRef, (t) => ({
     nullable: true,
     description:
       'games R14 — how this sport is scored, so the result form can speak it (games to 11, sets, goals…). ' +
-      'Null when the sport has no rule.',
+      'Null when the sport has no rule, or is scored in heats (a race, a scorecard): it has no result form.',
     resolve: async (g) => {
-      const rule = await sport.scoringRuleFor(g.sportId).catch(() => null);
+      const rule = await matchRuleOf(g.sportId);
       return rule ? { kind: rule.kind, definition: JSON.stringify(rule) } : null;
     },
   }),

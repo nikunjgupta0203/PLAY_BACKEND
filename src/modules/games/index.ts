@@ -57,6 +57,16 @@ async function ruleOf(sportId: string) {
   return sport.scoringRuleFor(sportId);
 }
 
+/**
+ * games R14 — the rule a casual result is held to. Null when the sport has no
+ * rule, or is scored in heats (a race, a scorecard): there are no two sides to
+ * a result, and no match rule for a client to count with.
+ */
+export async function matchRuleOf(sportId: string) {
+  const rule = await ruleOf(sportId).catch(() => null);
+  return rule && rule.kind !== 'performance' && rule.kind !== 'scorecard' ? rule : null;
+}
+
 /** "game 2 (11–10) is not a finished game" → a sentence a player reads. */
 const sentence = (reason: string): string => `${reason.charAt(0).toUpperCase()}${reason.slice(1).replace(/\.$/, '')}.`;
 
@@ -65,9 +75,7 @@ export const gameResults = createGameResults({
   games: { byId: (gameId) => games.byId(gameId) },
   rules: {
     async supported(sportId) {
-      const rule = await ruleOf(sportId).catch(() => null);
-      // A race or a scorecard is scored in heats: there are no two sides to a result.
-      return rule !== null && rule.kind !== 'performance' && rule.kind !== 'scorecard';
+      return (await matchRuleOf(sportId)) !== null;
     },
     async judge(sportId, units: UnitScore[]) {
       const { casualWinnerOf, ScoringInputError } = await import('../scoring/index.js');
