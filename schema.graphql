@@ -46,8 +46,19 @@ type AdminContactPayload {
 }
 
 type AdminDayNumbers {
+  """
+  Players who entered an event, hosted or joined a game, or booked a court that day. Each counted once.
+  """
+  activePlayers: Int!
+
+  """Captured in the app for court bookings."""
+  bookingPaidPaise: Int!
+
   """Court bookings made that went ahead or still stand."""
   bookings: Int!
+
+  """Commission kept from host payouts worked out that day."""
+  commissionPaise: Int!
 
   """The India day, YYYY-MM-DD."""
   date: String!
@@ -55,11 +66,20 @@ type AdminDayNumbers {
   """Event entries confirmed that day."""
   entries: Int!
 
+  """Captured in the app for event entries."""
+  eventPaidPaise: Int!
+
   """Casual games created."""
   games: Int!
 
   """Captured in the app."""
   paidPaise: Int!
+
+  """Owed to hosts by payouts worked out that day."""
+  payoutsPaise: Int!
+
+  """Platform fees charged, less fees given back with a full refund."""
+  platformFeePaise: Int!
   refundedPaise: Int!
   signups: Int!
 }
@@ -103,6 +123,19 @@ type AdminEventPage {
   hasNextPage: Boolean!
   nodes: [Event!]!
   total: Int!
+}
+
+"""portal — what the people who signed up in the range have done since."""
+type AdminFunnel {
+  """Entered an event, hosted or joined a game, or booked a court."""
+  active: Int!
+
+  """Picked a sport and a city."""
+  onboarded: Int!
+
+  """Paid for an entry or a booking in the app."""
+  paid: Int!
+  signedUp: Int!
 }
 
 """portal — a casual game, any status."""
@@ -202,16 +235,34 @@ enum AdminGameStatus {
 }
 
 """
-portal — sign-ups, entries, games, bookings and money, by India day and by city. Computed on request.
+portal — the platform by day, by city, by sport, and who led it. Computed on request; ask only for what you show.
 """
 type AdminNumbers {
+  """
+  Different players active across the whole range (not the sum of the days).
+  """
+  activePlayers: Int!
+
   """Busiest first."""
   cities: [AdminCityNumbers!]!
 
   """Every day in the range, oldest first."""
   days: [AdminDayNumbers!]!
   from: String!
+  funnel: AdminFunnel!
+
+  """Busiest first."""
+  sports: [AdminSportNumbers!]!
   to: String!
+
+  """Most entries confirmed in the range."""
+  topEvents: [AdminTopEvent!]!
+
+  """Event entries plus games set up, most first."""
+  topHosts: [AdminTopHost!]!
+
+  """Most court bookings in the range."""
+  topVenues: [AdminTopVenue!]!
 }
 
 """portal — what is waiting on someone."""
@@ -234,6 +285,50 @@ type AdminOverview {
 
   """venue hosts — applications to list a venue, waiting."""
   venueHostApplications: Int!
+}
+
+type AdminSportNumbers {
+  entries: Int!
+  games: Int!
+
+  """Different players in those entries and games."""
+  players: Int!
+  sport: String!
+}
+
+type AdminTopEvent {
+  city: String!
+
+  """Confirmed in the range."""
+  entries: Int!
+
+  """Captured in the app for this event in the range."""
+  paidPaise: Int!
+  slug: String!
+  startsAt: DateTime!
+  title: String!
+}
+
+type AdminTopHost {
+  entries: Int!
+
+  """Their events with an entry confirmed in the range."""
+  events: Int!
+
+  """Casual games they set up in the range."""
+  games: Int!
+  name: String!
+  userId: ID!
+}
+
+type AdminTopVenue {
+  bookings: Int!
+  city: String!
+  name: String!
+
+  """Booked value, paid in the app or at the desk."""
+  paidPaise: Int!
+  venueId: ID!
 }
 
 """
@@ -1429,7 +1524,7 @@ type Game {
   resultsOpenAt: DateTime!
 
   """
-  games R14 — how this sport is scored, so the result form can speak it (games to 11, sets, goals…). Null when the sport has no rule.
+  games R14 — how this sport is scored, so the result form can speak it (games to 11, sets, goals…). Null when the sport has no rule, or is scored in heats (a race, a scorecard): it has no result form.
   """
   scoringRule: ScoringRule
   skillBand: String
