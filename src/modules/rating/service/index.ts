@@ -744,6 +744,25 @@ export function createRatingService(deps: RatingDeps) {
     };
   }
 
+  /**
+   * profile R16 — the rating line on the analytics page: every row since a
+   * date (all time when null), oldest first, and the settled rating the period
+   * started from. Ratings are public, so this is not limited to the owner.
+   */
+  async function seriesFor(
+    playerId: string,
+    sportId: string,
+    since: Date | null,
+  ): Promise<{ start: number | null; points: RatingEvent[] }> {
+    const [rows, before] = await Promise.all([
+      repo.eventsSince(playerId, sportId, since, SERIES_LIMIT),
+      since ? repo.settledBefore(playerId, sportId, since) : null,
+    ]);
+    const points = rows.map(toEvent);
+    const firstSettled = points.find((p) => !p.isProvisional);
+    return { start: before?.ratingAfter ?? firstSettled?.ratingBefore ?? null, points };
+  }
+
   // --- replay (R8) -----------------------------------------------------------
 
   /**
@@ -842,6 +861,7 @@ export function createRatingService(deps: RatingDeps) {
     ratingFor,
     rankedRatingFor,
     historyFor,
+    seriesFor,
     replay,
     scopeKey,
     /** Exposed for the worker's inactivity sweep and for tests. */
@@ -854,6 +874,9 @@ export function createRatingService(deps: RatingDeps) {
  * Computed in UTC against the IST offset rather than with a timezone library:
  * India has one offset and has never observed daylight saving.
  */
+/** profile R16 — the most rows one rating line draws. */
+const SERIES_LIMIT = 300;
+
 const IST_OFFSET_MS = 5.5 * 3_600_000;
 
 export function weekStart(at: Date): Date {

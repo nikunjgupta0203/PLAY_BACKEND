@@ -10,7 +10,7 @@
 import { builder, clampFirst } from '../../../graphql/builder.js';
 import { requireActor } from '../../../graphql/userError.js';
 import { UserError } from '../../../platform/errors/index.js';
-import { PlayerProfileRef } from '../../profile/schema/index.js';
+import { PlayerAnalyticsRef, PlayerProfileRef } from '../../profile/schema/index.js';
 import { profile } from '../../profile/index.js';
 import { rating } from '../index.js';
 import type { PlayerRating, RankingRow, RankingScope, RatingEvent, Standing } from '../index.js';
@@ -162,6 +162,38 @@ builder.objectField(PlayerProfileRef, 'nationalRanks', (t) =>
       );
       return rows.filter((r): r is { sportId: string; rank: number } => r.rank !== null);
     },
+  }),
+);
+
+const AnalyticsRatingPointRef = builder.objectRef<RatingEvent>('AnalyticsRatingPoint').implement({
+  fields: (t) => ({
+    at: t.field({ type: 'DateTime', resolve: (e) => e.createdAt }),
+    rating: t.float({ resolve: (e) => e.ratingAfter }),
+    change: t.float({ resolve: (e) => e.ratingAfter - e.ratingBefore }),
+    provisional: t.boolean({ resolve: (e) => e.isProvisional }),
+  }),
+});
+
+const AnalyticsRatingRef = builder
+  .objectRef<{ start: number | null; points: RatingEvent[] }>('AnalyticsRating')
+  .implement({
+    description:
+      "profile R16 — the rating line over the analytics period. Settled rows are the line; " +
+      'provisional rows are the per-match previews (rating R3).',
+    fields: (t) => ({
+      start: t.float({
+        nullable: true,
+        description: 'The settled rating when the period began; null before any.',
+        resolve: (r) => r.start,
+      }),
+      points: t.field({ type: [AnalyticsRatingPointRef], resolve: (r) => r.points }),
+    }),
+  });
+
+builder.objectField(PlayerAnalyticsRef, 'rating', (t) =>
+  t.field({
+    type: AnalyticsRatingRef,
+    resolve: (a) => rating.seriesFor(a.playerId, a.sportId, a.since),
   }),
 );
 

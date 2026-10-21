@@ -26,8 +26,10 @@ import { SportRef } from '../../sport/schema/index.js';
 import { profile } from '../index.js';
 import type {
   Achievement,
+  AnalyticsPerson,
   MatchHistoryRow,
   PlayedWith,
+  PlayerAnalytics,
   PlayerSport,
   PublicProfile,
   StatsSnapshot,
@@ -174,6 +176,111 @@ const PlayedWithRef = builder.objectRef<PlayedWith>('PlayedWith').implement({
   }),
 });
 
+// --- analytics (R16) ---------------------------------------------------------
+
+const AnalyticsPeriodEnum = builder.enumType('AnalyticsPeriod', {
+  description: 'profile R16 — how far back the analytics page looks.',
+  values: {
+    D30: { value: 30 },
+    D90: { value: 90 },
+    Y1: { value: 365 },
+    ALL: { value: 0 },
+  },
+});
+
+const TallyRef = builder.objectRef<{ played: number; wins: number }>('AnalyticsTally').implement({
+  fields: (t) => ({
+    played: t.exposeInt('played'),
+    wins: t.exposeInt('wins'),
+  }),
+});
+
+const MonthTallyRef = builder
+  .objectRef<{ month: string; played: number; wins: number }>('AnalyticsMonth')
+  .implement({
+    fields: (t) => ({
+      month: t.exposeString('month', { description: 'YYYY-MM, IST.' }),
+      played: t.exposeInt('played'),
+      wins: t.exposeInt('wins'),
+    }),
+  });
+
+const WeekdayTallyRef = builder
+  .objectRef<{ weekday: number; played: number; wins: number }>('AnalyticsWeekday')
+  .implement({
+    fields: (t) => ({
+      weekday: t.exposeInt('weekday', { description: '1 = Monday … 7 = Sunday, IST.' }),
+      played: t.exposeInt('played'),
+      wins: t.exposeInt('wins'),
+    }),
+  });
+
+const ActivityDayRef = builder
+  .objectRef<{ date: string; matches: number }>('AnalyticsDay')
+  .implement({
+    fields: (t) => ({
+      date: t.exposeString('date', { description: 'YYYY-MM-DD, IST.' }),
+      matches: t.exposeInt('matches'),
+    }),
+  });
+
+const OutcomesRef = builder
+  .objectRef<PlayerAnalytics['outcomes']>('AnalyticsOutcomes')
+  .implement({
+    fields: (t) => ({
+      played: t.exposeInt('played'),
+      walkover: t.exposeInt('walkover'),
+      retired: t.exposeInt('retired'),
+      forfeit: t.exposeInt('forfeit'),
+    }),
+  });
+
+const AnalyticsPersonRef = builder.objectRef<AnalyticsPerson>('AnalyticsPerson').implement({
+  fields: (t) => ({
+    player: t.field({ type: PlayerProfileRef, resolve: (p) => p.player }),
+    played: t.exposeInt('played'),
+    wins: t.exposeInt('wins'),
+  }),
+});
+
+const PlayerAnalyticsRef = builder.objectRef<PlayerAnalytics>('PlayerAnalytics').implement({
+  description:
+    "profile R16 — one sport's numbers over a period, from the match history. " +
+    'Casual games are not in it: they never count toward the record.',
+  fields: (t) => ({
+    sport: t.field({ type: SportRef, resolve: (a) => sport.byId(a.sportId) }),
+    since: t.field({ type: 'DateTime', nullable: true, resolve: (a) => a.since }),
+    played: t.exposeInt('played'),
+    wins: t.exposeInt('wins'),
+    losses: t.exposeInt('losses'),
+    winRate: t.float({ nullable: true, resolve: (a) => a.winRate }),
+    previousWinRate: t.float({
+      nullable: true,
+      description: 'The period of the same length before this one. Null for all time.',
+      resolve: (a) => a.previousWinRate,
+    }),
+    currentStreak: t.exposeInt('currentStreak', { description: 'Positive: wins in a row. Negative: losses.' }),
+    bestWinStreak: t.exposeInt('bestWinStreak'),
+    events: t.exposeInt('events'),
+    allTimeMatches: t.exposeInt('allTimeMatches'),
+    form: t.booleanList({ description: 'The last ten results, oldest first.', resolve: (a) => a.form }),
+    months: t.field({ type: [MonthTallyRef], resolve: (a) => a.months }),
+    weekdays: t.field({ type: [WeekdayTallyRef], resolve: (a) => a.weekdays }),
+    activity: t.field({ type: [ActivityDayRef], resolve: (a) => a.activity }),
+    outcomes: t.field({ type: OutcomesRef, resolve: (a) => a.outcomes }),
+    singles: t.field({ type: TallyRef, resolve: (a) => a.singles }),
+    doubles: t.field({ type: TallyRef, resolve: (a) => a.doubles }),
+    deciders: t.field({ type: TallyRef, resolve: (a) => a.deciders }),
+    closeGames: t.field({ type: TallyRef, resolve: (a) => a.closeGames }),
+    margins: t.intList({
+      description: 'Games by margin: lost by 8+, lost by 7 … lost by 1, won by 1 … won by 8+.',
+      resolve: (a) => a.margins,
+    }),
+    partners: t.field({ type: [AnalyticsPersonRef], resolve: (a) => a.partners }),
+    opponents: t.field({ type: [AnalyticsPersonRef], resolve: (a) => a.opponents }),
+  }),
+});
+
 const AvatarSize = builder.enumType('AvatarSize', {
   description: 'Named Cloudinary transformations (ADR 0003 §C1). Not free-form sizes.',
   values: { sm: {}, md: {}, lg: {} } as const,
@@ -243,6 +350,19 @@ builder.node(PlayerProfileRef, {
       args: { first: t.arg.int({ defaultValue: 20 }) },
       resolve: (p, args, ctx) =>
         profile.playedWith(p.id, { viewerUserId: ctx.actor?.userId ?? null, first: clampFirst(args.first, 20) }),
+    }),
+    analytics: t.field({
+      type: PlayerAnalyticsRef,
+      description: 'profile R16 — one sport over a period. The record part is public (R5).',
+      args: {
+        sportId: t.arg.id({ required: true }),
+        period: t.arg({ type: AnalyticsPeriodEnum, defaultValue: 90 }),
+      },
+      resolve: (p, args, ctx) =>
+        profile.analytics(p.id, args.sportId.toString(), {
+          days: args.period ? args.period : null,
+          viewerUserId: ctx.actor?.userId ?? null,
+        }),
     }),
     recentResults: t.field({
       type: [MatchResultSummaryRef],
@@ -568,4 +688,4 @@ builder.mutationFields((t) => ({
 }));
 
 /** `rating` renders a leaderboard row as a player card; `home` renders the snapshot. */
-export { PlayerProfileRef, StatsSnapshotRef };
+export { PlayerAnalyticsRef, PlayerProfileRef, StatsSnapshotRef };

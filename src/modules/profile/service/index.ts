@@ -17,6 +17,7 @@ import { write as outboxWrite } from '../../../platform/outbox.js';
 import type { UploadSignature } from '../../../platform/cloudinary.js';
 import { cityVariants } from '../../../platform/city.js';
 import { memo, remember } from '../../../platform/requestCache.js';
+import { analyticsFrom, type Analytics, type PersonTally } from './analytics.js';
 import { badgesFromHistory } from './badges.js';
 
 export const ProfileCode = {
@@ -39,6 +40,9 @@ export type Visibility = (typeof VISIBILITIES)[number];
 
 /** A rating stays provisional until the player has this many rated matches. */
 export const PROVISIONAL_MATCHES = 5;
+
+/** R16 — partners and opponents listed on the analytics page, each. */
+const ANALYTICS_PEOPLE = 10;
 
 export interface Actor {
   userId: string;
@@ -121,6 +125,19 @@ export interface StatsSnapshot {
   tournamentsPlayed: number;
   bestFinish: string | null;
   updatedAt: Date | null;
+}
+
+/** R16 — an analytics row's partner or opponent, as the viewer may see them. */
+export interface AnalyticsPerson extends Omit<PersonTally, 'playerId'> {
+  player: PublicProfile;
+}
+
+/** R16 — one sport's analytics, with people resolved for the viewer. */
+export interface PlayerAnalytics extends Omit<Analytics, 'partners' | 'opponents'> {
+  playerId: string;
+  sportId: string;
+  partners: AnalyticsPerson[];
+  opponents: AnalyticsPerson[];
 }
 
 export interface Page<T> {
@@ -748,6 +765,69 @@ export function createProfileService(deps: ProfileDeps) {
     return out;
   }
 
+  // --- analytics (R16) --------------------------------------------------------
+
+  /**
+   * R16 — one sport's numbers over a period (null days = all time). The record
+   * behind them is competitive, so like results they show on every profile
+   * (R5). The partner and opponent lists are activity, so they follow R10's
+   * rules: empty when details are withheld, and only players the viewer could
+   * find themselves.
+   */
+  async function analytics(
+    playerId: string,
+    sportId: string,
+    opts: { days: number | null; viewerUserId: string | null },
+  ): Promise<PlayerAnalytics> {
+    const [rows, target, viewer] = await Promise.all([
+      db.playerMatchHistory.findMany({
+        where: { playerId, sportId },
+        select: {
+          matchId: true,
+          eventId: true,
+          partnerIds: true,
+          opponentIds: true,
+          won: true,
+          outcome: true,
+          games: true,
+          completedAt: true,
+        },
+      }),
+      findById(playerId),
+      opts.viewerUserId ? findByUserId(opts.viewerUserId) : null,
+    ]);
+    const result = analyticsFrom(
+      rows.map((r) => ({
+        ...r,
+        outcome: r.outcome as MatchHistoryOutcome,
+        games: (r.games ?? []) as MatchHistoryRow['games'],
+      })),
+      { now: now(), days: opts.days },
+    );
+
+    const top = (list: PersonTally[]) => list.slice(0, ANALYTICS_PEOPLE);
+    const wanted = [...top(result.partners), ...top(result.opponents)].map((p) => p.playerId);
+    let views = new Map<string, PublicProfile>();
+    if (target && wanted.length > 0 && toPublic(target, viewer, []).detailsVisible) {
+      const visible: Visibility[] = viewer ? ['public', 'players_only'] : ['public'];
+      const profiles = await db.playerProfile.findMany({
+        where: {
+          id: { in: wanted },
+          OR: [{ visibility: { in: visible } }, ...(viewer ? [{ id: viewer.id }] : [])],
+        },
+        include: { sports: true },
+      });
+      views = new Map((await viewsOf(await hydrate(profiles), viewer)).map((p) => [p.id, p]));
+    }
+    const resolve = (list: PersonTally[]): AnalyticsPerson[] =>
+      top(list).flatMap(({ playerId: id, ...tally }) => {
+        const player = views.get(id);
+        return player ? [{ ...tally, player }] : [];
+      });
+
+    return { ...result, playerId, sportId, partners: resolve(result.partners), opponents: resolve(result.opponents) };
+  }
+
   /** chat R2 — the two have played a completed match together, on either side. */
   async function havePlayedTogether(playerId: string, otherId: string): Promise<boolean> {
     const found = await db.$queryRaw<{ one: number }[]>`
@@ -1202,6 +1282,7 @@ export function createProfileService(deps: ProfileDeps) {
     statsSnapshot,
     statsFor,
     playedWith,
+    analytics,
     havePlayedTogether,
     projectMatch,
     matchHistory,

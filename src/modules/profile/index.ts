@@ -86,9 +86,11 @@ export const profile = createProfileService({
 export { ProfileCode, PROVISIONAL_MATCHES, VISIBILITIES } from './service/index.js';
 export type {
   Achievement,
+  AnalyticsPerson,
   MatchHistoryRow,
   Page,
   PlayedWith,
+  PlayerAnalytics,
   PlayerProfile,
   PlayerSport,
   ProfileBrief,

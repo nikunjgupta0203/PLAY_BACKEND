@@ -454,6 +454,70 @@ enum AdminUserStatus {
   SUSPENDED
 }
 
+type AnalyticsDay {
+  """YYYY-MM-DD, IST."""
+  date: String!
+  matches: Int!
+}
+
+type AnalyticsMonth {
+  """YYYY-MM, IST."""
+  month: String!
+  played: Int!
+  wins: Int!
+}
+
+type AnalyticsOutcomes {
+  forfeit: Int!
+  played: Int!
+  retired: Int!
+  walkover: Int!
+}
+
+"""profile R16 — how far back the analytics page looks."""
+enum AnalyticsPeriod {
+  ALL
+  D30
+  D90
+  Y1
+}
+
+type AnalyticsPerson {
+  played: Int!
+  player: PlayerProfile!
+  wins: Int!
+}
+
+"""
+profile R16 — the rating line over the analytics period. Settled rows are the line; provisional rows are the per-match previews (rating R3).
+"""
+type AnalyticsRating {
+  points: [AnalyticsRatingPoint!]!
+
+  """The settled rating when the period began; null before any."""
+  start: Float
+}
+
+type AnalyticsRatingPoint {
+  at: DateTime!
+  change: Float!
+  provisional: Boolean!
+  rating: Float!
+}
+
+type AnalyticsTally {
+  played: Int!
+  wins: Int!
+}
+
+type AnalyticsWeekday {
+  played: Int!
+
+  """1 = Monday … 7 = Sunday, IST."""
+  weekday: Int!
+  wins: Int!
+}
+
 input ApplyToHostVenueInput {
   address: String!
 
@@ -3470,6 +3534,46 @@ type PlayedWith {
   player: PlayerProfile!
 }
 
+"""
+profile R16 — one sport's numbers over a period, from the match history. Casual games are not in it: they never count toward the record.
+"""
+type PlayerAnalytics {
+  activity: [AnalyticsDay!]!
+  allTimeMatches: Int!
+  bestWinStreak: Int!
+  closeGames: AnalyticsTally!
+
+  """Positive: wins in a row. Negative: losses."""
+  currentStreak: Int!
+  deciders: AnalyticsTally!
+  doubles: AnalyticsTally!
+  events: Int!
+
+  """The last ten results, oldest first."""
+  form: [Boolean!]!
+  losses: Int!
+
+  """
+  Games by margin: lost by 8+, lost by 7 … lost by 1, won by 1 … won by 8+.
+  """
+  margins: [Int!]!
+  months: [AnalyticsMonth!]!
+  opponents: [AnalyticsPerson!]!
+  outcomes: AnalyticsOutcomes!
+  partners: [AnalyticsPerson!]!
+  played: Int!
+
+  """The period of the same length before this one. Null for all time."""
+  previousWinRate: Float
+  rating: AnalyticsRating!
+  since: DateTime
+  singles: AnalyticsTally!
+  sport: Sport!
+  weekdays: [AnalyticsWeekday!]!
+  winRate: Float
+  wins: Int!
+}
+
 type PlayerByPhonePayload {
   """
   Null when nobody on PL4Y gave that number: invite them with a link instead.
@@ -3496,6 +3600,9 @@ type PlayerGameScore {
 
 type PlayerProfile implements Node {
   achievements: [Achievement!]!
+
+  """profile R16 — one sport over a period. The record part is public (R5)."""
+  analytics(period: AnalyticsPeriod = D90, sportId: ID!): PlayerAnalytics!
   avatarUrl(size: AvatarSize = md): String
   bio: String
   city: String

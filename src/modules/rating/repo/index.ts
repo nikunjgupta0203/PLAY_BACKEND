@@ -164,6 +164,30 @@ export function createRatingRepo(db: Db) {
     return rows.map(toEvent);
   }
 
+  /** profile R16's rating line — the newest `limit` rows since a date, oldest first. */
+  async function eventsSince(
+    playerId: string,
+    sportId: string,
+    since: Date | null,
+    limit: number,
+  ): Promise<RatingEventRow[]> {
+    const rows = await db.ratingEvent.findMany({
+      where: { playerId, sportId, ...(since ? { createdAt: { gte: since } } : {}) },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+    });
+    return rows.reverse().map(toEvent);
+  }
+
+  /** The last settled row written before a date, if any. */
+  async function settledBefore(playerId: string, sportId: string, before: Date): Promise<RatingEventRow | null> {
+    const row = await db.ratingEvent.findFirst({
+      where: { playerId, sportId, isProvisional: false, createdAt: { lt: before } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    return row ? toEvent(row) : null;
+  }
+
   /** Everything ever written for a sport, oldest first — the replay input. */
   async function allEvents(sportId: string): Promise<RatingEventRow[]> {
     const rows = await db.ratingEvent.findMany({
@@ -428,6 +452,8 @@ export function createRatingRepo(db: Db) {
     lastSettled,
     lastSettledForAll,
     historyFor,
+    eventsSince,
+    settledBefore,
     allEvents,
     deleteSettledForPeriods,
     countSettledMatches,

@@ -156,6 +156,14 @@ optional **bio** (at most 160; blank clears it) through `updateProfileDetails`. 
 other players see in draws, lists and results, so it is never blank. It lives on `users`, so profile
 validates it and changes it through identity's `setDisplayName`, never with an UPDATE of its own.
 
+**R16** — `PlayerProfile.analytics(sportId, period)` works out one sport's numbers over 30 days,
+90 days, a year or all time from the R12 projection, computed per request (no table of its own):
+record and win rate against the period before, streaks, last-ten form, six calendar months, weekdays,
+13 weeks of activity, outcomes, singles/doubles, deciding games, close games, game margins, and
+partners and opponents. Days are IST. The numbers are competitive record, so they show on every
+profile (R5); the partner and opponent lists follow R10's visibility rules. The `rating` line on it is
+added by the rating module from `rating_events`. Casual games are not in it.
+
 ---
 
 ## Schema
