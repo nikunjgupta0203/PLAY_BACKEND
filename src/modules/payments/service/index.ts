@@ -169,6 +169,26 @@ export interface BookingsPort {
   failFromPayment(input: { bookingId: string; paymentId: string; reason: string }): Promise<unknown>;
 }
 
+/**
+ * payments R20, communities R8 — a paid community membership: one held period,
+ * paid for like a court. The price is frozen on the held row; PL4Y's 5% is
+ * taken at payout, so the order carries no platform fee and no tax.
+ */
+export interface CommunityPaymentsPort {
+  byId(communityPaymentId: string): Promise<{
+    id: string;
+    userId: string;
+    status: string;
+    pricePaise: bigint;
+    holdExpiresAt: Date;
+    communityName: string;
+  }>;
+  extendHold(communityPaymentId: string, minutes: number): Promise<unknown>;
+  /** Throws ILLEGAL_TRANSITION when the period cannot become a membership; the capture is then refunded in full. */
+  confirmFromPayment(input: { communityPaymentId: string; paymentId: string }): Promise<{ confirmedNow: boolean }>;
+  failFromPayment(input: { communityPaymentId: string; paymentId: string; reason: string }): Promise<unknown>;
+}
+
 export interface UsersPort {
   byIds(ids: string[]): Promise<{ id: string; displayName: string; email: string; phone: string | null }[]>;
 }
@@ -191,6 +211,8 @@ export interface PaymentsDeps {
   registration: RegistrationPort;
   /** Absent where bookings are not wired (most tests). */
   bookings?: BookingsPort;
+  /** Absent where communities are not wired (most tests). */
+  communityPayments?: CommunityPaymentsPort;
   users: UsersPort;
   email: EmailPort;
   queue: QueuePort;
@@ -375,6 +397,113 @@ export function createPaymentsService(deps: PaymentsDeps) {
     return deps.bookings;
   }
 
+  function communityPaymentsPort(): CommunityPaymentsPort {
+    if (!deps.communityPayments) throw new SystemError('INTERNAL', 'Paid communities are not available.');
+    return deps.communityPayments;
+  }
+
+  /** Who paid for an order: the captain of an entry, the booker of a court, the member of a community. */
+  async function payerOf(order: { registrationId: string | null; bookingId: string | null; communityPaymentId: string | null }): Promise<string | null> {
+    if (order.bookingId) return (await bookingsPort().byId(order.bookingId)).userId;
+    if (order.communityPaymentId) return (await communityPaymentsPort().byId(order.communityPaymentId)).userId;
+    return (await registration.byId(order.registrationId!)).captainUserId;
+  }
+
+  /**
+   * communities R8 — the order for a held membership period. The amount is the
+   * price frozen on the period when it was held, never one from the client.
+   */
+  async function createCommunityOrder(actor: Actor, communityPaymentId: string): Promise<OrderHandle> {
+    const port = communityPaymentsPort();
+    const held = await port.byId(communityPaymentId);
+    if (held.userId !== actor.userId) throw new SystemError('FORBIDDEN', 'This checkout is not yours.');
+    if (held.status === 'paid') throw new UserError(PaymentCode.ORDER_ALREADY_PAID, 'This membership is already paid for.');
+    if (held.status !== 'held' || held.holdExpiresAt <= now()) {
+      throw new UserError(PaymentCode.HOLD_EXPIRED, 'This checkout ran out. Please start again.');
+    }
+    await port.extendHold(communityPaymentId, HOLD_WHILE_PAYING_MINUTES);
+
+    const quote = { entryFeePaise: held.pricePaise, platformFeePaise: 0n, taxPaise: 0n, totalPaise: held.pricePaise, currency: CURRENCY };
+    const description = `Membership of ${held.communityName}`;
+    const open = await repo.openOrderForCommunityPayment(communityPaymentId);
+    if (open && open.amountPaise === quote.totalPaise && now().getTime() - open.createdAt.getTime() < ORDER_REUSE_MS) {
+      return subjectHandle(open, quote, actor.userId, description);
+    }
+
+    const id = newId();
+    let order;
+    try {
+      order = await gateway.createOrder({
+        amountPaise: quote.totalPaise,
+        currency: quote.currency,
+        receipt: id.replace(/-/g, '').slice(0, 40),
+        notes: { communityPaymentId },
+      });
+    } catch (err) {
+      logger.error({ err, communityPaymentId }, 'gateway order creation failed');
+      throw new SystemError(PaymentCode.GATEWAY_UNAVAILABLE, 'Payments are briefly unavailable.');
+    }
+    const row = await repo.insertOrder({
+      id,
+      communityPaymentId,
+      gatewayOrderId: order.id,
+      entryFeePaise: quote.entryFeePaise,
+      platformFeePaise: quote.platformFeePaise,
+      taxPaise: quote.taxPaise,
+      amountPaise: quote.totalPaise,
+      currency: quote.currency,
+      status: 'created',
+    });
+    return subjectHandle(row, quote, actor.userId, description);
+  }
+
+  /** The membership twin of `refreshPayment`: asks the gateway, through the one settle path. */
+  async function refreshCommunityPayment(actor: Actor, communityPaymentId: string): Promise<{ settled: boolean }> {
+    const held = await communityPaymentsPort().byId(communityPaymentId);
+    if (held.userId !== actor.userId) throw new SystemError('FORBIDDEN', 'This checkout is not yours.');
+    if (held.status === 'paid') return { settled: true };
+    let settled = false;
+    for (const order of await repo.ordersForCommunityPayment(communityPaymentId)) {
+      if (order.status !== 'created' && order.status !== 'attempted') continue;
+      try {
+        if (await settleOrderFromGateway(order.gatewayOrderId)) settled = true;
+      } catch (err) {
+        logger.warn({ err, orderId: order.id }, 'membership payment refresh failed; reconciliation will retry');
+      }
+    }
+    return { settled };
+  }
+
+  /**
+   * communities R8 — the membership half of `applyCapture`. A capture that can
+   * no longer become a membership is refunded in full, as is a second capture
+   * for a period that is already paid.
+   */
+  async function settleCommunityCapture(communityPaymentId: string, payment: { id: string; amountPaise: bigint }): Promise<void> {
+    try {
+      await communityPaymentsPort().confirmFromPayment({ communityPaymentId, paymentId: payment.id });
+    } catch (err) {
+      if (!isIllegalTransition(err)) throw err;
+      logger.warn({ err, paymentId: payment.id, communityPaymentId }, 'capture for a membership that cannot start — refunding in full');
+      await refund(null, {
+        paymentId: payment.id,
+        amountPaise: payment.amountPaise,
+        reason: LATE_CAPTURE_REASON,
+        idempotencyKey: lateCaptureKey(payment.id),
+      });
+      return;
+    }
+    const keeper = await repo.keeperCapture({ communityPaymentId });
+    if (keeper && keeper !== payment.id) {
+      await refund(null, {
+        paymentId: payment.id,
+        amountPaise: payment.amountPaise,
+        reason: DUPLICATE_PAYMENT_REASON,
+        idempotencyKey: duplicateKey(payment.id),
+      });
+    }
+  }
+
   /**
    * bookings R2, R5 — the order for a held court. The amount is the quote
    * frozen on the booking when it was held, never one from the client.
@@ -430,11 +559,21 @@ export function createPaymentsService(deps: PaymentsDeps) {
     return bookingHandle(row, quote, actor.userId, booking.venueName);
   }
 
-  async function bookingHandle(
+  function bookingHandle(
     row: Awaited<ReturnType<PaymentsRepo['insertOrder']>>,
     quote: OrderHandle['quote'],
     payerId: string,
     venueName: string,
+  ): Promise<OrderHandle> {
+    return subjectHandle(row, quote, payerId, `Court at ${venueName}`);
+  }
+
+  /** The checkout for a booking or a membership order: the payer's details and one line of description. */
+  async function subjectHandle(
+    row: Awaited<ReturnType<PaymentsRepo['insertOrder']>>,
+    quote: OrderHandle['quote'],
+    payerId: string,
+    description: string,
   ): Promise<OrderHandle> {
     const [payer] = await users.byIds([payerId]);
     if (!payer) throw new SystemError('FORBIDDEN', 'The payer could not be found.');
@@ -445,7 +584,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
         amountPaise: row.amountPaise,
         receipt: row.id,
         payer: { name: payer.displayName, email: payer.email, phone: payer.phone },
-        description: `Court at ${venueName}`,
+        description,
       });
     } catch (err) {
       if (!(err instanceof GatewayError)) throw err;
@@ -722,6 +861,10 @@ export function createPaymentsService(deps: PaymentsDeps) {
       await settleBookingCapture(order.bookingId, result.payment);
       return;
     }
+    if (order.communityPaymentId) {
+      await settleCommunityCapture(order.communityPaymentId, result.payment);
+      return;
+    }
     const registrationId = order.registrationId!;
 
     let confirmation: { confirmedNow: boolean };
@@ -859,7 +1002,13 @@ export function createPaymentsService(deps: PaymentsDeps) {
       if (firstApplication) {
         await outboxWrite(tx, {
           topic: 'payment.failed',
-          payload: { paymentId: row.id, registrationId: order.registrationId, bookingId: order.bookingId, reason },
+          payload: {
+            paymentId: row.id,
+            registrationId: order.registrationId,
+            bookingId: order.bookingId,
+            communityPaymentId: order.communityPaymentId,
+            reason,
+          },
         });
       }
       return { payment: row, firstApplication };
@@ -868,6 +1017,10 @@ export function createPaymentsService(deps: PaymentsDeps) {
     if (result.firstApplication) {
       if (order.bookingId) {
         await bookingsPort().failFromPayment({ bookingId: order.bookingId, paymentId: result.payment.id, reason });
+        return;
+      }
+      if (order.communityPaymentId) {
+        await communityPaymentsPort().failFromPayment({ communityPaymentId: order.communityPaymentId, paymentId: result.payment.id, reason });
         return;
       }
       const registrationId = order.registrationId!;
@@ -983,9 +1136,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
       throw new UserError(PaymentCode.PAYMENT_NOT_FOUND, 'That payment could not be found.');
     }
     if (actor) {
-      const payer = order.bookingId
-        ? (await bookingsPort().byId(order.bookingId)).userId
-        : (await registration.byId(order.registrationId!)).captainUserId;
+      const payer = await payerOf(order);
       if (payer !== actor.userId) {
         throw new SystemError('FORBIDDEN', 'Only the payer can request this refund.');
       }
@@ -1461,9 +1612,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
     if (!order) {
       throw new UserError(PaymentCode.PAYMENT_NOT_FOUND, 'That payment could not be found.');
     }
-    const payer = order.bookingId
-      ? (await bookingsPort().byId(order.bookingId)).userId
-      : (await registration.byId(order.registrationId!)).captainUserId;
+    const payer = await payerOf(order);
     if (payer !== actor.userId) {
       throw new SystemError('FORBIDDEN', 'That receipt is not yours.');
     }
@@ -1479,7 +1628,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
       .reduce((sum, r) => sum + -r.amountPaise, 0n);
 
     return {
-      registrationId: order.registrationId ?? order.bookingId!,
+      registrationId: order.registrationId ?? order.bookingId ?? order.communityPaymentId!,
       paymentId: payment.id,
       gatewayPaymentId: payment.gatewayPaymentId,
       method: payment.method,
@@ -1573,6 +1722,8 @@ export function createPaymentsService(deps: PaymentsDeps) {
     refreshPayment,
     createBookingOrder,
     refreshBookingPayment,
+    createCommunityOrder,
+    refreshCommunityPayment,
     refundForBooking,
     staffRefund,
     staffRefundBooking,

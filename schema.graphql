@@ -740,6 +740,290 @@ type CheckoutForm {
   fields: [CheckoutField!]!
 }
 
+"""
+A club, group or team. Two choices make its type: visibility (public/private) and access (free/paid).
+"""
+type Community {
+  access: CommunityAccess!
+  benefits: [String!]!
+  billing: CommunityBilling
+  city: String!
+  coverUrl: String
+  createdAt: DateTime!
+  description: String
+
+  """
+  communities R2 — listed in Discover. Always true for a public community.
+  """
+  discoverable: Boolean!
+
+  """The owner only; null for everyone else."""
+  earnings: CommunityEarnings
+
+  """PL4Y staff hid it. Members still see it; nobody else does."""
+  hidden: Boolean!
+  id: ID!
+
+  """
+  communities R3 — for admins to share as a link. Null for everyone else.
+  """
+  inviteCode: String
+
+  """
+  communities R5 — waiting requests (oldest first) and approvals waiting for payment. Admins only; empty otherwise.
+  """
+  joinRequests: [CommunityJoinRequest!]!
+  memberCount: Int!
+
+  """
+  communities R6 — owner, admins, then members by join date. Empty to non-members of a private community.
+  """
+  members(after: String, before: String, first: Int, last: Int): CommunityMemberConnection!
+
+  """
+  communities R9 — the group chat, newest first (the client shows it oldest at the top). `before` is the oldest loaded message’s `cursor`. Empty to anyone who is not an active member (R6).
+  """
+  messages(before: String, first: Int = 50): [CommunityMessage!]!
+  name: String!
+  owner: PlayerProfile
+
+  """
+  communities R10 — monthly payouts, newest first. The owner only; empty for everyone else.
+  """
+  payouts: [CommunityPayout!]!
+
+  """Waiting requests. Zero for anyone but admins."""
+  pendingRequestCount: Int!
+
+  """Shown above the feed. Members only."""
+  pinnedPost: CommunityPost
+
+  """
+  communities R9 — the feed, newest first. Empty to anyone who is not an active member (R6).
+  """
+  posts(after: String, before: String, first: Int, last: Int): CommunityPostConnection!
+
+  """Paid communities: one period’s price."""
+  pricePaise: Int
+  slug: String!
+  sport: Sport!
+
+  """
+  communities R8 — when the viewer’s paid period ends. Null for one-time and free memberships, and for the owner.
+  """
+  viewerPaidUntil: DateTime
+
+  """
+  The viewer’s open request: waiting, or approved and waiting for the payment.
+  """
+  viewerRequest: CommunityJoinRequest
+
+  """Set while the viewer is an active member."""
+  viewerRole: CommunityRole
+  viewerState: CommunityViewerState!
+  visibility: CommunityVisibility!
+}
+
+enum CommunityAccess {
+  FREE
+  PAID
+}
+
+"""How long one payment lasts. ONE_TIME is membership for good."""
+enum CommunityBilling {
+  MONTHLY
+  ONE_TIME
+  YEARLY
+}
+
+type CommunityConnection {
+  edges: [CommunityEdge!]!
+  pageInfo: PageInfo!
+}
+
+"""
+communities R8 — what members have paid, PL4Y’s 5%, and what the creator earns. Refunded payments are left out.
+"""
+type CommunityEarnings {
+  commissionPaise: Int!
+  grossPaise: Int!
+  netPaise: Int!
+  paidCount: Int!
+  refundedCount: Int!
+}
+
+type CommunityEdge {
+  cursor: String!
+  node: Community!
+}
+
+type CommunityJoinRequest {
+  """communities R4 — an approval to pay lapses here."""
+  approvalExpiresAt: DateTime
+  community: Community
+  createdAt: DateTime!
+  id: ID!
+  note: String
+  player: PlayerProfile
+  status: CommunityJoinRequestStatus!
+}
+
+type CommunityJoinRequestPayload {
+  request: CommunityJoinRequest
+  userError: UserError
+}
+
+enum CommunityJoinRequestStatus {
+  APPROVED
+  CANCELLED
+  EXPIRED
+  JOINED
+  PENDING
+  REJECTED
+}
+
+type CommunityMember {
+  joinedAt: DateTime!
+  player: PlayerProfile
+  role: CommunityRole!
+}
+
+type CommunityMemberConnection {
+  edges: [CommunityMemberEdge!]!
+  pageInfo: PageInfo!
+}
+
+type CommunityMemberEdge {
+  cursor: String!
+  node: CommunityMember!
+}
+
+"""
+communities R9 — a line in the members’ group chat. `body` is empty once removed.
+"""
+type CommunityMessage {
+  body: String!
+  createdAt: DateTime!
+
+  """Pass as `before` to load the messages older than this one."""
+  cursor: String!
+  deleted: Boolean!
+  id: ID!
+  mine: Boolean!
+  sender: PlayerProfile
+  viewerCanDelete: Boolean!
+}
+
+type CommunityMessagePayload {
+  message: CommunityMessage
+  userError: UserError
+}
+
+type CommunityPayload {
+  community: Community
+  userError: UserError
+}
+
+"""
+communities R10 — one month’s memberships for one community, less PL4Y’s 5%, GST on it and TDS.
+"""
+type CommunityPayout {
+  amountPaise: Int!
+  commissionPaise: Int!
+  commissionTaxPaise: Int!
+  communityId: ID!
+  communityName: String!
+  createdAt: DateTime!
+  grossPaise: Int!
+  holdReason: String
+  id: ID!
+  owner: PlayerProfile
+  paidAt: DateTime
+  paymentCount: Int!
+
+  """Masked. Staff open the full details with revealPayoutAccount."""
+  payoutAccount: PayoutAccount
+
+  """YYYY-MM, India time."""
+  period: String!
+  status: CommunityPayoutStatus!
+  tdsPaise: Int!
+  utr: String
+}
+
+type CommunityPayoutPayload {
+  payout: CommunityPayout
+  userError: UserError
+}
+
+"""
+HELD — the owner’s bank account cannot be paid yet (holdReason says why). READY — send it. PAID — sent, with its UTR.
+"""
+enum CommunityPayoutStatus {
+  HELD
+  PAID
+  READY
+}
+
+"""communities R9 — a post in the members’ feed. Plain text."""
+type CommunityPost {
+  author: PlayerProfile
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+  mine: Boolean!
+  pinned: Boolean!
+
+  """The author, or an admin."""
+  viewerCanDelete: Boolean!
+}
+
+type CommunityPostConnection {
+  edges: [CommunityPostEdge!]!
+  pageInfo: PageInfo!
+}
+
+type CommunityPostEdge {
+  cursor: String!
+  node: CommunityPost!
+}
+
+type CommunityPostPayload {
+  post: CommunityPost
+  userError: UserError
+}
+
+enum CommunityRole {
+  ADMIN
+  MEMBER
+  OWNER
+}
+
+enum CommunitySort {
+  POPULAR
+  RECENT
+}
+
+"""
+NONE — not in it. REQUESTED — waiting for an admin. APPROVED_TO_PAY — approved, pay to join. MEMBER — in it. EXPIRED — a paid period ended: renew. REMOVED — an admin removed them; they cannot rejoin.
+"""
+enum CommunityViewerState {
+  APPROVED_TO_PAY
+  EXPIRED
+  MEMBER
+  NONE
+  REMOVED
+  REQUESTED
+}
+
+"""
+communities R1, R2 — PUBLIC: listed and open to find. PRIVATE: membership is approved by an admin.
+"""
+enum CommunityVisibility {
+  PRIVATE
+  PUBLIC
+}
+
 type Conversation {
   """
   chat R10 — when you may send a new request after a decline. Null otherwise.
@@ -940,6 +1224,29 @@ type CourtSlot {
   """R5 — the court price for this slot."""
   pricePaise: Int!
   startsAt: DateTime!
+}
+
+input CreateCommunityInput {
+  access: CommunityAccess!
+
+  """Up to 6 lines a member gets."""
+  benefits: [String!]
+
+  """Paid only."""
+  billing: CommunityBilling
+  city: String
+  description: String
+
+  """
+  Private only: listed in Discover (default true). Off: reachable by invite link only.
+  """
+  discoverable: Boolean
+  name: String!
+
+  """Paid only: ₹10 to ₹50,000, in paise."""
+  pricePaise: Int
+  sportId: ID!
+  visibility: CommunityVisibility!
 }
 
 input CreateEventInput {
@@ -2392,6 +2699,11 @@ type Mutation {
   adminCreateVenue(input: CreateVenueInput!, ownerEmail: String, reason: String!): VenuePayload!
 
   """
+  communities R10 — take one post out of a community’s feed, for everyone. What it said stays in the database.
+  """
+  adminHideCommunityPost(postId: ID!, reason: String!): StaffCommunityPayload!
+
+  """
   identity R19 — brings a deactivated account back when the player asks. They sign in as usual afterwards.
   """
   adminReactivateUser(reason: String!, userId: ID!): AdminUserPayload!
@@ -2432,6 +2744,11 @@ type Mutation {
   admin R8 — mark every open signal on a subject confirmed or dismissed. Suspending is a separate step.
   """
   adminReviewFraudCase(confirmed: Boolean!, reason: String!, subjectId: ID!, subjectType: FraudSubject!): AdminClosedPayload!
+
+  """
+  communities R10 — hide a community (gone from Discover and invite links; members still see it, flagged) or show it again. Admin and support. The reason goes in the audit log.
+  """
+  adminSetCommunityHidden(communityId: ID!, hidden: Boolean!, reason: String!): StaffCommunityPayload!
 
   """
   org R2 — the only way ownership moves. The previous owner stays on as an admin.
@@ -2477,6 +2794,9 @@ type Mutation {
   """
   beginRegistration(input: BeginRegistrationInput!): RegistrationPayload!
   blockPlayer(playerId: ID!): BlockPayload!
+
+  """The asker withdraws a waiting request or an approval to pay."""
+  cancelCommunityRequest(requestId: ID!): CommunityPayload!
 
   """
   bookings R6 — the player cancels; the refund follows the venue’s policy.
@@ -2528,6 +2848,11 @@ type Mutation {
   ): EventPayload!
 
   """
+  ADR 0003 §C2 — upload the cover under this signature, then save `folder/publicId` as coverPublicId. Admins.
+  """
+  communityCoverUploadSignature(communityId: ID!): MediaUploadPayload!
+
+  """
   Host only, once the game has started. A game also completes by itself when its end time passes.
   """
   completeGame(gameId: ID!): GamePayload!
@@ -2551,6 +2876,21 @@ type Mutation {
   payments R20, bookings R2, R5 — the order for a held court. The amount is the quote frozen on the booking; there is no argument for a client amount.
   """
   createBookingPaymentOrder(bookingId: ID!): CreatePaymentOrderPayload!
+
+  """
+  The creator becomes its owner and first member. INVALID_COMMUNITY, COMMUNITY_LIMIT.
+  """
+  createCommunity(input: CreateCommunityInput!): CommunityPayload!
+
+  """
+  communities R8, payments R20 — Join & pay, Pay now after an approval, or Renew. The price is the community’s, frozen on a held period; there is no argument for a client amount. REQUEST_REQUIRED (private, not approved), ALREADY_MEMBER (paid up), REMOVED_FROM_COMMUNITY, COMMUNITY_FULL.
+  """
+  createCommunityPaymentOrder(communityId: ID!): CreatePaymentOrderPayload!
+
+  """
+  communities R9 — active members. Up to 2,000 characters. INVALID_POST, POSTING_TOO_FAST.
+  """
+  createCommunityPost(body: String!, communityId: ID!): CommunityPostPayload!
 
   """
   Creates a draft. Publishing is the validation gate (events R1). PL4Y staff use adminCreateEvent.
@@ -2600,6 +2940,17 @@ type Mutation {
   deactivateAccount: OkPayload!
   declineMessageRequest(conversationId: ID!): ConversationPayload!
   declinePartnerInvite(token: String!): RegistrationPayload!
+
+  """
+  The owner only. It leaves Discover and every member’s list. `community` is null on success.
+  """
+  deleteCommunity(communityId: ID!): CommunityPayload!
+
+  """The sender, or an admin. Gone for everyone."""
+  deleteCommunityMessage(messageId: ID!): CommunityMessagePayload!
+
+  """The author, or an admin. `post` is null on success."""
+  deleteCommunityPost(postId: ID!): CommunityPostPayload!
 
   """
   chat R12 — deletes your own message for everyone. It shows as deleted in the thread.
@@ -2656,6 +3007,11 @@ type Mutation {
   inviteToGame(gameId: ID!, playerIds: [ID!]!): InviteToGamePayload!
 
   """
+  communities R3 — a free public community, or a free private one with its invite code. REQUEST_REQUIRED, PAYMENT_REQUIRED, ALREADY_MEMBER, REMOVED_FROM_COMMUNITY, COMMUNITY_FULL.
+  """
+  joinCommunity(communityId: ID!, inviteCode: String): CommunityPayload!
+
+  """
   Automatic while a place is free: no approval. GAME_FULL, GAME_CLOSED, GAME_REMOVED, ALREADY_JOINED.
   """
   joinGame(gameId: ID!): GamePayload!
@@ -2664,6 +3020,9 @@ type Mutation {
   registration R17 — queue for a full draw. Holds no seat. A doubles team is queued when the partner accepts, so for doubles this returns a DRAFT to invite from.
   """
   joinWaitlist(eventCategoryId: ID!): RegistrationPayload!
+
+  """OWNER_MUST_TRANSFER for the owner (R5)."""
+  leaveCommunity(communityId: ID!): CommunityPayload!
 
   """
   A full game is open again. The host cannot leave: HOST_CANNOT_LEAVE — cancel instead.
@@ -2675,6 +3034,11 @@ type Mutation {
   leaveWaitlist(registrationId: ID!): RegistrationPayload!
   logout(allDevices: Boolean = false): OkPayload!
   markAllNotificationsRead: MarkReadPayload!
+
+  """
+  Portal — record a READY community payout as sent from PL4Y’s bank. `amountPaise` must be its exact amount; the owner is told, with the UTR. Admin and finance.
+  """
+  markCommunityPayoutPaid(amountPaise: Int!, id: ID!, utr: String!): CommunityPayoutPayload!
   markConversationRead(conversationId: ID!): ConversationPayload!
   markCourtBookingNoShow(
     bookingId: ID!
@@ -2703,6 +3067,9 @@ type Mutation {
   ADR 0003 §C2 — upload the logo under this signature, then save `folder/publicId` as logoPublicId.
   """
   organisationLogoUploadSignature(organisationId: ID!): MediaUploadPayload!
+
+  """Admins. One pinned post at a time."""
+  pinCommunityPost(pinned: Boolean!, postId: ID!): CommunityPostPayload!
 
   """
   events R1 — needs at least one category, a city or venue, a registration window that closes by the start, a future start, a contact phone and accepted hosting terms. A paid category also needs a verified host (ORGANIZER_NOT_VERIFIED).
@@ -2740,6 +3107,11 @@ type Mutation {
   refreshBookingPayment(bookingId: ID!): RefreshPaymentPayload!
 
   """
+  The membership twin of refreshPayment, called while checkout is open. The webhook is still the truth.
+  """
+  refreshCommunityPayment(communityId: ID!): RefreshPaymentPayload!
+
+  """
   gap #22 — the app calls this while checkout is open. It asks the gateway about the entry’s open orders and applies a capture exactly as the webhook would, so a late webhook costs seconds, not the seat. Captain only.
   """
   refreshPayment(registrationId: ID!): RefreshPaymentPayload!
@@ -2762,6 +3134,11 @@ type Mutation {
   """
   rejectVenueHostApplication(id: ID!, reason: String!): VenueHostApplicationPayload!
   releasePayout(id: ID!, reason: String!): PayoutPayload!
+
+  """
+  Admins remove members; only the owner removes an admin. The removed player cannot rejoin (R6).
+  """
+  removeCommunityMember(communityId: ID!, playerId: ID!): CommunityPayload!
   removeCourtBlackout(
     blackoutId: ID!
 
@@ -2833,8 +3210,21 @@ type Mutation {
   """
   requestPayoutChangeCode: PayoutChangeCodePayload!
 
+  """
+  communities R3, R4 — a private community. With its invite code, a free one lets the player in and a paid one counts as approved. JOIN_REQUEST_PENDING, ALREADY_MEMBER, REMOVED_FROM_COMMUNITY, REQUEST_LIMIT.
+  """
+  requestToJoinCommunity(communityId: ID!, inviteCode: String, note: String): RequestToJoinCommunityPayload!
+
+  """Admins. The old invite link stops working."""
+  resetCommunityInvite(communityId: ID!): CommunityPayload!
+
   """F9 — PL4Y staff close a report: RESOLVED (acted on) or DISMISSED."""
   resolveEventReport(note: String!, outcome: EventReportStatus!, reportId: ID!): EventReportPayload!
+
+  """
+  Admins. Free: approving makes a member. Paid: approving gives 7 days to pay (R4). REQUEST_NOT_FOUND once answered.
+  """
+  respondToCommunityRequest(approve: Boolean!, requestId: ID!): CommunityJoinRequestPayload!
   retryPayout(id: ID!, reason: String!): PayoutPayload!
 
   """
@@ -2869,9 +3259,17 @@ type Mutation {
   scheduleDraw(tournamentId: ID!): ScheduleDrawPayload!
   selectOnboardingSports(input: SelectOnboardingSportsInput!): ProfilePayload!
 
+  """
+  communities R9 — active members. Up to 1,000 characters. INVALID_POST, POSTING_TOO_FAST.
+  """
+  sendCommunityMessage(body: String!, communityId: ID!): CommunityMessagePayload!
+
   """Opens the conversation when there is none (chat R2, R3)."""
   sendMessage(input: SendMessageInput!): SendMessagePayload!
   setAvatar(publicId: String!): ProfilePayload!
+
+  """The owner makes a member an admin, or an admin a member."""
+  setCommunityRole(communityId: ID!, playerId: ID!, role: CommunityRole!): CommunityPayload!
   setContactPhone(phone: String): ViewerPayload!
 
   """bookings R4 — replaces a court’s weekly opening rules."""
@@ -2922,6 +3320,9 @@ type Mutation {
   submitMatchResult(input: SubmitMatchResultInput!): MatchResultPayload!
   suspendPayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
 
+  """The owner hands over to an active member and becomes an admin (R5)."""
+  transferCommunityOwnership(communityId: ID!, playerId: ID!): CommunityPayload!
+
   """Takes a match off its court and back into the scheduler’s queue."""
   unassignCourt(matchId: ID!): MatchPayload!
   unblockPlayer(playerId: ID!): BlockPayload!
@@ -2940,6 +3341,7 @@ type Mutation {
   Sign-out calls this so the next user of the phone does not get this user’s pushes.
   """
   unregisterDevice(token: String!): RegisterDevicePayload!
+  updateCommunity(input: UpdateCommunityInput!): CommunityPayload!
   updateCourt(courtId: ID!, input: UpdateCourtInput!): CourtPayload!
   updateEvent(
     eventId: ID!
@@ -3058,6 +3460,13 @@ enum NotificationKind {
   CATEGORY_CANCELLED
   CHAT_MESSAGE
   CHAT_REQUEST
+  COMMUNITY_JOIN_REQUEST
+  COMMUNITY_MEMBERSHIP_EXPIRED
+  COMMUNITY_MEMBER_JOINED
+  COMMUNITY_PAYOUT_PAID
+  COMMUNITY_RENEWAL_DUE
+  COMMUNITY_REQUEST_APPROVED
+  COMMUNITY_REQUEST_REJECTED
   DRAW_FINISHED
   DRAW_GENERATED
   EVENT_CANCELLED
@@ -3733,6 +4142,11 @@ type Query {
   adminAuditLog(first: Int, offset: Int, targetId: String, targetType: String): AuditPage!
 
   """
+  Portal — every community, hidden and unlisted ones too, newest first. `search` matches the name.
+  """
+  adminCommunities(first: Int = 50, search: String): [Community!]!
+
+  """
   portal — every entry on an event, newest first, with its partners, its place on the waitlist and its money.
   """
   adminEventEntries(eventId: ID!): [AdminEventEntry!]!
@@ -3774,6 +4188,36 @@ type Query {
   registration R13 — every confirmed entry, for scanning offline. Any staff grant on the event. Check-ins made offline replay through `checkInByToken`.
   """
   checkInRoster(eventId: ID!): [RosterEntry!]!
+
+  """
+  Discover Communities (R2): public ones and private ones their creator listed.
+  """
+  communities(
+    access: CommunityAccess
+    after: String
+    before: String
+    city: String
+    first: Int
+    last: Int
+
+    """Leave out communities the viewer is already in."""
+    notJoined: Boolean
+
+    """Matched against the name."""
+    search: String
+    sort: CommunitySort = RECENT
+    sportId: ID
+  ): CommunityConnection!
+
+  """
+  The community page, by id, slug or invite code. Null when it does not exist, or is private, unlisted and the viewer has no way in (R2).
+  """
+  community(id: ID, inviteCode: String, slug: String): Community
+
+  """
+  Portal — held and ready community payouts, oldest first. Any staff member reads; admin and finance pay.
+  """
+  communityPayoutsOpen: [CommunityPayout!]!
   conversation(id: ID!): Conversation
 
   """chat R3 — your chats and requests either way, newest activity first."""
@@ -3848,6 +4292,16 @@ type Query {
   home(city: String, sportId: ID): HomeFeed!
   match(id: ID!): Match
   me: Viewer
+
+  """
+  Communities the viewer is an active member of, most recently active first.
+  """
+  myCommunities: [Community!]!
+
+  """
+  The viewer’s open requests: waiting for an admin, or approved and waiting for payment.
+  """
+  myCommunityRequests: [CommunityJoinRequest!]!
   myCourtBookings(first: Int, offset: Int): [CourtBooking!]!
   myEventGrants: [EventGrant!]!
 
@@ -4280,6 +4734,16 @@ type RequestOtpPayload {
   userError: UserError
 }
 
+type RequestToJoinCommunityPayload {
+  community: Community
+
+  """
+  Null when the invite code let the player straight in (a free private community).
+  """
+  request: CommunityJoinRequest
+  userError: UserError
+}
+
 """How a result became final (scoring R6, R11)."""
 enum ResultConfirmation {
   AUTO
@@ -4538,6 +5002,11 @@ type SportRank {
   sportId: ID!
 }
 
+type StaffCommunityPayload {
+  community: Community
+  userError: UserError
+}
+
 type StaffRefundPayload {
   refundId: ID
   userError: UserError
@@ -4743,6 +5212,30 @@ type UnrankedTally {
   lost: Int!
   played: Int!
   won: Int!
+}
+
+"""
+Admins. Only what is given changes. Visibility and access are fixed at creation (communities R1).
+"""
+input UpdateCommunityInput {
+  benefits: [String!]
+  billing: CommunityBilling
+  city: String
+  communityId: ID!
+
+  """
+  From communityCoverUploadSignature: `folder/publicId`. Null removes the cover.
+  """
+  coverPublicId: String
+
+  """Null clears it."""
+  description: String
+  discoverable: Boolean
+  name: String
+
+  """Paid only. Applies to the next payment."""
+  pricePaise: Int
+  sportId: ID
 }
 
 input UpdateCourtInput {

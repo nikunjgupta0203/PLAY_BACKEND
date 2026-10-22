@@ -582,6 +582,12 @@ const SCHEDULES: [string, string, string][] = [
   [QUEUES.registration, 'sweep-bookings', '* * * * *'],
   // games R6, R10 — games past their end complete; the one-hour reminder goes out.
   [QUEUES.registration, 'sweep-games', '* * * * *'],
+  // communities R4, R8 — requests waiting 30 days and approvals unpaid after 7 lapse; paid periods
+  // that ended expire, and those ending within 3 days get their one reminder.
+  [QUEUES.registration, 'sweep-communities', '15 2 * * *'],
+  // communities R10 — 06:00 IST on the 1st: the month that just ended (India time) is settled into
+  // one payout per paid community. Idempotent per community and month.
+  [QUEUES.registration, 'settle-community-payouts', '30 0 1 * *'],
   // payments R9 — turns a lost webhook from a support ticket into a few minutes'
   // delay, inside the seat hold (gap #22).
   [QUEUES.payments, 'reconcile-pending', '*/5 * * * *'],
@@ -724,6 +730,20 @@ export async function startWorkers(): Promise<() => void> {
         // games R15 — a result nobody answered within the hour is confirmed.
         const confirmed = await gameResults.sweep();
         if (result.completed + result.reminded + confirmed > 0) logger.info({ ...result, confirmed }, 'swept casual games');
+        return;
+      }
+      case 'sweep-communities': {
+        const { communities, communityPayouts } = await import('./modules/communities/index.js');
+        const result = await communities.sweep();
+        // communities R10 — a held payout whose owner has since verified their bank account is ready.
+        const readied = await communityPayouts.refreshHeld();
+        if (readied > 0 || Object.values(result).some((n) => n > 0)) logger.info({ ...result, readied }, 'swept communities');
+        return;
+      }
+      case 'settle-community-payouts': {
+        const { communityPayouts } = await import('./modules/communities/index.js');
+        const result = await communityPayouts.settleMonth();
+        logger.info(result, 'settled community payouts');
         return;
       }
       case 'expire-invite': {

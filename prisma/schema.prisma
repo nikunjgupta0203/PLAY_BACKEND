@@ -974,21 +974,23 @@ model WaitlistEntry {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model PaymentOrder {
-  id               String   @id @db.Uuid
-  /// payments R20 — exactly one of registration_id and booking_id (CHECK in 037).
-  registrationId   String?  @map("registration_id") @db.Uuid
-  bookingId        String?  @map("booking_id") @db.Uuid
+  id                 String   @id @db.Uuid
+  /// payments R20 — exactly one of registration_id, booking_id and community_payment_id (CHECK in 048).
+  registrationId     String?  @map("registration_id") @db.Uuid
+  bookingId          String?  @map("booking_id") @db.Uuid
+  /// payments R20 — a paid community membership (048). One subject per order.
+  communityPaymentId String?  @map("community_payment_id") @db.Uuid
   /// The gateway's id for the order. Unique, because it is our idempotency handle.
-  gatewayOrderId   String   @unique @map("gateway_order_id")
+  gatewayOrderId     String   @unique @map("gateway_order_id")
   /// The frozen breakdown, so a receipt can be re-rendered years later (R11).
-  entryFeePaise    BigInt   @map("entry_fee_paise")
-  platformFeePaise BigInt   @map("platform_fee_paise")
-  taxPaise         BigInt   @map("tax_paise")
-  amountPaise      BigInt   @map("amount_paise")
-  currency         String   @default("INR")
+  entryFeePaise      BigInt   @map("entry_fee_paise")
+  platformFeePaise   BigInt   @map("platform_fee_paise")
+  taxPaise           BigInt   @map("tax_paise")
+  amountPaise        BigInt   @map("amount_paise")
+  currency           String   @default("INR")
   /// created | attempted | paid | failed | expired. CHECK in the migration.
-  status           String   @default("created")
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  status             String   @default("created")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   registration Registration? @relation(fields: [registrationId], references: [id])
   payments     Payment[]
@@ -1921,4 +1923,180 @@ model GameResult {
 
   @@index([gameId, createdAt], map: "game_results_game_idx")
   @@map("game_results")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// communities (docs/modules/17-communities.md, migration 047)
+//
+// Members are stored by user id, like games. The partial indexes (one active
+// owner, one open request, the Discover index) and the foreign keys to users
+// and sports live in the migration: Prisma cannot express a partial index.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Community {
+  id             String    @id @db.Uuid
+  slug           String    @unique
+  name           String
+  description    String?
+  sportId        String    @map("sport_id") @db.Uuid
+  city           String    @default("")
+  coverPublicId  String?   @map("cover_public_id")
+  /// public | private (R1)
+  visibility     String    @default("public")
+  /// R2 — a private community listed in Discover. Public ones are always listed.
+  discoverable   Boolean   @default(true)
+  /// free | paid (R1)
+  access         String    @default("free")
+  pricePaise     BigInt?   @map("price_paise")
+  /// one_time | monthly | yearly — set exactly when access is paid.
+  billing        String?
+  benefits       String[]  @default([])
+  inviteCode     String    @unique @map("invite_code")
+  memberCount    Int       @default(0) @map("member_count")
+  ownerUserId    String    @map("owner_user_id") @db.Uuid
+  lastActivityAt DateTime  @default(now()) @map("last_activity_at") @db.Timestamptz(6)
+  hiddenAt       DateTime? @map("hidden_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  members  CommunityMember[]
+  requests CommunityJoinRequest[]
+  posts    CommunityPost[]
+  messages CommunityMessage[]
+  payments CommunityPayment[]
+  payouts  CommunityPayout[]
+
+  @@map("communities")
+}
+
+model CommunityMember {
+  communityId       String    @map("community_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  /// owner | admin | member (R5)
+  role              String    @default("member")
+  /// active | left | removed | expired
+  status            String    @default("active")
+  /// Paid monthly or yearly memberships: access ends here (R8).
+  paidUntil         DateTime? @map("paid_until") @db.Timestamptz(6)
+  /// communities R8 — the renewal reminder for the current period went out.
+  renewalRemindedAt DateTime? @map("renewal_reminded_at") @db.Timestamptz(6)
+  joinedAt          DateTime  @default(now()) @map("joined_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@id([communityId, userId])
+  @@index([userId, status], map: "community_members_user_idx")
+  @@map("community_members")
+}
+
+model CommunityJoinRequest {
+  id                String    @id @db.Uuid
+  communityId       String    @map("community_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  /// pending | approved | rejected | cancelled | expired | joined (R4)
+  status            String    @default("pending")
+  note              String?
+  decidedBy         String?   @map("decided_by") @db.Uuid
+  decidedAt         DateTime? @map("decided_at") @db.Timestamptz(6)
+  /// Paid private: an approval waits this long for the payment (R4).
+  approvalExpiresAt DateTime? @map("approval_expires_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId, status, createdAt], map: "community_join_requests_community_idx")
+  @@index([userId, status], map: "community_join_requests_user_idx")
+  @@map("community_join_requests")
+}
+
+model CommunityPost {
+  id           String    @id @db.Uuid
+  communityId  String    @map("community_id") @db.Uuid
+  authorUserId String    @map("author_user_id") @db.Uuid
+  body         String
+  pinnedAt     DateTime? @map("pinned_at") @db.Timestamptz(6)
+  hiddenAt     DateTime? @map("hidden_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@map("community_posts")
+}
+
+model CommunityMessage {
+  id           String    @id @db.Uuid
+  communityId  String    @map("community_id") @db.Uuid
+  senderUserId String    @map("sender_user_id") @db.Uuid
+  body         String
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId, createdAt(sort: Desc), id(sort: Desc)], map: "community_messages_thread_idx")
+  @@map("community_messages")
+}
+
+/// communities R8 — one period of one paid membership; the payment subject (payments R20).
+model CommunityPayment {
+  id              String    @id @db.Uuid
+  communityId     String    @map("community_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  /// one_time | monthly | yearly — frozen from the community at checkout.
+  billing         String
+  pricePaise      BigInt    @map("price_paise")
+  /// PL4Y's 5%, frozen at checkout; taken from the creator's side at payout.
+  commissionPaise BigInt    @map("commission_paise")
+  /// held | paid | expired | refunded
+  status          String    @default("held")
+  holdExpiresAt   DateTime  @map("hold_expires_at") @db.Timestamptz(6)
+  periodStart     DateTime? @map("period_start") @db.Timestamptz(6)
+  /// Null for a one-time membership.
+  periodEnd       DateTime? @map("period_end") @db.Timestamptz(6)
+  paymentId       String?   @map("payment_id") @db.Uuid
+  paidAt          DateTime? @map("paid_at") @db.Timestamptz(6)
+  /// communities R10 — the monthly payout this payment was settled in (049).
+  payoutId        String?   @map("payout_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Restrict)
+
+  @@index([communityId, status, paidAt], map: "community_payments_community_idx")
+  @@index([userId, createdAt(sort: Desc)], map: "community_payments_user_idx")
+  @@map("community_payments")
+}
+
+/// communities R10 — one creator payout per community per month, paid by hand (049).
+model CommunityPayout {
+  id                 String    @id @db.Uuid
+  communityId        String    @map("community_id") @db.Uuid
+  ownerUserId        String    @map("owner_user_id") @db.Uuid
+  payoutAccountId    String?   @map("payout_account_id") @db.Uuid
+  /// YYYY-MM, a calendar month in India time.
+  period             String
+  paymentCount       Int       @map("payment_count")
+  grossPaise         BigInt    @map("gross_paise")
+  commissionPaise    BigInt    @map("commission_paise")
+  commissionTaxPaise BigInt    @map("commission_tax_paise")
+  tdsPaise           BigInt    @map("tds_paise")
+  amountPaise        BigInt    @map("amount_paise")
+  /// held | ready | paid
+  status             String    @default("held")
+  holdReason         String?   @map("hold_reason")
+  utr                String?
+  paidAt             DateTime? @map("paid_at") @db.Timestamptz(6)
+  markedBy           String?   @map("marked_by") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Restrict)
+
+  @@unique([communityId, period], map: "community_payouts_period_key")
+  @@index([status, createdAt], map: "community_payouts_status_idx")
+  @@map("community_payouts")
 }

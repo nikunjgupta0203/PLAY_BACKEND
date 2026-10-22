@@ -2,234 +2,194 @@
 
 | | |
 |---|---|
-| **Sprint** | 11 |
-| **Phase** | **2** |
-| **Depends on** | identity, profile, notifications |
-| **Owns** | `communities`, `community_members`, `community_join_requests`, `community_announcements` |
+| **Sprint** | 11 · rewritten 2026-10-22 from "Community Types and Membership Structure" |
+| **Phase** | **2** (free) · paid memberships follow (R8) |
+| **Depends on** | identity, sport, profile, notifications · payments for R8 |
+| **Owns** | `communities`, `community_members`, `community_join_requests`, `community_posts`, `community_messages` |
 | **Rule prefix** | `communities R*` |
+| **Build plan** | `PLAY_FRONTEND/docs/communities-plan.md` |
 
 Clubs, groups and teams: the durable social unit that outlives any single game or tournament.
-It covers "discover communities", persistent "teams" and "team management", and it is where
-league team rosters come from.
+Two independent choices at creation — **visibility** (public / private) and **access**
+(free / paid) — give four types. Who finds a community, how they join and what they see follow
+from those two choices.
 
-`games` and `leagues` depend on this module, never the reverse. A community page's games and
-league entries are GraphQL fields those modules add to the `Community` type.
+This rewrite replaces the earlier draft (kinds club/group/team, announcements only, no money,
+private = invisible). The product doc asks for paid memberships, private communities that can
+still be listed, and a members' feed and chat.
+
+| Type | Label | Discover | Join |
+|---|---|---|---|
+| Free Public | Free · Public | Listed | Join — at once |
+| Free Private | Free · Private | Listed with a lock if the creator allows, else invite link only | Request → admin approves |
+| Paid Public | Paid · Public | Listed | Join & pay |
+| Paid Private | Paid · Private | As free private | Request → approve → pay |
+
+Members are stored by **user id** (like games); the API takes and returns player ids.
 
 ---
 
 ## Service interface
 
 ```ts
-create(actor, input)                                   => Community
-update(actor, communityId, patch)                      => Community
-bySlug(slug) / byId(communityId)                       => Community
-join(actor, communityId, note?)                        => Membership | JoinRequest   // R2
-respondToRequest(actor, requestId, 'approve' | 'reject') => JoinRequest
-invite(actor, communityId, playerIds[])                => void
-leave(actor, communityId)                              => void
-removeMember(actor, communityId, userId)               => void
-setRole(actor, communityId, userId, role)              => Membership
-transferOwnership(actor, communityId, userId)          => Community
-announce(actor, communityId, { title, body })          => Announcement
-membersOf(communityId, page)                           => Page<Membership>
-listForUser(userId)                                    => Membership[]
-isMember(communityId, userId)                          => boolean     // games calls this
-roster(teamId)                                         => Membership[] // registration calls this
+create(actor, input) / update(actor, id, patch) / remove(actor, id)   => Community
+lookup({ id | slug | inviteCode }, viewerUserId)                       => Community | null   // R2
+search(filter, page)                                                   => Page<Community>     // R2
+viewers(communityIds, userId) / viewerOf(id, userId)                   => Viewer              // the button
+join(actor, id, inviteCode?)                                           => Community           // R3
+requestToJoin(actor, id, { note?, inviteCode? })                       => { community, request | null }
+cancelRequest(actor, requestId) / respond(actor, requestId, approve)
+leave / removeMember / setRole / transferOwnership / resetInvite
+members(community, viewerUserId, page) / joinRequests(actor, id)       // R6, R5
+listForUser(userId) / requestsForUser(userId) / isMember(id, userId) / roleOf(id, userId)
+sweep()                                                                // R4, daily
 ```
 
 ## GraphQL
 
 ```graphql
-Query.community(slug: String!): Community
-Query.communities(filter: CommunityFilter, first: Int = 20, after: String): CommunityConnection!
+Query.community(id: ID, slug: String, inviteCode: String): Community
+Query.communities(search, sportId, city, access, sort: RECENT|POPULAR, notJoined, first, after): CommunityConnection!
+Query.myCommunities: [Community!]!
+Query.myCommunityRequests: [CommunityJoinRequest!]!
 
-type Community implements Node {
-  id: ID!
-  slug: String!
-  kind: CommunityKind!          # CLUB | GROUP | TEAM
-  name: String!
-  sport: Sport                  # required for TEAM, optional otherwise
-  city: String
-  logoUrl: String
-  description: String
-  joinPolicy: JoinPolicy!       # OPEN | APPROVAL | INVITE_ONLY
-  visibility: CommunityVisibility!   # PUBLIC | PRIVATE
-  memberCount: Int!
-  viewerMembership: Membership
-  announcements(first: Int = 10, after: String): AnnouncementConnection!
-  homeVenue: Venue
+type Community {
+  id slug name description sport city coverUrl
+  visibility: PUBLIC|PRIVATE  discoverable  access: FREE|PAID  pricePaise  billing: ONE_TIME|MONTHLY|YEARLY  benefits
+  memberCount owner createdAt hidden
+  viewerState: NONE|REQUESTED|APPROVED_TO_PAY|MEMBER|EXPIRED|REMOVED
+  viewerRole viewerRequest
+  inviteCode pendingRequestCount joinRequests        # admins; null / 0 / [] for everyone else
+  members(first, after): CommunityMemberConnection!  # R6
 }
 
-Mutation.createCommunity(input: CreateCommunityInput!): CommunityPayload!
-Mutation.updateCommunity(input: UpdateCommunityInput!): CommunityPayload!
-Mutation.joinCommunity(input: JoinCommunityInput!): JoinCommunityPayload!
-Mutation.respondToJoinRequest(input: RespondJoinRequestInput!): JoinRequestPayload!
-Mutation.inviteToCommunity(input: InviteToCommunityInput!): CommunityPayload!
-Mutation.leaveCommunity(communityId: ID!): CommunityPayload!
-Mutation.removeCommunityMember(input: RemoveMemberInput!): CommunityPayload!
-Mutation.setCommunityRole(input: SetCommunityRoleInput!): CommunityPayload!
-Mutation.transferCommunityOwnership(input: TransferOwnershipInput!): CommunityPayload!
-Mutation.postCommunityAnnouncement(input: AnnouncementInput!): AnnouncementPayload!
+createCommunity · updateCommunity · deleteCommunity · communityCoverUploadSignature
+joinCommunity · requestToJoinCommunity · cancelCommunityRequest · respondToCommunityRequest
+leaveCommunity · removeCommunityMember · setCommunityRole · transferCommunityOwnership · resetCommunityInvite
 ```
 
-`Community` implements `Node` because it is a deep-link target (conventions §4, notifications R9).
+Notifications target a community by `{ kind: 'community', id }` (notifications R9).
 
 ---
 
 ## Rules
 
-**R1** — There are three kinds. A **club** is formal and often venue- or organizer-affiliated. A
-**group** is informal ("Saturday 7am crew"). A **team** is a competitive roster with a captain and
-a sport. A kind is fixed at creation.
+**R1** — Visibility (`public` | `private`) and access (`free` | `paid`) are chosen at creation
+and **fixed**. A paid community always has a price and a period (`one_time`, `monthly`,
+`yearly`); a free one has neither (CHECK `communities_paid_check`). The price and the benefits can
+change; a new price applies to the next payment only.
 
-**R2** — The join policy is `open` (instant membership), `approval` (creates a request) or
-`invite_only`. A user has at most one pending request per community, and requests expire after
-**30 days**.
+**R2** — Discover lists public communities and private ones whose creator left `discoverable`
+on. An unlisted private community is reachable only through its **invite code**, or by someone
+it already knows (a member, a pending or approved asker); to anyone else it is indistinguishable
+from a missing one. Hidden (staff) and deleted communities are never listed; a hidden one stays
+readable to its own members.
 
-**R3** — Roles are `owner`, `admin` and `member`, with **exactly one owner**. The owner cannot leave
-without transferring ownership (`OWNER_MUST_TRANSFER`). This deliberately differs from `games R7`:
-a community is long-lived, and deleting one because its creator left destroys other people's
-group.
+**R3** — Joining:
+- free public → member at once; the owner is told (`community.member_joined`);
+- private → a request; the owner and admins are told (`community.join_request`);
+- paid → a payment (R8); until R8 ships, `joinCommunity` refuses with `PAYMENT_REQUIRED`;
+- the invite code lets a person into a free private community at once, and counts as an
+  approval for a paid private one (they still pay).
 
-**R4** — `public` communities are listed in discovery. `private` communities are not listed, and
-their members, announcements and games are visible to members only. The name is visible through
-an invite link. A private community is indistinguishable from a missing one to a non-member,
-following the same principle as `profile R4`.
+**R4** — One open request (`pending` or `approved`) per person per community (partial unique
+index). A pending request lapses after **30 days**. A paid private approval gives the asker
+**7 days** to pay, then lapses. The daily `sweep-communities` job does both. The asker can
+withdraw either.
 
-**R5** — Team rosters: a `team` has a sport, and its roster is between the sport format's
-`team_size` and **3× `team_size`**. A player may be on several teams. Roster changes while the team
-is entered in a live league season are governed by `leagues R7`; the entry itself keeps its
-registration snapshot (registration R19).
+**R5** — Roles are `owner`, `admin`, `member`, with **exactly one active owner** (partial unique
+index). The creator is the owner and first member. The owner cannot leave
+(`OWNER_MUST_TRANSFER`) — they hand over, or delete the community. Admins edit the community,
+answer requests and remove members; only the owner removes an admin, sets roles, hands over or
+deletes.
 
-**R6** — Phase 2 has **announcements only**: no chat and no comments. Chat carries a moderation
-cost this team cannot staff yet, and it is a Phase 3 conversation. Announcements fan out through
-`notifications.emitBulk` with the `community.announcement` template (chunked per notifications R7),
-limited to **3 per community per day**.
+**R6** — Posts, chat and the member list of a private community are for **active members only**
+in every type ("public" is about being found, not about content). A removed member cannot join
+or request again.
 
-**R7** — Caps: **5,000 members** per community, and a user may **own at most 10** communities.
-Both are config. They exist to stop spam communities, not to limit real clubs.
+**R7** — Caps: **5,000** members per community, **10** owned communities per user, price
+**₹10 – ₹50,000**. They stop spam communities, not real clubs.
 
-**R8** — Communities and announcements are reportable (`admin R6`). An auto-hidden announcement
-disappears for members until reviewed.
+**R8** *(next phase)* — Paid memberships are a payment subject (payments R20). The member pays
+the listed price; PL4Y keeps **5%** and the creator earns 95% (no GST: unregistered business).
+Paid public: Join & pay. Paid private: approval first, payment second. Monthly and yearly
+memberships carry `paid_until`; renewal is manual in v1 (a reminder before the end, `expired`
+after it, Renew pays the next period). Creator earnings are held until their payout account is
+verified and are paid out monthly through payouts.
 
-**R9** — Communities hold **no money** in Phase 2. Paid memberships would be a new payment subject
-(`payments R20`) and are a Phase 3 conversation.
+**R9** *(next phase)* — The feed (`community_posts`): any member posts text up to 2,000
+characters; admins pin and remove. The chat (`community_messages`): members' group thread, up to
+1,000 characters a message, soft-deleted, polled by the app while open.
+
+**R10** *(later)* — PL4Y staff can hide a community or a post from the portal (admin R6).
 
 ---
 
 ## Schema
 
-```sql
-CREATE TABLE communities (
-  id              uuid PRIMARY KEY,
-  slug            text UNIQUE NOT NULL,
-  kind            text NOT NULL CHECK (kind IN ('club','group','team')),
-  name            text NOT NULL,
-  sport_id        uuid REFERENCES sports(id),
-  city            text,
-  geo             geography(Point,4326),
-  description     text,
-  logo_public_id  text,
-  home_venue_id   uuid REFERENCES venues(id),
-  join_policy     text NOT NULL DEFAULT 'approval'
-                  CHECK (join_policy IN ('open','approval','invite_only')),
-  visibility      text NOT NULL DEFAULT 'public'
-                  CHECK (visibility IN ('public','private')),
-  member_count    integer NOT NULL DEFAULT 0,
-  hidden_at       timestamptz,                    -- admin R6
-  created_by      uuid NOT NULL REFERENCES player_profiles(id),
-  created_at      timestamptz NOT NULL DEFAULT now(),
-  CHECK (kind <> 'team' OR sport_id IS NOT NULL)  -- R5
-);
-CREATE INDEX communities_geo_idx ON communities USING gist (geo)
-  WHERE visibility = 'public' AND hidden_at IS NULL;
+Migration `047_communities`. Highlights:
 
-CREATE TABLE community_members (
-  community_id    uuid NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
-  player_id       uuid NOT NULL REFERENCES player_profiles(id),
-  role            text NOT NULL DEFAULT 'member' CHECK (role IN ('owner','admin','member')),
-  is_captain      boolean NOT NULL DEFAULT false, -- teams only
-  joined_at       timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (community_id, player_id)
-);
-CREATE INDEX ON community_members (player_id);
--- R3: exactly one owner.
-CREATE UNIQUE INDEX community_one_owner ON community_members (community_id) WHERE role = 'owner';
-
-CREATE TABLE community_join_requests (
-  id              uuid PRIMARY KEY,
-  community_id    uuid NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
-  player_id       uuid NOT NULL REFERENCES player_profiles(id),
-  kind            text NOT NULL CHECK (kind IN ('request','invite')),
-  note            text,
-  status          text NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending','approved','rejected','expired')),
-  expires_at      timestamptz NOT NULL,           -- +30 days (R2)
-  created_at      timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX community_one_pending
-  ON community_join_requests (community_id, player_id) WHERE status = 'pending';
-
-CREATE TABLE community_announcements (
-  id              uuid PRIMARY KEY,
-  community_id    uuid NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
-  author_id       uuid NOT NULL REFERENCES player_profiles(id),
-  title           text NOT NULL,
-  body            text NOT NULL CHECK (char_length(body) <= 2000),
-  hidden_at       timestamptz,
-  created_at      timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ON community_announcements (community_id, created_at DESC);
-```
-
----
+- `communities` — `visibility`, `discoverable`, `access`, `price_paise`, `billing`, `benefits`,
+  `invite_code` (unique), `member_count` (recounted inside every change that moves it),
+  `owner_user_id`, `last_activity_at` (the RECENT sort), `hidden_at`, `deleted_at`.
+  `communities_discover_idx` holds only listable rows.
+- `community_members` — PK `(community_id, user_id)`; `role`, `status`
+  (`active`|`left`|`removed`|`expired`), `paid_until`; `community_members_one_owner_idx`.
+- `community_join_requests` — `status` (`pending`|`approved`|`rejected`|`cancelled`|`expired`|`joined`),
+  `approval_expires_at` (required when approved); `community_join_requests_one_open_idx`.
+- `community_posts`, `community_messages` — R9.
 
 ## Errors
 
 | Code | Channel | Client behaviour |
 |---|---|---|
-| `COMMUNITY_NOT_FOUND` | user | Also for a private community to a non-member — R4 |
-| `ALREADY_MEMBER` | user | Route to the community |
-| `JOIN_REQUEST_PENDING` | user | Show the pending state |
-| `INVITE_REQUIRED` | user | `invite_only` community |
-| `OWNER_MUST_TRANSFER` | user | Offer ownership transfer — R3 |
-| `ROSTER_FULL` | user | Team at 3× team size — R5 |
-| `ANNOUNCEMENT_LIMIT` | user | R6 |
-| `COMMUNITY_LIMIT` | user | R7 |
-
-## Emits
-
-| Event | Consumers |
-|---|---|
-| `community.updated` | discovery |
-| `community.member_joined` | notifications, social (feed) |
-| `community.join_requested` | notifications (admins) |
-| `community.announcement` | notifications |
+| `COMMUNITY_NOT_FOUND` | user | Also for an unlisted private community without its code — R2 |
+| `INVALID_COMMUNITY` | user | Show the message on the form |
+| `ALREADY_MEMBER` | user | Open the community |
+| `REQUEST_REQUIRED` | user | Offer "Request to join" — R3 |
+| `PAYMENT_REQUIRED` | user | Offer "Join & pay" — R3, R8 |
+| `JOIN_REQUEST_PENDING` | user | Show the waiting (or pay-now) state — R4 |
+| `REQUEST_NOT_FOUND` | user | Refresh the list: it was already answered |
+| `REMOVED_FROM_COMMUNITY` | user | R6 |
+| `NOT_A_MEMBER` | user | Refresh |
+| `OWNER_MUST_TRANSFER` | user | Offer hand-over or delete — R5 |
+| `COMMUNITY_FULL` · `COMMUNITY_LIMIT` · `REQUEST_LIMIT` | user | R7, rate limit |
 
 ## Jobs
 
 | Job | Trigger | Retry | Final failure |
 |---|---|---|---|
-| `expire-join-requests` | Daily | 3 × exp | Drop |
+| `sweep-communities` | Daily 02:15 UTC | default | Drop (the next day's run catches up) |
 
 ---
 
 ## Done when
 
-A club with `approval` policy receives a request, an admin approves it, and the new member sees
-private announcements that a non-member cannot distinguish from a missing community. An owner
-cannot leave without transferring. A team's roster stops at 3× the format's team size. An
-announcement reaches every member's feed, and the fourth one that day is refused.
-
----
+A free public community takes a member in one tap. A private one takes a request that its
+admins hear about and answer; an unlisted one is found only with its code. A paid private
+approval waits seven days for the payment and then lapses. The owner cannot leave without handing
+over, and there is never a second owner. A removed member cannot come back. Tests: `tests/communities.test.ts`
+names R1–R7.
 
 ## Implementation checklist
 
-- [ ] Migration `017_communities.sql` including the one-owner and one-pending indexes
-- [ ] Join policies and 30-day request expiry (R2)
-- [ ] Ownership transfer; owner-leave guard (R3)
-- [ ] Private visibility with null-fill, not errors (R4)
-- [ ] Team roster bounds from `sport.formatsFor` (R5)
-- [ ] Announcements via `emitBulk`, 3/day cap (R6)
-- [ ] `community.announcement`, `community.invite`, `community.join_request` templates in notifications
-- [ ] Tests naming R2, R3, R4, R5, R6, R7
+- [x] Migration `047_communities` with the one-owner and one-open-request indexes
+- [x] Create / edit / delete, cover upload signature, slug and invite code (R1, R5)
+- [x] Discover search with sport, city, free/paid, name, RECENT/POPULAR (R2)
+- [x] Join, request, approve/reject, withdraw, invite code (R3, R4)
+- [x] Leave, remove, roles, hand-over (R5, R6)
+- [x] 30-day / 7-day sweep (R4)
+- [x] `community.join_request`, `community.request_approved`, `community.request_rejected`, `community.member_joined`
+- [x] Tests naming R1–R7
+- [x] Feed and chat (R9) — `service/feed.ts`
+- [x] Paid memberships (R8) — migration 048, `community_payments` as the third payment subject; Join & pay,
+      Pay now after approval, Renew in the last 7 days; reminder 3 days before the end; expiry sweep; owner earnings
+- [x] Creator payouts and staff hide (R10) — migration 049, `service/payouts.ts`: monthly per community
+      (India months), held until the owner's bank account is verified, marked paid by staff with the UTR;
+      `adminSetCommunityHidden`, `adminHideCommunityPost`, `adminCommunities`, `communityPayoutsOpen`
+- [ ] Staff refund of a membership payment (and recovery when it was already paid out)
+
+**R10** as built: a payout is gross − PL4Y's 5% (frozen per payment) − GST on the commission
+(`COMMISSION_GST_BPS`) − TDS on the gross (`HOST_TDS_BPS`), the host-payout rates. Each payment carries the
+payout that settled it (`community_payments.payout_id`), so it is counted once. Job `settle-community-payouts`
+runs 06:00 IST on the 1st; `sweep-communities` re-checks held payouts daily.

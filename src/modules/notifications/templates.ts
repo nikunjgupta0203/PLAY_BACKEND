@@ -143,6 +143,19 @@ export interface TemplatePayloads {
   'game.result_pending': { enteredByName: string; sportName: string; score: string; autoConfirmMinutes: number };
   /** games R15 — to whoever entered it: the other side said it is not right. */
   'game.result_disputed': { byName: string; sportName: string; score: string };
+  /** communities R3 — to the owner and admins of a private community. */
+  'community.join_request': { communityName: string; playerName: string };
+  /** communities R3, R4 — `mustPay`: a paid private community, approved and waiting for the payment. */
+  'community.request_approved': { communityName: string; mustPay: boolean };
+  'community.request_rejected': { communityName: string };
+  /** communities R3 — to the owner. */
+  'community.member_joined': { communityName: string; playerName: string; memberCount: number };
+  /** communities R8 — a paid period ends within 3 days. */
+  'community.renewal_due': { communityName: string; endsAt: string };
+  /** communities R8 — a paid period ended unrenewed. */
+  'community.membership_expired': { communityName: string };
+  /** communities R10 — PL4Y sent a month's earnings to the owner's bank. */
+  'community.payout_paid': { communityName: string; amountPaise: string; utr: string; period: string };
 }
 
 export type TemplateKey = keyof TemplatePayloads;
@@ -169,6 +182,7 @@ const ESSENTIAL = new Set<TemplateKey>([
   'booking.cancelled',
   'payout.status',
   'payout_account.status',
+  'community.payout_paid',
 ]);
 
 export const isEssential = (key: string): boolean => ESSENTIAL.has(key as TemplateKey);
@@ -508,6 +522,50 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
     render: (p) => ({
       title: 'Your result was not accepted',
       body: `${p.byName} said ${p.sportName} ${p.score} is not right, so it is on nobody’s profile. Enter it again if it was a slip.`,
+    }),
+  },
+  'community.join_request': {
+    render: (p) => ({
+      title: `${p.playerName} asked to join`,
+      body: `${p.communityName}. Open it to approve or decline.`,
+    }),
+  },
+  'community.request_approved': {
+    render: (p) => ({
+      title: p.mustPay ? `Approved — pay to join ${p.communityName}` : `You're in ${p.communityName}`,
+      body: p.mustPay
+        ? 'Your request was approved. Pay within 7 days to become a member.'
+        : 'Your request was approved. Say hello in the community.',
+    }),
+  },
+  'community.request_rejected': {
+    render: (p) => ({
+      title: 'Request not approved',
+      body: `${p.communityName} did not approve your request to join.`,
+    }),
+  },
+  'community.member_joined': {
+    render: (p) => ({
+      title: `${p.playerName} joined ${p.communityName}`,
+      body: `${p.memberCount === 1 ? '1 member' : `${p.memberCount} members`} now.`,
+    }),
+  },
+  'community.renewal_due': {
+    render: (p) => ({
+      title: `Renew ${p.communityName}`,
+      body: `Your membership ends ${istWhen(p.endsAt)}. Renew to keep your place in the chat and the feed.`,
+    }),
+  },
+  'community.membership_expired': {
+    render: (p) => ({
+      title: 'Membership ended',
+      body: `Your membership of ${p.communityName} has ended. Renew any time to come back.`,
+    }),
+  },
+  'community.payout_paid': {
+    render: (p) => ({
+      title: 'Community earnings paid',
+      body: `${rupees(p.amountPaise).trim()} for ${p.communityName} (${p.period}) is on its way to your bank. UTR ${p.utr}.`,
     }),
   },
 };

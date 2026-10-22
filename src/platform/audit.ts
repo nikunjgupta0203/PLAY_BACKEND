@@ -39,7 +39,10 @@ export interface AuditEntry {
     | 'venue_host_application'
     | 'venue'
     | 'court_booking'
-    | 'game';
+    | 'game'
+    | 'community'
+    | 'community_post'
+    | 'community_payout';
   targetId: string;
   reason?: string | null;
   details?: Record<string, unknown>;

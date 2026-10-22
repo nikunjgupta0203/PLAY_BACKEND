@@ -12,9 +12,10 @@ import type { Db, Tx } from '../../../platform/db.js';
 
 export interface PaymentOrderRow {
   id: string;
-  /** payments R20 — exactly one of these is set: an entry, or a court booking. */
+  /** payments R20 — exactly one of these is set: an entry, a court booking, or a paid community membership. */
   registrationId: string | null;
   bookingId: string | null;
+  communityPaymentId: string | null;
   gatewayOrderId: string;
   entryFeePaise: bigint;
   platformFeePaise: bigint;
@@ -118,13 +119,19 @@ export function createPaymentsRepo(db: Db) {
   // --- orders ----------------------------------------------------------------
 
   async function insertOrder(
-    row: Omit<PaymentOrderRow, 'createdAt' | 'bookingId' | 'registrationId'> & {
+    row: Omit<PaymentOrderRow, 'createdAt' | 'bookingId' | 'registrationId' | 'communityPaymentId'> & {
       registrationId?: string | null;
       bookingId?: string | null;
+      communityPaymentId?: string | null;
     },
   ): Promise<PaymentOrderRow> {
     return db.paymentOrder.create({
-      data: { ...row, registrationId: row.registrationId ?? null, bookingId: row.bookingId ?? null },
+      data: {
+        ...row,
+        registrationId: row.registrationId ?? null,
+        bookingId: row.bookingId ?? null,
+        communityPaymentId: row.communityPaymentId ?? null,
+      },
     });
   }
 
@@ -161,6 +168,18 @@ export function createPaymentsRepo(db: Db) {
 
   async function ordersForBooking(bookingId: string): Promise<PaymentOrderRow[]> {
     return db.paymentOrder.findMany({ where: { bookingId }, orderBy: { createdAt: 'desc' } });
+  }
+
+  /** communities R8 — the live order for a held membership period, if it already has one. */
+  async function openOrderForCommunityPayment(communityPaymentId: string): Promise<PaymentOrderRow | null> {
+    return db.paymentOrder.findFirst({
+      where: { communityPaymentId, status: { in: ['created', 'attempted'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async function ordersForCommunityPayment(communityPaymentId: string): Promise<PaymentOrderRow[]> {
+    return db.paymentOrder.findMany({ where: { communityPaymentId }, orderBy: { createdAt: 'desc' } });
   }
 
   async function setOrderStatus(tx: Tx | Db, orderId: string, status: string): Promise<void> {
@@ -373,11 +392,13 @@ export function createPaymentsRepo(db: Db) {
    * live capture on the same entry is a duplicate. A fixed order means two
    * captures checking at once can never both decide to refund themselves.
    */
-  async function keeperCapture(subject: string | { bookingId: string }): Promise<string | null> {
+  async function keeperCapture(subject: string | { bookingId: string } | { communityPaymentId: string }): Promise<string | null> {
     const match =
       typeof subject === 'string'
         ? Prisma.sql`po.registration_id = ${subject}::uuid`
-        : Prisma.sql`po.booking_id = ${subject.bookingId}::uuid`;
+        : 'bookingId' in subject
+          ? Prisma.sql`po.booking_id = ${subject.bookingId}::uuid`
+          : Prisma.sql`po.community_payment_id = ${subject.communityPaymentId}::uuid`;
     const rows = await db.$queryRaw<{ id: string }[]>`
       SELECT p.id FROM payments p
         JOIN payment_orders po ON po.id = p.payment_order_id
@@ -480,6 +501,8 @@ export function createPaymentsRepo(db: Db) {
     ordersFor,
     openOrderForBooking,
     ordersForBooking,
+    openOrderForCommunityPayment,
+    ordersForCommunityPayment,
     capturedPaymentForBooking,
     setOrderStatus,
     failOrderUnlessPaid,

@@ -45,6 +45,8 @@ export const folders = {
   venueHostRoot: (userId: string) => `pl4y/venue-hosts/${userId}`,
   /** org — an organisation's logo lives under its own root, checked the same way. */
   organisationRoot: (organisationId: string) => `pl4y/organisations/${organisationId}`,
+  /** communities — a community's cover, checked against this root the same way. */
+  communityRoot: (communityId: string) => `pl4y/communities/${communityId}`,
 };
 
 export interface UploadSignature {

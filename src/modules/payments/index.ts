@@ -76,6 +76,25 @@ export const payments = createPaymentsService({
       return bookings.failFromPayment(input);
     },
   },
+  // payments R20, communities R8 — a paid membership period pays the same way.
+  communityPayments: {
+    async byId(communityPaymentId) {
+      const { communities } = await import('../communities/index.js');
+      return communities.forPayments(communityPaymentId);
+    },
+    async extendHold(communityPaymentId, minutes) {
+      const { communities } = await import('../communities/index.js');
+      return communities.extendHold(communityPaymentId, minutes);
+    },
+    async confirmFromPayment(input) {
+      const { communities } = await import('../communities/index.js');
+      return communities.confirmFromPayment(input);
+    },
+    async failFromPayment(input) {
+      const { communities } = await import('../communities/index.js');
+      return communities.failFromPayment(input);
+    },
+  },
   users: {
     async byIds(ids) {
       const { identity } = await import('../identity/index.js');

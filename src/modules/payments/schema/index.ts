@@ -306,5 +306,5 @@ const StaffRefundPayload = builder
     }),
   });
 
-export { LedgerEntryRef, ReceiptRef };
+export { CreatePaymentOrderPayload, LedgerEntryRef, ReceiptRef, RefreshPaymentPayload };
 import './payouts.js';
