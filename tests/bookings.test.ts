@@ -274,6 +274,9 @@ describe('bookings — rules', () => {
     await payments.refreshBookingPayment(a, held.id).catch(() => undefined);
     // `held` is now expired (the insert expired it), so refresh skips it; reconciliation settles it.
     clock = new Date(clock.getTime() + 10 * MIN);
+    // The order's created_at is the database's real now(); put it on the test's clock, or reconciliation
+    // (which compares it with the service clock) sees an order from the future once the real date moves on.
+    await prisma.paymentOrder.updateMany({ where: { bookingId: held.id }, data: { createdAt: new Date(clock.getTime() - 35 * MIN) } });
     await payments.reconcilePending();
     expect((await bookings.byId(held.id))!.status).toBe('expired');
     const refund = await prisma.refund.findFirst();

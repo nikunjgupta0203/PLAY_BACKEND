@@ -42,7 +42,8 @@ export interface AuditEntry {
     | 'game'
     | 'community'
     | 'community_post'
-    | 'community_payout';
+    | 'community_payout'
+    | 'community_payment';
   targetId: string;
   reason?: string | null;
   details?: Record<string, unknown>;

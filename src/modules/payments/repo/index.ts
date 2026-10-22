@@ -272,10 +272,17 @@ export function createPaymentsRepo(db: Db) {
   async function paymentsForUser(
     userId: string,
     page: { after?: { createdAt: Date; id: string } | null; limit: number },
-  ): Promise<(PaymentRow & { registrationId: string; createdAt: Date })[]> {
+    /** communities R8 — the user's membership periods, so their payments are listed too. */
+    communityPaymentIds: string[] = [],
+  ): Promise<(PaymentRow & { registrationId: string; communityPaymentId: string | null; createdAt: Date })[]> {
     const rows = await db.payment.findMany({
-      where: { paymentOrder: { registration: { captainUserId: userId } } },
-      include: { paymentOrder: { select: { registrationId: true, createdAt: true } } },
+      where: {
+        OR: [
+          { paymentOrder: { registration: { captainUserId: userId } } },
+          ...(communityPaymentIds.length > 0 ? [{ paymentOrder: { communityPaymentId: { in: communityPaymentIds } } }] : []),
+        ],
+      },
+      include: { paymentOrder: { select: { registrationId: true, communityPaymentId: true, createdAt: true } } },
       orderBy: [{ paymentOrder: { createdAt: 'desc' } }, { id: 'desc' }],
       take: page.limit,
       ...(page.after
@@ -291,8 +298,9 @@ export function createPaymentsRepo(db: Db) {
       status: r.status,
       failureReason: r.failureReason,
       capturedAt: r.capturedAt,
-      // The where clause reaches the payment through its registration.
-      registrationId: r.paymentOrder.registrationId!,
+      // An entry's registration, or for a membership its period (the where clause reaches one of them).
+      registrationId: r.paymentOrder.registrationId ?? r.paymentOrder.communityPaymentId!,
+      communityPaymentId: r.paymentOrder.communityPaymentId,
       createdAt: r.paymentOrder.createdAt,
     }));
   }

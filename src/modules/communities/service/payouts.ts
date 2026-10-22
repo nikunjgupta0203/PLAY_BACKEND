@@ -277,7 +277,44 @@ export function createCommunityPayouts(deps: CommunityPayoutsDeps) {
     return view((await db.communityPayout.findUnique({ where: { id }, include: withName }))!);
   }
 
-  return { settleMonth, refreshHeld, open, forCommunity, markPaid };
+  /**
+   * R10 — a refunded payment comes out of the payout that settled it. A payout
+   * not yet sent is recounted from what is left (or removed when nothing is);
+   * one already paid cannot change, so the creator owes it back and finance is
+   * told.
+   */
+  async function dropRefundedPayment(payoutId: string, communityPaymentId: string): Promise<'recounted' | 'removed' | 'paid_out'> {
+    const outcome = await db.$transaction(async (tx) => {
+      const payout = await tx.communityPayout.findUnique({ where: { id: payoutId }, include: withName });
+      if (!payout) return { kind: 'removed' as const };
+      if (payout.status === 'paid') return { kind: 'paid_out' as const, payout };
+      await tx.communityPayment.update({ where: { id: communityPaymentId }, data: { payoutId: null } });
+      const left = await tx.communityPayment.findMany({
+        where: { payoutId, status: 'paid' },
+        select: { pricePaise: true, commissionPaise: true },
+      });
+      if (left.length === 0) {
+        await tx.communityPayout.delete({ where: { id: payoutId } });
+        return { kind: 'removed' as const };
+      }
+      await tx.communityPayout.update({
+        where: { id: payoutId },
+        data: { paymentCount: left.length, ...communityPayoutQuote(left, deps.rates), updatedAt: now() },
+      });
+      return { kind: 'recounted' as const };
+    });
+    if (outcome.kind === 'paid_out') {
+      const price = (await db.communityPayment.findUnique({ where: { id: communityPaymentId }, select: { pricePaise: true } }))?.pricePaise ?? 0n;
+      await deps.alert?.(
+        'Refunded membership was already paid out',
+        `A membership payment of ₹${(Number(price) / 100).toFixed(2)} for ${outcome.payout.community.name} (${outcome.payout.period}) was refunded ` +
+          `after its payout was sent (UTR ${outcome.payout.utr}). Recover it from the community owner.`,
+      );
+    }
+    return outcome.kind;
+  }
+
+  return { settleMonth, refreshHeld, open, forCommunity, markPaid, dropRefundedPayment };
 }
 
 export type CommunityPayouts = ReturnType<typeof createCommunityPayouts>;

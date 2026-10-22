@@ -1137,6 +1137,55 @@ export function createCommunitiesService(deps: CommunitiesDeps) {
     return { id: row.id, communityId: row.communityId };
   }
 
+  /** Staff: a community's paid and refunded membership payments, newest first (the portal's refund list). */
+  async function paymentsForStaff(communityId: string): Promise<CommunityPayment[]> {
+    const rows = await db.communityPayment.findMany({
+      where: { communityId, status: { in: ['paid', 'refunded'] } },
+      orderBy: [{ paidAt: 'desc' }, { id: 'desc' }],
+      take: 200,
+    });
+    return rows.map(asPayment);
+  }
+
+  /** What a staff refund needs: the paid period and the gateway payment it was paid with. */
+  async function refundablePayment(communityPaymentId: string): Promise<{ paymentId: string; pricePaise: bigint }> {
+    const row = await db.communityPayment.findUnique({ where: { id: communityPaymentId } });
+    if (!row || row.status !== 'paid' || !row.paymentId) {
+      throw new UserError(CommunityCode.INVALID_COMMUNITY, 'Only a paid membership payment can be refunded.');
+    }
+    return { paymentId: row.paymentId, pricePaise: row.pricePaise };
+  }
+
+  /**
+   * R10 — a membership payment was refunded in full: the period it bought is
+   * void. The member's paid-until goes back to where that period started (and
+   * the membership expires if that is already past); a one-time membership
+   * ends. Idempotent: a period already void changes nothing.
+   */
+  async function voidRefundedPeriod(communityPaymentId: string): Promise<{ payoutId: string | null } | null> {
+    return db.$transaction(async (tx) => {
+      const row = await tx.communityPayment.findUnique({ where: { id: communityPaymentId } });
+      if (!row || row.status !== 'paid') return null;
+      await repo.lock(tx, row.communityId);
+      const at = now();
+      await tx.communityPayment.update({ where: { id: row.id }, data: { status: 'refunded', updatedAt: at } });
+      const m = await tx.communityMember.findUnique({ where: { communityId_userId: { communityId: row.communityId, userId: row.userId } } });
+      if (m && m.status === 'active' && m.role !== 'owner') {
+        const latest = row.billing === 'one_time' ? m.paidUntil === null : m.paidUntil?.getTime() === row.periodEnd?.getTime();
+        if (latest) {
+          const until = row.billing === 'one_time' ? null : row.periodStart;
+          const ended = row.billing === 'one_time' || (until !== null && until <= at);
+          await tx.communityMember.update({
+            where: { communityId_userId: { communityId: row.communityId, userId: row.userId } },
+            data: { paidUntil: until, ...(ended ? { status: 'expired', role: 'member' } : {}), updatedAt: at },
+          });
+          if (ended) await repo.recount(tx, row.communityId);
+        }
+      }
+      return { payoutId: row.payoutId };
+    });
+  }
+
   /** Staff: every community, hidden and unlisted ones too, by name; newest first. */
   async function searchForStaff(text: string | null, first: number): Promise<Community[]> {
     const term = text?.trim() || null;
@@ -1150,6 +1199,12 @@ export function createCommunitiesService(deps: CommunitiesDeps) {
 
   /** A failed attempt changes nothing: the held period lapses by itself, and a retry reuses it. */
   async function failFromPayment(_input: { communityPaymentId: string; paymentId: string; reason: string }): Promise<void> {}
+
+  /** Every membership period a user ever started, for their payment history (payments R20). */
+  async function paymentIdsForUser(userId: string): Promise<string[]> {
+    const rows = await db.communityPayment.findMany({ where: { userId }, select: { id: true }, take: 500 });
+    return rows.map((r) => r.id);
+  }
 
   /** The viewer's latest checkout for this community, for the app's "did it go through?" refresh. */
   async function latestPaymentOf(communityId: string, userId: string): Promise<CommunityPayment | null> {
@@ -1284,7 +1339,11 @@ export function createCommunitiesService(deps: CommunitiesDeps) {
     setHiddenByStaff,
     hidePostByStaff,
     searchForStaff,
+    paymentsForStaff,
+    refundablePayment,
+    voidRefundedPeriod,
     latestPaymentOf,
+    paymentIdsForUser,
     paidUntilOf,
     earnings,
     sweep,

@@ -94,6 +94,10 @@ export const payments = createPaymentsService({
       const { communities } = await import('../communities/index.js');
       return communities.failFromPayment(input);
     },
+    async idsForUser(userId) {
+      const { communities } = await import('../communities/index.js');
+      return communities.paymentIdsForUser(userId);
+    },
   },
   users: {
     async byIds(ids) {

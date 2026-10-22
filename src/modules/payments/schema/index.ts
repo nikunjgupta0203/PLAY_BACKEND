@@ -61,10 +61,29 @@ const ReceiptRef = builder.objectRef<Receipt>('Receipt').implement({
 });
 
 const PaymentRecordRef = builder
-  .objectRef<LedgerEntry & { registrationId: string }>('PaymentRecord')
+  .objectRef<LedgerEntry & { registrationId: string; communityPaymentId?: string | null }>('PaymentRecord')
   .implement({
     fields: (t) => ({
-      registrationId: t.exposeID('registrationId'),
+      registrationId: t.exposeID('registrationId', {
+        description: 'The entry paid for. For a community membership, the membership period instead (see communityId).',
+      }),
+      communityId: t.id({
+        nullable: true,
+        description: 'communities R8 — set when this paid for a community membership: open the community, not a registration.',
+        resolve: async (p) => {
+          if (!p.communityPaymentId) return null;
+          const { communities } = await import('../../communities/index.js');
+          return (await communities.forPayments(p.communityPaymentId)).communityId;
+        },
+      }),
+      communityName: t.string({
+        nullable: true,
+        resolve: async (p) => {
+          if (!p.communityPaymentId) return null;
+          const { communities } = await import('../../communities/index.js');
+          return (await communities.forPayments(p.communityPaymentId)).communityName;
+        },
+      }),
       status: t.string({ resolve: (p) => p.kind }),
       amountPaise: t.int({ resolve: (p) => paise(p.amountPaise) }),
       at: t.field({ type: 'DateTime', resolve: (p) => p.createdAt }),

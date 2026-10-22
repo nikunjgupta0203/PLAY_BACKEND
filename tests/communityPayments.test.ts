@@ -134,6 +134,7 @@ beforeEach(async () => {
       extendHold: (id, minutes) => svc.extendHold(id, minutes),
       confirmFromPayment: (input) => svc.confirmFromPayment(input),
       failFromPayment: (input) => svc.failFromPayment(input),
+      idsForUser: (userId) => svc.paymentIdsForUser(userId),
     },
     users: contactsPortFor(prisma),
     email: new FakeEmail(),
@@ -186,6 +187,17 @@ describe('paying to join', () => {
       refundedCount: 0,
     });
     expect(await svc.earnings(ravi, c.id)).toBeNull();
+  });
+
+  it('R8: a membership payment shows in the payer’s payment history', async () => {
+    const owner = await user('Asha');
+    const ravi = await user('Ravi');
+    const c = await svc.create(owner, paid());
+    const id = await pay(ravi, c.id);
+    const history = await payments.paymentHistory(ravi.userId, { first: 10 });
+    expect(history.nodes).toHaveLength(1);
+    expect(history.nodes[0]).toMatchObject({ communityPaymentId: id, amountPaise: 49_900n });
+    expect((await payments.paymentHistory(owner.userId, { first: 10 })).nodes).toEqual([]);
   });
 
   it('R8: a second capture of the same period changes nothing', async () => {
@@ -442,3 +454,60 @@ async function payoutAccount(userId: string): Promise<string> {
   });
   return id;
 }
+
+describe('staff refunds', () => {
+  const staff = { userId: newId(), role: 'finance' };
+
+  async function refundIt(communityPaymentId: string) {
+    const paidRow = await svc.refundablePayment(communityPaymentId);
+    await payments.staffRefundCommunityPayment(staff, { communityPaymentId, paymentId: paidRow.paymentId, amountPaise: paidRow.pricePaise, reason: 'Club never met' });
+    return svc.voidRefundedPeriod(communityPaymentId);
+  }
+
+  it('R10: a full refund voids the period — the member is out, and the payment leaves the unsent payout', async () => {
+    const owner = await user('Asha');
+    const ravi = await user('Ravi');
+    const meera = await user('Meera');
+    const c = await svc.create(owner, paid());
+    const raviPayment = await pay(ravi, c.id);
+    await pay(meera, c.id);
+    clock = new Date('2026-11-01T00:30:00.000Z');
+    const ops: string[] = [];
+    const p = createCommunityPayouts({
+      db: prisma as unknown as Db,
+      accountOf: async () => null,
+      rates: { commissionGstBps: 0, tdsBps: 0 },
+      async alert(subject) {
+        ops.push(subject);
+      },
+      now: () => clock,
+    });
+    await p.settleMonth();
+
+    const voided = await refundIt(raviPayment);
+    expect(await prisma.refund.count()).toBe(1);
+    expect((await svc.viewerOf(c.id, ravi.userId)).state).toBe('expired');
+    expect((await svc.findById(c.id))?.memberCount).toBe(2);
+    expect(await p.dropRefundedPayment(voided!.payoutId!, raviPayment)).toBe('recounted');
+    expect((await p.open())[0]).toMatchObject({ paymentCount: 1, grossPaise: 49_900n });
+
+    // Asked twice: one refund, nothing more to void.
+    expect(await codeOf(() => refundIt(raviPayment))).toBe(CommunityCode.INVALID_COMMUNITY);
+    expect(await prisma.refund.count()).toBe(1);
+    expect(ops).toEqual([]);
+  });
+
+  it('R10: refunding a renewal takes the member back to the end of the period before it', async () => {
+    const owner = await user('Asha');
+    const ravi = await user('Ravi');
+    const c = await svc.create(owner, paid());
+    await pay(ravi, c.id);
+    const end = (await svc.viewerOf(c.id, ravi.userId)).membership!.paidUntil!;
+    clock = new Date(end.getTime() - RENEW_WINDOW_MS + 60_000);
+    const renewal = await pay(ravi, c.id);
+    await refundIt(renewal);
+    const v = await svc.viewerOf(c.id, ravi.userId);
+    expect(v.state).toBe('member');
+    expect(v.membership?.paidUntil?.toISOString()).toBe(end.toISOString());
+  });
+});

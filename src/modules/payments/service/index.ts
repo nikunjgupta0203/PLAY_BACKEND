@@ -187,6 +187,8 @@ export interface CommunityPaymentsPort {
   /** Throws ILLEGAL_TRANSITION when the period cannot become a membership; the capture is then refunded in full. */
   confirmFromPayment(input: { communityPaymentId: string; paymentId: string }): Promise<{ confirmedNow: boolean }>;
   failFromPayment(input: { communityPaymentId: string; paymentId: string; reason: string }): Promise<unknown>;
+  /** The user's membership periods, for their payment history. */
+  idsForUser?(userId: string): Promise<string[]>;
 }
 
 export interface UsersPort {
@@ -1515,6 +1517,37 @@ export function createPaymentsService(deps: PaymentsDeps) {
     return refund(null, { paymentId: payment.id, amountPaise: input.amountPaise, reason: `staff:${reason}` });
   }
 
+  /**
+   * portal — PL4Y refunds a community membership payment in full (communities
+   * R10). Money only; communities voids the period. One refund per payment,
+   * however often it is asked for.
+   */
+  async function staffRefundCommunityPayment(
+    staff: { userId: string; role: string },
+    input: { communityPaymentId: string; paymentId: string; amountPaise: bigint; reason: string },
+  ): Promise<Refund> {
+    if (!['admin', 'finance', 'support'].includes(staff.role)) {
+      throw new SystemError('FORBIDDEN', 'Only PL4Y staff can issue a refund.');
+    }
+    const reason = input.reason.trim();
+    if (reason.length === 0) throw new UserError(PaymentCode.NOTHING_TO_REFUND, 'Say why this refund is being made.');
+    const payment = await repo.paymentById(input.paymentId);
+    if (!payment || (payment.status !== 'captured' && payment.status !== 'partially_refunded')) {
+      throw new UserError(PaymentCode.PAYMENT_NOT_FOUND, 'This membership has no payment that can be refunded.');
+    }
+    const order = await repo.orderById(payment.paymentOrderId);
+    if (order?.communityPaymentId !== input.communityPaymentId) {
+      throw new UserError(PaymentCode.PAYMENT_NOT_FOUND, 'This membership has no payment that can be refunded.');
+    }
+    logger.info({ staff: staff.userId, communityPaymentId: input.communityPaymentId, reason }, 'staff membership refund');
+    return refund(null, {
+      paymentId: payment.id,
+      amountPaise: input.amountPaise,
+      reason: `staff:${reason}`,
+      idempotencyKey: `community_refund:${input.communityPaymentId}`,
+    });
+  }
+
   // --- reconciliation (R9) ---------------------------------------------------
 
   /**
@@ -1644,18 +1677,25 @@ export function createPaymentsService(deps: PaymentsDeps) {
   async function paymentHistory(
     userId: string,
     page: { first: number; after?: string | null },
-  ): Promise<{ nodes: (LedgerEntry & { registrationId: string })[]; hasNextPage: boolean; endCursor: string | null }> {
+  ): Promise<{
+    nodes: (LedgerEntry & { registrationId: string; communityPaymentId: string | null })[];
+    hasNextPage: boolean;
+    endCursor: string | null;
+  }> {
     const first = Math.min(Math.max(page.first, 1), 50);
-    const rows = await repo.paymentsForUser(userId, {
-      after: page.after ? { createdAt: new Date(0), id: page.after } : null,
-      limit: first + 1,
-    });
+    const memberships = (await deps.communityPayments?.idsForUser?.(userId)) ?? [];
+    const rows = await repo.paymentsForUser(
+      userId,
+      { after: page.after ? { createdAt: new Date(0), id: page.after } : null, limit: first + 1 },
+      memberships,
+    );
     const nodes = rows.slice(0, first).map((r) => ({
       id: 0n,
       kind: r.status,
       amountPaise: r.amountPaise,
       createdAt: r.capturedAt ?? r.createdAt,
       registrationId: r.registrationId,
+      communityPaymentId: r.communityPaymentId,
     }));
     return {
       nodes,
@@ -1727,6 +1767,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
     refundForBooking,
     staffRefund,
     staffRefundBooking,
+    staffRefundCommunityPayment,
     ingestWebhook,
     applyWebhook,
     refund,

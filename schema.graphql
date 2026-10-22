@@ -924,6 +924,21 @@ type CommunityPayload {
   userError: UserError
 }
 
+"""communities R8 — one paid (or refunded) membership period. Staff only."""
+type CommunityPayment {
+  billing: String!
+  commissionPaise: Int!
+  id: ID!
+  member: PlayerProfile
+  paidAt: DateTime
+  periodEnd: DateTime
+  periodStart: DateTime
+  pricePaise: Int!
+
+  """paid | refunded"""
+  status: String!
+}
+
 """
 communities R10 — one month’s memberships for one community, less PL4Y’s 5%, GST on it and TDS.
 """
@@ -2707,6 +2722,11 @@ type Mutation {
   identity R19 — brings a deactivated account back when the player asks. They sign in as usual afterwards.
   """
   adminReactivateUser(reason: String!, userId: ID!): AdminUserPayload!
+
+  """
+  communities R10 — refund one membership payment in full. The period it bought is void (the member’s paid-until goes back, and the membership ends if that is already past); it comes out of the month’s payout, or finance is told to recover it if that payout was already sent. Admin and finance.
+  """
+  adminRefundCommunityPayment(communityPaymentId: ID!, reason: String!): StaffCommunityRefundPayload!
   adminReinstateOrganisation(organisationId: ID!, reason: String!): OrganisationPayload!
   adminReinstateUser(reason: String!, userId: ID!): AdminUserPayload!
 
@@ -3791,6 +3811,16 @@ enum PaymentMode {
 type PaymentRecord {
   amountPaise: Int!
   at: DateTime!
+
+  """
+  communities R8 — set when this paid for a community membership: open the community, not a registration.
+  """
+  communityId: ID
+  communityName: String
+
+  """
+  The entry paid for. For a community membership, the membership period instead (see communityId).
+  """
   registrationId: ID!
   status: String!
 }
@@ -4145,6 +4175,11 @@ type Query {
   Portal — every community, hidden and unlisted ones too, newest first. `search` matches the name.
   """
   adminCommunities(first: Int = 50, search: String): [Community!]!
+
+  """
+  Portal — a community’s paid and refunded membership payments, newest first.
+  """
+  adminCommunityPayments(communityId: ID!): [CommunityPayment!]!
 
   """
   portal — every entry on an event, newest first, with its partners, its place on the waitlist and its money.
@@ -5004,6 +5039,11 @@ type SportRank {
 
 type StaffCommunityPayload {
   community: Community
+  userError: UserError
+}
+
+type StaffCommunityRefundPayload {
+  refundId: ID
   userError: UserError
 }
 

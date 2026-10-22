@@ -7,10 +7,10 @@ import { audited, requirePlatformStaff } from '../../../graphql/staff.js';
 import { attempt, UserErrorRef, type UserErrorShape } from '../../../graphql/userError.js';
 import { UserError } from '../../../platform/errors/index.js';
 import { PayoutAccountRef } from '../../payments/schema/payouts.js';
-import { payouts } from '../../payments/index.js';
+import { payments, payouts } from '../../payments/index.js';
 import { PlayerProfileRef } from '../../profile/schema/index.js';
 import { communities, communityPayouts } from '../index.js';
-import type { Community, CommunityPayout } from '../index.js';
+import type { Community, CommunityPayment, CommunityPayout } from '../index.js';
 import { CommunityRef } from './index.js';
 
 const paise = (v: bigint): number => Number(v);
@@ -172,6 +172,80 @@ builder.mutationFields((t) => ({
         }),
       );
       return { community: data, userError };
+    },
+  }),
+}));
+
+// --- staff refunds of a membership payment (R10) ------------------------------------------
+
+const CommunityPaymentRef = builder.objectRef<CommunityPayment>('CommunityPayment').implement({
+  description: 'communities R8 — one paid (or refunded) membership period. Staff only.',
+  fields: (t) => ({
+    id: t.exposeID('id'),
+    pricePaise: t.int({ resolve: (p) => paise(p.pricePaise) }),
+    commissionPaise: t.int({ resolve: (p) => paise(p.commissionPaise) }),
+    billing: t.exposeString('billing'),
+    status: t.exposeString('status', { description: 'paid | refunded' }),
+    periodStart: t.field({ type: 'DateTime', nullable: true, resolve: (p) => p.periodStart }),
+    periodEnd: t.field({ type: 'DateTime', nullable: true, resolve: (p) => p.periodEnd }),
+    paidAt: t.field({ type: 'DateTime', nullable: true, resolve: (p) => p.paidAt }),
+    member: t.field({
+      type: PlayerProfileRef,
+      nullable: true,
+      resolve: (p, _args, ctx) => ctx.loaders.publicProfileByUser.load(p.userId),
+    }),
+  }),
+});
+
+builder.queryFields((t) => ({
+  adminCommunityPayments: t.field({
+    type: [CommunityPaymentRef],
+    description: 'Portal — a community’s paid and refunded membership payments, newest first.',
+    args: { communityId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      await requirePlatformStaff(ctx);
+      const id = String(args.communityId);
+      return isId(id) ? communities.paymentsForStaff(id) : [];
+    },
+  }),
+}));
+
+const StaffRefundPayload = builder
+  .objectRef<{ refundId: string | null; userError: UserErrorShape | null }>('StaffCommunityRefundPayload')
+  .implement({
+    fields: (t) => ({
+      refundId: t.id({ nullable: true, resolve: (p) => p.refundId }),
+      userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
+    }),
+  });
+
+builder.mutationFields((t) => ({
+  adminRefundCommunityPayment: t.field({
+    type: StaffRefundPayload,
+    description:
+      'communities R10 — refund one membership payment in full. The period it bought is void (the member’s paid-until goes back, ' +
+      'and the membership ends if that is already past); it comes out of the month’s payout, or finance is told to recover it ' +
+      'if that payout was already sent. Admin and finance.',
+    args: { communityPaymentId: t.arg.id({ required: true }), reason: t.arg.string({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const staff = await requirePlatformStaff(ctx, ['admin', 'finance']);
+      const id = String(args.communityPaymentId);
+      const { data, userError } = await attempt(() =>
+        audited(staff, { action: 'community_payment.refund', targetType: 'community_payment', targetId: id }, args.reason, async (reason) => {
+          if (!isId(id)) throw new UserError('PAYMENT_NOT_FOUND', 'No such payment.');
+          const paid = await communities.refundablePayment(id);
+          const refund = await payments.staffRefundCommunityPayment(staff, {
+            communityPaymentId: id,
+            paymentId: paid.paymentId,
+            amountPaise: paid.pricePaise,
+            reason,
+          });
+          const voided = await communities.voidRefundedPeriod(id);
+          if (voided?.payoutId) await communityPayouts.dropRefundedPayment(voided.payoutId, id);
+          return refund;
+        }),
+      );
+      return { refundId: data?.id ?? null, userError };
     },
   }),
 }));
