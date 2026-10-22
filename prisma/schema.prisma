@@ -141,6 +141,10 @@ model User {
   venueHostReviews        VenueHostApplication[]    @relation("venueHostReviewer")
   eventReports            EventReport[]             @relation("eventReportAuthor")
   eventReportsResolved    EventReport[]             @relation("eventReportResolver")
+  partnershipsVerified    PartnershipApplication[]  @relation("partnershipVerifier")
+  partnershipsAssigned    PartnershipApplication[]  @relation("partnershipAssignee")
+  partnershipNotes        PartnershipNote[]         @relation("partnershipNoteAuthor")
+  partnershipStatusMoves  PartnershipStatusChange[] @relation("partnershipStatusChanger")
 
   /// profile.search() matches display names with ILIKE '%q%', which only a
   /// trigram index can serve. The column stays owned by identity.
@@ -2099,4 +2103,92 @@ model CommunityPayout {
   @@unique([communityId, period], map: "community_payouts_period_key")
   @@index([status, createdAt], map: "community_payouts_status_idx")
   @@map("community_payouts")
+}
+
+/// partnerships R1 — one submission of the shareable partnership form, however
+/// many categories it covers. Search and filter columns are copied out of
+/// `profile`; `sections` holds one answer document per selected category.
+model PartnershipApplication {
+  id                  String    @id @db.Uuid
+  /// What the applicant is shown and quotes back: "P4Y-7KQ3MD".
+  reference           String    @unique
+  /// R3 — the form's own id for one attempt. A second submit with it returns the first row.
+  clientToken         String    @unique @map("client_token") @db.Uuid
+  /// company | club | college | individual | other. CHECK in the migration.
+  applicantType       String    @map("applicant_type")
+  /// Null only for an individual who gave none.
+  organisationName    String?   @map("organisation_name")
+  city                String
+  state               String
+  contactName         String    @map("contact_name")
+  contactEmail        String    @map("contact_email") @db.Citext
+  contactPhone        String    @map("contact_phone")
+  /// community | college | venue | events | ambassador | brand | other. At least one.
+  categories          String[]
+  /// The whole "About you" step, as answered.
+  profile             Json      @default("{}")
+  /// `{ [category]: answers }` for the selected categories only.
+  sections            Json      @default("{}")
+  consentAccurate     Boolean   @map("consent_accurate")
+  consentContact      Boolean   @map("consent_contact")
+  /// Separate permission to show their name, logo, photos or activities publicly.
+  consentPublish      Boolean   @default(false) @map("consent_publish")
+  consentedAt         DateTime  @map("consented_at") @db.Timestamptz(6)
+  /// R6 — see PARTNERSHIP_STATUSES. CHECK in the migration.
+  status              String    @default("submitted")
+  verifiedAt          DateTime? @map("verified_at") @db.Timestamptz(6)
+  verifiedBy          String?   @map("verified_by") @db.Uuid
+  assignedTo          String?   @map("assigned_to") @db.Uuid
+  followUpOn          DateTime? @map("follow_up_on") @db.Date
+  /// R7 — an earlier application from the same organisation, linked by staff.
+  linkedApplicationId String?   @map("linked_application_id") @db.Uuid
+  /// R4 — pending | sent | failed. A failure never loses the application.
+  confirmationEmail   String    @default("pending") @map("confirmation_email")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  verifier   User?                     @relation("partnershipVerifier", fields: [verifiedBy], references: [id])
+  assignee   User?                     @relation("partnershipAssignee", fields: [assignedTo], references: [id])
+  linkedTo   PartnershipApplication?   @relation("partnershipLink", fields: [linkedApplicationId], references: [id])
+  linkedFrom PartnershipApplication[]  @relation("partnershipLink")
+  notes      PartnershipNote[]
+  history    PartnershipStatusChange[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([contactEmail])
+  @@index([contactPhone])
+  @@index([categories], type: Gin)
+  @@map("partnership_applications")
+}
+
+/// partnerships R6 — staff's own notes on an application. Never shown to the applicant.
+model PartnershipNote {
+  id            String   @id @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  authorId      String   @map("author_id") @db.Uuid
+  body          String
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  application PartnershipApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  author      User                   @relation("partnershipNoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([applicationId, createdAt])
+  @@map("partnership_notes")
+}
+
+/// partnerships R6 — every status an application has been in. The first row is the submission.
+model PartnershipStatusChange {
+  id            String   @id @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  fromStatus    String?  @map("from_status")
+  toStatus      String   @map("to_status")
+  byUserId      String?  @map("by_user_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  application PartnershipApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  by          User?                  @relation("partnershipStatusChanger", fields: [byUserId], references: [id])
+
+  @@index([applicationId, createdAt])
+  @@map("partnership_status_changes")
 }

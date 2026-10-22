@@ -1,6 +1,6 @@
 import SchemaBuilder from '@pothos/core';
 import RelayPlugin from '@pothos/plugin-relay';
-import { DateTimeScalar } from './scalars.js';
+import { DateTimeScalar, JSONObjectScalar } from './scalars.js';
 import type { Ctx } from './context.js';
 
 /** conventions.md §4 — `first` is capped, on every list, without exception. */
@@ -16,6 +16,7 @@ export const builder = new SchemaBuilder<{
   DefaultFieldNullability: false;
   Scalars: {
     DateTime: { Input: Date; Output: Date };
+    JSONObject: { Input: Record<string, unknown>; Output: Record<string, unknown> };
     ID: { Input: string; Output: string };
   };
 }>({
@@ -35,6 +36,7 @@ export const builder = new SchemaBuilder<{
 });
 
 builder.addScalarType('DateTime', DateTimeScalar);
+builder.addScalarType('JSONObject', JSONObjectScalar);
 
 builder.queryType({});
 builder.mutationType({});

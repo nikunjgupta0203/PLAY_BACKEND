@@ -98,6 +98,13 @@ export const configSchema = z.object({
   EMAIL_LINK_BASE: z.string().url().default('https://getpl4y.com'),
   /** Replies to transactional email land here (the refund email invites one). */
   EMAIL_REPLY_TO: z.string().default(''),
+  /** partnerships R4 — who hears about a new partnership application. Comma-separated; empty sends none. */
+  PARTNERSHIP_NOTIFY_EMAILS: z
+    .string()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  /** The admin portal's origin, for links in staff email ("Open in the portal"). Empty leaves the link out. */
+  PORTAL_URL: z.string().default(''),
 
   // ── Later sprints. Optional here so Sprint 1 boots without them, but each
   //    module's own loader asserts its keys before first use.

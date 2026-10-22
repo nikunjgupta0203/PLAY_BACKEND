@@ -58,6 +58,11 @@ envVarGroups:
         value: "PL4Y <support@getpl4y.com>"
       - key: RESEND_WEBHOOK_SECRET
         sync: false
+      # Partnership form: who hears about a new application, and the portal it links to.
+      - key: PARTNERSHIP_NOTIFY_EMAILS
+        sync: false
+      - key: PORTAL_URL
+        sync: false
       # ── Push — Expo ────────────────────────────────────────────────────────
       - key: PUSH_TRANSPORT
         value: expo

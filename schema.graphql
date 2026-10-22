@@ -2252,6 +2252,11 @@ type InviteToGamePayload {
 }
 
 """
+A JSON object, sent as a variable. The field that takes it says what may be in it.
+"""
+scalar JSONObject
+
+"""
 A league table, or one group of a group stage. Ties: points, then score difference, then score for, then the matches between those still level, then the seeding.
 """
 type LeagueGroup {
@@ -2674,6 +2679,9 @@ type Mutation {
   The owner adds admins and members; an admin adds members. No account yet: they are emailed an invite.
   """
   addOrganisationMember(email: String!, organisationId: ID!, role: OrganisationAddableRole!): AddOrganisationMemberPayload!
+
+  """portal R6 — a note for the team. The applicant never sees it."""
+  addPartnershipNote(body: String!, id: ID!): PartnershipApplicationPayload!
   addVenuePhoto(
     """Never a URL (ADR 0003 §C3)."""
     publicId: String!
@@ -3088,6 +3096,11 @@ type Mutation {
   """
   organisationLogoUploadSignature(organisationId: ID!): MediaUploadPayload!
 
+  """
+  partnerships R5 — a signature for ONE image (a logo, a venue photo, a poster), uploaded straight to Cloudinary. Send `folder/publicId` back in the answers. No sign-in; limited per IP.
+  """
+  partnershipUploadSignature(clientToken: ID!): MediaUploadPayload!
+
   """Admins. One pinned post at a time."""
   pinCommunityPost(pinned: Boolean!, postId: ID!): CommunityPostPayload!
 
@@ -3300,6 +3313,11 @@ type Mutation {
   """
   setMatchTime(matchId: ID!, startsAt: DateTime): MatchPayload!
   setNotificationPreferences(input: NotificationPreferencesInput!): PreferencesPayload!
+
+  """
+  portal R6 — moves an application on. Kept in its history with who did it.
+  """
+  setPartnershipStatus(id: ID!, status: PartnershipStatus!): PartnershipApplicationPayload!
   setProfileVisibility(visibility: ProfileVisibility!): ProfilePayload!
 
   """
@@ -3338,6 +3356,11 @@ type Mutation {
   """Opens the point log. Idempotent on a live match."""
   startMatch(firstServer: MatchSide, matchId: ID!): MatchPayload!
   submitMatchResult(input: SubmitMatchResultInput!): MatchResultPayload!
+
+  """
+  partnerships R1–R5 — the partnership form, sent. No sign-in. Stores one application for every category picked, emails the applicant a confirmation and tells the PL4Y team.
+  """
+  submitPartnershipApplication(input: SubmitPartnershipApplicationInput!): SubmitPartnershipApplicationPayload!
   suspendPayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
 
   """The owner hands over to an active member and becomes an admin (R5)."""
@@ -3391,6 +3414,7 @@ type Mutation {
   The owner or an admin: logo, description, city and contact. Not the name.
   """
   updateOrganisation(input: OrganisationDetailsInput!, organisationId: ID!): OrganisationPayload!
+  updatePartnershipApplication(id: ID!, input: UpdatePartnershipApplicationInput!): PartnershipApplicationPayload!
   updateProfileDetails(input: UpdateProfileDetailsInput!): ProfilePayload!
   updateProfileLocation(input: UpdateProfileLocationInput!): ProfilePayload!
   updateProfileSports(input: UpdateProfileSportsInput!): ProfilePayload!
@@ -3789,6 +3813,199 @@ type PartnerInvite {
   invitedUserId: ID
   status: String!
   token: String!
+}
+
+"""
+One question as the applicant answered it. Unanswered questions are left out.
+"""
+type PartnershipAnswer {
+  """Venue locations, activities, events."""
+  entries: [PartnershipEntry!]!
+  images: [PartnershipImage!]!
+  key: String!
+  label: String!
+
+  """The answer in words. Null for images and entries."""
+  text: String
+}
+
+enum PartnershipApplicantType {
+  CLUB
+  COLLEGE
+  COMPANY
+  INDIVIDUAL
+  OTHER
+}
+
+"""
+partnerships R1 — one submission of the partnership form, with a section per category picked.
+"""
+type PartnershipApplication {
+  applicantType: PartnershipApplicantType!
+  assignee: PartnershipStaff
+  categories: [PartnershipCategory!]!
+  city: String!
+
+  """pending, sent or failed (R4)."""
+  confirmationEmail: String!
+  consentAccurate: Boolean!
+  consentContact: Boolean!
+
+  """May PL4Y show their profile, logo, photos or activities."""
+  consentPublish: Boolean!
+  consentedAt: DateTime!
+  contactEmail: String!
+  contactName: String!
+  contactPhone: String!
+  createdAt: DateTime!
+
+  """The organisation, or the person for an individual."""
+  displayName: String!
+
+  """YYYY-MM-DD."""
+  followUpOn: String
+
+  """Oldest first."""
+  history: [PartnershipStatusChange!]!
+  id: ID!
+
+  """R7 — every application linked to or from this one."""
+  linked: [PartnershipApplication!]!
+
+  """R7 — the earlier application staff linked this one to."""
+  linkedApplication: PartnershipApplication
+  logo: PartnershipImage
+
+  """Newest first."""
+  notes: [PartnershipNote!]!
+  organisationName: String
+
+  """R7 — others with the same email, phone or organisation name."""
+  possibleDuplicates: [PartnershipApplication!]!
+
+  """The "About you" step."""
+  profile: [PartnershipAnswer!]!
+  reference: String!
+
+  """One per category picked, in the form’s order."""
+  sections: [PartnershipSection!]!
+  state: String!
+  status: PartnershipStatus!
+  updatedAt: DateTime!
+  verified: Boolean!
+  verifiedAt: DateTime
+  verifiedBy: PartnershipStaff
+}
+
+type PartnershipApplicationPage {
+  items: [PartnershipApplication!]!
+  total: Int!
+}
+
+type PartnershipApplicationPayload {
+  application: PartnershipApplication
+  userError: UserError
+}
+
+"""
+partnerships R1 — the ways to partner with PL4Y. An application may pick several.
+"""
+enum PartnershipCategory {
+  AMBASSADOR
+  BRAND
+  COLLEGE
+  COMMUNITY
+  EVENTS
+  OTHER
+  VENUE
+}
+
+type PartnershipEntry {
+  answers: [PartnershipAnswer!]!
+}
+
+input PartnershipFilterInput {
+  category: PartnershipCategory
+  city: String
+
+  """Organisation, contact name, email, phone or reference."""
+  search: String
+  status: PartnershipStatus
+}
+
+"""A user error that may name the question it is about."""
+type PartnershipFormError {
+  code: String!
+
+  """
+  The question, as `step.key` or `step.key.entry.key`: `basic.email`, `venue.locations.1.city`.
+  """
+  field: String
+  message: String!
+  retryAfterSeconds: Int
+}
+
+type PartnershipImage {
+  publicId: String!
+  url: String
+}
+
+"""R6 — staff only. Never shown to the applicant."""
+type PartnershipNote {
+  author: PartnershipStaff
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+}
+
+"""
+partnerships R3 — what the applicant is shown once their application is stored.
+"""
+type PartnershipReceipt {
+  categories: [PartnershipCategory!]!
+  organisationName: String!
+  reference: String!
+  submittedAt: DateTime!
+}
+
+type PartnershipSection {
+  answers: [PartnershipAnswer!]!
+  category: PartnershipCategory!
+  title: String!
+}
+
+type PartnershipStaff {
+  displayName: String!
+  id: ID!
+}
+
+"""
+partnerships R6 — where PL4Y is with an application. Submitting never makes it more than SUBMITTED.
+"""
+enum PartnershipStatus {
+  ACTIVE
+  CLOSED
+  CONFIRMED
+  CONTACTED
+  IN_DISCUSSION
+  LAUNCH_READY
+  ON_HOLD
+  SUBMITTED
+  UNDER_REVIEW
+}
+
+type PartnershipStatusChange {
+  at: DateTime!
+
+  """Null for the submission itself."""
+  by: PartnershipStaff
+  from: PartnershipStatus
+  to: PartnershipStatus!
+}
+
+type PartnershipStatusCount {
+  count: Int!
+  status: PartnershipStatus!
 }
 
 type PaymentConnection {
@@ -4394,6 +4611,19 @@ type Query {
   14-organizers — every event of an organisation that starts in the range (default: the last 90 days and the next 90).
   """
   organisationAnalytics(from: DateTime, organisationId: ID!, to: DateTime): OrganisationAnalytics!
+  partnershipApplication(id: ID!): PartnershipApplication
+
+  """portal — partnership applications, newest first. At most 100 a page."""
+  partnershipApplications(filter: PartnershipFilterInput, limit: Int = 50, offset: Int = 0): PartnershipApplicationPage!
+
+  """
+  portal R6 — every application matching the filter (5,000 at most), as CSV.
+  """
+  partnershipApplicationsCsv(filter: PartnershipFilterInput): String!
+
+  """portal — every city an application came from, for the filter."""
+  partnershipCities: [String!]!
+  partnershipStatusCounts: [PartnershipStatusCount!]!
   paymentHistory(after: String, before: String, first: Int, last: Int): PaymentConnection!
   payoutAccountsForReview: [PayoutAccount!]!
   payoutsNeedingAttention: [Payout!]!
@@ -5136,6 +5366,36 @@ input SubmitMatchResultInput {
   winner: MatchSide
 }
 
+input SubmitPartnershipApplicationInput {
+  categories: [PartnershipCategory!]!
+
+  """
+  R3 — a UUID the form makes once per attempt. Submitting it again returns the first application.
+  """
+  clientToken: ID!
+  consentAccurate: Boolean!
+  consentContact: Boolean!
+
+  """Separate permission to show their profile, logo, photos or activities."""
+  consentPublish: Boolean!
+
+  """The "About you" answers, by key (R2)."""
+  profile: JSONObject!
+
+  """
+  `{ community: {…}, venue: {…} }` — answers by key for each category. Others are ignored.
+  """
+  sections: JSONObject!
+
+  """R5 — the hidden field. Left empty by people."""
+  trap: String
+}
+
+type SubmitPartnershipApplicationPayload {
+  receipt: PartnershipReceipt
+  userError: PartnershipFormError
+}
+
 type SupportMessage {
   body: String!
   createdAt: DateTime!
@@ -5357,6 +5617,19 @@ input UpdateGameInput {
 
   """A listed venue. Leave out to name the place."""
   venueId: ID
+}
+
+"""R6, R7 — leave a field out to keep it; send null to clear it."""
+input UpdatePartnershipApplicationInput {
+  """A PL4Y staff member’s user id."""
+  assignedToId: ID
+
+  """YYYY-MM-DD."""
+  followUpOn: String
+
+  """An earlier application from the same organisation."""
+  linkedApplicationId: ID
+  verified: Boolean
 }
 
 """
