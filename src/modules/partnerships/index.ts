@@ -37,7 +37,7 @@ export const partnerships = createPartnershipService({
   },
 });
 
-export { flatten, read, MAX_ENTRIES, MAX_IMAGES } from './service/answers.js';
+export { AnswerCode, check, flatten, read, MAX_ENTRIES, MAX_IMAGES } from './service/answers.js';
 export type { Answer, Answers } from './service/answers.js';
 export { APPLICANT_TYPES, BASIC, CATEGORIES, CATEGORY_TITLES, SECTIONS } from './service/form.js';
 export type { ApplicantType, Category, Field } from './service/form.js';

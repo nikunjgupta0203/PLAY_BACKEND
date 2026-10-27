@@ -103,6 +103,11 @@ export const configSchema = z.object({
     .string()
     .default('')
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  /** vendors R4 — who hears about a new PL4Y Shop seller application. Comma-separated; empty uses PARTNERSHIP_NOTIFY_EMAILS. */
+  VENDOR_NOTIFY_EMAILS: z
+    .string()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
   /** The admin portal's origin, for links in staff email ("Open in the portal"). Empty leaves the link out. */
   PORTAL_URL: z.string().default(''),
 

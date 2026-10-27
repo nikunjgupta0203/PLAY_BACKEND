@@ -2682,6 +2682,9 @@ type Mutation {
 
   """portal R6 — a note for the team. The applicant never sees it."""
   addPartnershipNote(body: String!, id: ID!): PartnershipApplicationPayload!
+
+  """portal R6 — a note for the team. The seller never sees it."""
+  addVendorNote(body: String!, id: ID!): VendorApplicationPayload!
   addVenuePhoto(
     """Never a URL (ADR 0003 §C3)."""
     publicId: String!
@@ -3324,6 +3327,11 @@ type Mutation {
   chat R14 — you are typing in this conversation; the other side sees "typing…" for a few seconds. Best-effort and silent: always true. Send at most every 3 seconds.
   """
   setTyping(conversationId: ID!): Boolean!
+
+  """
+  portal R6 — moves an application on. Kept in its history with who did it.
+  """
+  setVendorStatus(id: ID!, status: VendorStatus!): VendorApplicationPayload!
   setVenueBookingPolicy(input: VenueBookingPolicyInput!, venueId: ID!): VenueBookingSetupPayload!
 
   """
@@ -3361,6 +3369,11 @@ type Mutation {
   partnerships R1–R5 — the partnership form, sent. No sign-in. Stores one application for every category picked, emails the applicant a confirmation and tells the PL4Y team.
   """
   submitPartnershipApplication(input: SubmitPartnershipApplicationInput!): SubmitPartnershipApplicationPayload!
+
+  """
+  vendors R1–R5 — the PL4Y Shop vendor form, sent. No sign-in. Emails the seller and tells the team.
+  """
+  submitVendorApplication(input: SubmitVendorApplicationInput!): SubmitVendorApplicationPayload!
   suspendPayoutAccount(id: ID!, reason: String!): PayoutAccountPayload!
 
   """The owner hands over to an active member and becomes an admin (R5)."""
@@ -4679,6 +4692,19 @@ type Query {
   The badge. Never derive it from the feed, which is only ever the first page.
   """
   unreadNotificationCount: Int!
+  vendorApplication(id: ID!): VendorApplication
+
+  """
+  portal — PL4Y Shop seller applications, newest first. At most 100 a page.
+  """
+  vendorApplications(filter: VendorFilterInput, limit: Int = 50, offset: Int = 0): VendorApplicationPage!
+
+  """
+  portal — every application matching the filter (5,000 at most), as CSV.
+  """
+  vendorApplicationsCsv(filter: VendorFilterInput): String!
+  vendorCities: [String!]!
+  vendorStatusCounts: [VendorStatusCount!]!
   venue(id: ID!): Venue
 
   """
@@ -5396,6 +5422,29 @@ type SubmitPartnershipApplicationPayload {
   userError: PartnershipFormError
 }
 
+input SubmitVendorApplicationInput {
+  """R3 — a UUID the form makes once per attempt."""
+  clientToken: ID!
+  consent: Boolean!
+
+  """Step 3 answers, by key."""
+  fulfilment: JSONObject!
+
+  """Step 2 answers, by key."""
+  products: JSONObject!
+
+  """Step 1 answers, by key (R2)."""
+  seller: JSONObject!
+
+  """R5 — the hidden field. Left empty by people."""
+  trap: String
+}
+
+type SubmitVendorApplicationPayload {
+  receipt: VendorReceipt
+  userError: VendorFormError
+}
+
 type SupportMessage {
   body: String!
   createdAt: DateTime!
@@ -5676,6 +5725,165 @@ type UserError {
   code: String!
   message: String!
   retryAfterSeconds: Int
+}
+
+"""
+One question as the seller answered it. Unanswered questions are left out.
+"""
+type VendorAnswer {
+  key: String!
+  label: String!
+  text: String
+}
+
+"""vendors R1 — one submission of the PL4Y Shop vendor form."""
+type VendorApplication {
+  city: String!
+
+  """In words."""
+  commercialModel: String!
+
+  """pending, sent or failed (R4)."""
+  confirmationEmail: String!
+  consentedAt: DateTime!
+  contactEmail: String!
+  contactName: String!
+
+  """WhatsApp number."""
+  contactPhone: String!
+  createdAt: DateTime!
+
+  """The store, or the person for an individual."""
+  displayName: String!
+
+  """In words."""
+  gstStatus: String!
+
+  """Oldest first."""
+  history: [VendorStatusChange!]!
+  id: ID!
+
+  """Newest first."""
+  notes: [VendorNote!]!
+  reference: String!
+
+  """Seller, products, fulfilment — as answered."""
+  sections: [VendorSection!]!
+  sellerType: VendorSellerType!
+  sellerTypeLabel: String!
+  sports: [VendorSport!]!
+
+  """In words; "Other" carries what the seller typed."""
+  sportsLabel: String!
+  status: VendorStatus!
+  storeName: String
+  updatedAt: DateTime!
+}
+
+type VendorApplicationPage {
+  items: [VendorApplication!]!
+  total: Int!
+}
+
+type VendorApplicationPayload {
+  application: VendorApplication
+  userError: UserError
+}
+
+input VendorFilterInput {
+  city: String
+
+  """Store, contact name, email, phone or reference."""
+  search: String
+  sport: VendorSport
+  status: VendorStatus
+}
+
+"""A user error that may name the question it is about."""
+type VendorFormError {
+  code: String!
+
+  """The question, as `step.key`: `seller.email`, `fulfilment.gstin`."""
+  field: String
+  message: String!
+  retryAfterSeconds: Int
+}
+
+"""R6 — staff only. Never shown to the seller."""
+type VendorNote {
+  author: VendorStaff
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+}
+
+"""
+vendors R3 — what the seller is shown once their application is stored.
+"""
+type VendorReceipt {
+  reference: String!
+  storeName: String!
+  submittedAt: DateTime!
+}
+
+type VendorSection {
+  answers: [VendorAnswer!]!
+  title: String!
+}
+
+enum VendorSellerType {
+  BRAND
+  DISTRIBUTOR
+  INDIVIDUAL
+  RETAILER
+}
+
+enum VendorSport {
+  BADMINTON
+  BASKETBALL
+  CRICKET
+  CYCLING
+  FITNESS
+  FOOTBALL
+  OTHER
+  PADEL
+  PICKLEBALL
+  RUNNING
+  SQUASH
+  SWIMMING
+  TABLE_TENNIS
+  TENNIS
+  VOLLEYBALL
+}
+
+type VendorStaff {
+  displayName: String!
+  id: ID!
+}
+
+"""
+vendors R6 — where PL4Y is with a shop seller application. Submitting makes it NEW.
+"""
+enum VendorStatus {
+  APPROVED
+  MORE_INFO_NEEDED
+  NEW
+  REJECTED
+  REVIEWING
+}
+
+type VendorStatusChange {
+  at: DateTime!
+
+  """Null for the submission itself."""
+  by: VendorStaff
+  from: VendorStatus
+  to: VendorStatus!
+}
+
+type VendorStatusCount {
+  count: Int!
+  status: VendorStatus!
 }
 
 type Venue {

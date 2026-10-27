@@ -11,10 +11,12 @@ import { logger } from './platform/logging/index.js';
 import { config } from './platform/config.js';
 import { disconnectDb } from './platform/db.js';
 import { closeQueues } from './platform/queue.js';
+import { installProcessGuards } from './platform/processGuards.js';
 import { createApp } from './app.js';
 import { startWorkers } from './worker.js';
 
 async function main(): Promise<void> {
+  installProcessGuards();
   const { app, apollo } = await createApp();
   const server = app.listen(config.PORT, () => {
     logger.info({ port: config.PORT, env: config.NODE_ENV }, 'PL4Y API + worker listening');

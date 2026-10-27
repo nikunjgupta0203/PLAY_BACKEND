@@ -27,6 +27,7 @@ import { tournament } from './modules/tournament/index.js';
 import { notifications } from './modules/notifications/index.js';
 import { notify } from './notify.js';
 import { AUTO_DRAW_RETRY_MS, autoDrawCategory } from './autoDraw.js';
+import { installProcessGuards } from './platform/processGuards.js';
 
 /** Registered by topic. Dispatch is at-least-once, so handlers are idempotent. */
 type OutboxHandler = (payload: Record<string, unknown>) => Promise<void>;
@@ -1072,6 +1073,7 @@ export async function startWorkers(): Promise<() => void> {
 }
 
 async function main(): Promise<void> {
+  installProcessGuards();
   const stopDrain = await startWorkers();
 
   const shutdown = (signal: string) => {

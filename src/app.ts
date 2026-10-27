@@ -30,6 +30,7 @@ import { pusherAuthRoute } from './platform/realtime/auth.js';
 import { buildContext, type Ctx } from './graphql/context.js';
 import { enableReadCache, withRequestCache } from './platform/requestCache.js';
 import { schema } from './schema.js';
+import { installProcessGuards } from './platform/processGuards.js';
 
 export async function createApp() {
   for (const warning of silentTransports()) logger.warn(warning);
@@ -164,6 +165,7 @@ export async function createApp() {
 }
 
 async function main(): Promise<void> {
+  installProcessGuards();
   const { app, apollo } = await createApp();
   const server = app.listen(config.PORT, () => {
     logger.info(

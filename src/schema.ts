@@ -26,6 +26,7 @@ import './modules/games/schema/index.js';
 import './modules/communities/schema/index.js';
 import './modules/communities/schema/staff.js';
 import './modules/partnerships/schema/index.js';
+import './modules/vendors/schema/index.js';
 import './modules/admin/schema/index.js';
 import './modules/admin/schema/queues.js';
 import './modules/admin/schema/records.js';

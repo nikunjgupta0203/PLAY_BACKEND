@@ -266,11 +266,19 @@ export function createQueueRuntime(
           const rows = await store.claim(name, free);
           claimed = rows.length;
           for (const row of rows) {
-            const p: Promise<void> = run(row).finally(() => {
-              running.delete(p);
-              // A slot came free: look again soon rather than after a long idle wait.
-              if (idleMs > pollMs) kick();
-            });
+            // run() can still reject when the database drops mid-bookkeeping
+            // (store.fail on an expired lease). Catch it here: an uncaught
+            // rejection would kill the whole process, API included. The job
+            // keeps its lease and is retried once that runs out.
+            const p: Promise<void> = run(row)
+              .catch((err: unknown) => {
+                logger.error({ queue: name, jobId: String(row.id), job: row.name, err }, 'job bookkeeping failed');
+              })
+              .finally(() => {
+                running.delete(p);
+                // A slot came free: look again soon rather than after a long idle wait.
+                if (idleMs > pollMs) kick();
+              });
             running.add(p);
           }
         } catch (err) {

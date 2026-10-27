@@ -145,6 +145,8 @@ model User {
   partnershipsAssigned    PartnershipApplication[]  @relation("partnershipAssignee")
   partnershipNotes        PartnershipNote[]         @relation("partnershipNoteAuthor")
   partnershipStatusMoves  PartnershipStatusChange[] @relation("partnershipStatusChanger")
+  vendorNotes             VendorNote[]              @relation("vendorNoteAuthor")
+  vendorStatusMoves       VendorStatusChange[]      @relation("vendorStatusChanger")
 
   /// profile.search() matches display names with ILIKE '%q%', which only a
   /// trigram index can serve. The column stays owned by identity.
@@ -2191,4 +2193,79 @@ model PartnershipStatusChange {
 
   @@index([applicationId, createdAt])
   @@map("partnership_status_changes")
+}
+
+/// vendors R1 — one submission of the PL4Y Shop vendor form. Search and filter
+/// columns are copied out of the three answer documents.
+model VendorApplication {
+  id                String   @id @db.Uuid
+  /// What the seller is shown and quotes back: "SHOP-7KQ3MD".
+  reference         String   @unique
+  /// R3 — the form's own id for one attempt. A second submit with it returns the first row.
+  clientToken       String   @unique @map("client_token") @db.Uuid
+  /// brand | retailer | distributor | individual. CHECK in the migration.
+  sellerType        String   @map("seller_type")
+  /// Null only for an individual who gave none.
+  storeName         String?  @map("store_name")
+  contactName       String   @map("contact_name")
+  contactEmail      String   @map("contact_email") @db.Citext
+  /// The WhatsApp number.
+  contactPhone      String   @map("contact_phone")
+  city              String
+  sports            String[]
+  /// registered | applied | not_registered.
+  gstStatus         String   @map("gst_status")
+  /// commission | vendor_plan | unsure.
+  commercialModel   String   @map("commercial_model")
+  seller            Json     @default("{}")
+  products          Json     @default("{}")
+  fulfilment        Json     @default("{}")
+  consentedAt       DateTime @map("consented_at") @db.Timestamptz(6)
+  /// R6 — see VENDOR_STATUSES. CHECK in the migration.
+  status            String   @default("new")
+  /// R4 — pending | sent | failed. A failure never loses the application.
+  confirmationEmail String   @default("pending") @map("confirmation_email")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  notes   VendorNote[]
+  history VendorStatusChange[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([contactEmail])
+  @@index([contactPhone])
+  @@index([sports], type: Gin)
+  @@map("vendor_applications")
+}
+
+/// vendors R6 — staff's own notes on an application. Never shown to the seller.
+model VendorNote {
+  id            String   @id @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  authorId      String   @map("author_id") @db.Uuid
+  body          String
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  application VendorApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  author      User              @relation("vendorNoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([applicationId, createdAt])
+  @@map("vendor_notes")
+}
+
+/// vendors R6 — every status an application has been in. The first row is the submission.
+model VendorStatusChange {
+  id            String   @id @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  fromStatus    String?  @map("from_status")
+  toStatus      String   @map("to_status")
+  byUserId      String?  @map("by_user_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  application VendorApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  by          User?             @relation("vendorStatusChanger", fields: [byUserId], references: [id])
+
+  @@index([applicationId, createdAt])
+  @@map("vendor_status_changes")
 }

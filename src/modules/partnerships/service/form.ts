@@ -50,7 +50,7 @@ export interface Field {
   /** For choice and multi: [value, label]. */
   options?: readonly (readonly [string, string])[];
   /** Asked only when another answer in the same step (or entry) matches. */
-  when?: { key: string; equals?: string | boolean; includes?: string };
+  when?: { key: string; equals?: string | boolean; includes?: string; in?: readonly string[] };
   /** For repeat. */
   fields?: readonly Field[];
   /** For repeat: at least this many entries (when the field is asked). */

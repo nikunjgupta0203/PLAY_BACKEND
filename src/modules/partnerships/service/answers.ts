@@ -41,6 +41,7 @@ export function asked(field: Field, answers: Record<string, unknown>): boolean {
   if (!field.when) return true;
   const other = answers[field.when.key];
   if (field.when.includes !== undefined) return Array.isArray(other) && other.includes(field.when.includes);
+  if (field.when.in !== undefined) return typeof other === 'string' && field.when.in.includes(other);
   return other === field.when.equals;
 }
 
