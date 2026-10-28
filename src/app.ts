@@ -142,6 +142,9 @@ export async function createApp() {
     cors({
       origin: config.CORS_ORIGINS.length > 0 ? config.CORS_ORIGINS : true,
       credentials: true,
+      // Browsers (the portal, the web forms) may reuse a preflight for 2 hours
+      // (Chrome's cap) instead of sending one before every request.
+      maxAge: 7200,
     }),
     expressMiddleware(apollo, {
       context: async ({ req }) => buildContext({ req }),

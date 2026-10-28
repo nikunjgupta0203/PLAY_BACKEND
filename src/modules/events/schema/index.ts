@@ -444,11 +444,11 @@ builder.node(EventRef, {
     }),
     organizer: t.field({
       type: OrganizerSummaryRef,
-      resolve: async (e) => {
+      resolve: async (e, _args, ctx) => {
         // org R4 — an organisation's event shows the organisation, not a person.
+        // Speed — through request loaders, so a list of events asks once, not once per card.
         if (e.organizerProfileId) {
-          const { organisations } = await import('../../organizers/index.js');
-          const org = await organisations.findById(e.organizerProfileId);
+          const org = await ctx.loaders.organisation.load(e.organizerProfileId);
           if (org) {
             return {
               id: org.id,
@@ -458,8 +458,7 @@ builder.node(EventRef, {
             };
           }
         }
-        const { identity } = await import('../../identity/index.js');
-        const [user] = await identity.usersByIds([e.organizerId]);
+        const user = await ctx.loaders.userBrief.load(e.organizerId);
         return {
           id: e.organizerId,
           displayName: user?.displayName ?? '',

@@ -406,8 +406,13 @@ builder.queryFields((t) => ({
         }),
         db.event.count({ where }),
       ]);
-      const found = await Promise.all(rows.slice(0, first).map((r) => events.findById(r.id)));
-      return { nodes: found.filter((e): e is Event => e !== null), hasNextPage: rows.length > first, total };
+      const ids = rows.slice(0, first).map((r) => r.id);
+      const found = await events.findByIds(ids);
+      return {
+        nodes: ids.map((id) => found.get(id)).filter((e): e is Event => e !== undefined),
+        hasNextPage: rows.length > first,
+        total,
+      };
     },
   }),
 

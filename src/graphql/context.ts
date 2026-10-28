@@ -16,6 +16,7 @@ import type { GeoPoint } from '../platform/geo.js';
 import type { Registration } from '../modules/registration/index.js';
 import type { PublicProfile } from '../modules/profile/index.js';
 import type { ChatMessage, ConversationView } from '../modules/chat/index.js';
+import type { Organisation } from '../modules/organizers/index.js';
 import { logger } from '../platform/logging/index.js';
 
 export interface Loaders {
@@ -45,6 +46,10 @@ export interface Loaders {
   chatLastMessage: DataLoader<string, ChatMessage | null>;
   /** Speed — an inbox page's unread counts in one query. */
   chatUnread: DataLoader<ConversationView, number, string>;
+  /** Speed — every card's organisation in one query (org R4: an organisation's event shows it). */
+  organisation: DataLoader<string, Organisation | null>;
+  /** Speed — names and avatars for every person on screen in one query. */
+  userBrief: DataLoader<string, { id: string; displayName: string; avatarPublicId: string | null } | null>;
 }
 
 export interface Ctx {
@@ -126,6 +131,15 @@ function buildLoaders(actor: Actor | null): Loaders {
       },
       { cacheKeyFn: (v) => `${v.viewerId}:${v.id}` },
     ),
+    organisation: new DataLoader(async (ids) => {
+      const { organisations } = await import('../modules/organizers/index.js');
+      const found = new Map((await organisations.byIds([...ids])).map((o) => [o.id, o]));
+      return ids.map((id) => found.get(id) ?? null);
+    }),
+    userBrief: new DataLoader(async (ids) => {
+      const found = new Map((await identity.usersByIds([...ids])).map((u) => [u.id, u]));
+      return ids.map((id) => found.get(id) ?? null);
+    }),
   };
 }
 

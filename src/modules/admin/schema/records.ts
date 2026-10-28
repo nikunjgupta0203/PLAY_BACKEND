@@ -8,6 +8,7 @@
  * person", not for exports.
  */
 import { Prisma } from '@prisma/client';
+import DataLoader from 'dataloader';
 import { builder, clampFirst } from '../../../graphql/builder.js';
 import { requirePlatformStaff } from '../../../graphql/staff.js';
 import { db } from '../../../platform/db.js';
@@ -34,6 +35,34 @@ async function sportNames(ids: readonly string[]): Promise<Map<string, string>> 
 async function venueNames(ids: readonly string[]): Promise<Map<string, string>> {
   const rows = await db.venue.findMany({ where: { id: { in: [...new Set(ids)] } }, select: { id: true, name: true } });
   return new Map(rows.map((v) => [v.id, v.name]));
+}
+
+async function joinedCounts(gameIds: readonly string[]): Promise<Map<string, number>> {
+  const rows = await db.gameParticipant.groupBy({
+    by: ['gameId'],
+    where: { gameId: { in: [...new Set(gameIds)] }, status: 'joined' },
+    _count: { _all: true },
+  });
+  return new Map(rows.map((r) => [r.gameId, r._count._all]));
+}
+
+/**
+ * Speed — one query per kind of lookup for a whole page of rows, not one per row.
+ * Loaders live with the request (the context object) and die with it.
+ */
+const perRequest = new WeakMap<object, Map<string, DataLoader<string, unknown>>>();
+function batched<V>(ctx: object, name: string, load: (ids: readonly string[]) => Promise<Map<string, V>>): DataLoader<string, V | null> {
+  let mine = perRequest.get(ctx);
+  if (!mine) perRequest.set(ctx, (mine = new Map()));
+  let loader = mine.get(name) as DataLoader<string, V | null> | undefined;
+  if (!loader) {
+    loader = new DataLoader<string, V | null>(async (ids) => {
+      const found = await load(ids);
+      return ids.map((id) => found.get(id) ?? null);
+    });
+    mine.set(name, loader as DataLoader<string, unknown>);
+  }
+  return loader;
 }
 
 // --- a player's record (gap A6) ---------------------------------------------------------
@@ -256,18 +285,19 @@ export const AdminGameRef = builder.objectRef<GameRow>('AdminGame').implement({
   fields: (t) => ({
     id: t.exposeID('id'),
     hostId: t.exposeID('hostUserId'),
-    hostName: t.string({ resolve: async (g) => (await namesOf([g.hostUserId])).get(g.hostUserId) ?? 'Player' }),
-    sportName: t.string({ resolve: async (g) => (await sportNames([g.sportId])).get(g.sportId) ?? '' }),
+    hostName: t.string({ resolve: async (g, _a, ctx) => (await batched(ctx, 'userName', namesOf).load(g.hostUserId)) ?? 'Player' }),
+    sportName: t.string({ resolve: async (g, _a, ctx) => (await batched(ctx, 'sportName', sportNames).load(g.sportId)) ?? '' }),
     venueId: t.id({ nullable: true, resolve: (g) => g.venueId }),
     place: t.string({
       description: 'The venue’s name, else what the host typed.',
-      resolve: async (g) => (g.venueId ? ((await venueNames([g.venueId])).get(g.venueId) ?? g.placeName) : g.placeName) ?? '',
+      resolve: async (g, _a, ctx) =>
+        (g.venueId ? ((await batched(ctx, 'venueName', venueNames).load(g.venueId)) ?? g.placeName) : g.placeName) ?? '',
     }),
     city: t.exposeString('city'),
     startsAt: t.field({ type: 'DateTime', resolve: (g) => g.startsAt }),
     endsAt: t.field({ type: 'DateTime', resolve: (g) => g.endsAt }),
     maxPlayers: t.exposeInt('maxPlayers'),
-    joinedCount: t.int({ resolve: (g) => db.gameParticipant.count({ where: { gameId: g.id, status: 'joined' } }) }),
+    joinedCount: t.int({ resolve: async (g, _a, ctx) => (await batched(ctx, 'joinedCount', joinedCounts).load(g.id)) ?? 0 }),
     skillBand: t.string({ nullable: true, resolve: (g) => g.skillBand }),
     notes: t.string({ nullable: true, resolve: (g) => g.notes }),
     status: t.exposeString('status', { description: 'open | full | cancelled | completed' }),
