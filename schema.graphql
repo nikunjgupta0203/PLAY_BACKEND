@@ -706,6 +706,179 @@ type Capacity {
   taken: Int!
 }
 
+"""
+One question as the applicant answered it. Unanswered questions are left out.
+"""
+type CareerAnswer {
+  key: String!
+  label: String!
+  text: String
+}
+
+"""careers R1 — one submission of the careers form."""
+type CareerApplication {
+  city: String!
+
+  """The college an ambassador represents, else the organisation."""
+  college: String!
+
+  """pending, sent or failed (R4)."""
+  confirmationEmail: String!
+  consentedAt: DateTime!
+  createdAt: DateTime!
+  email: String!
+  fullName: String!
+  hasResume: Boolean!
+
+  """Oldest first."""
+  history: [CareerStatusChange!]!
+  id: ID!
+  instagram: String
+  linkedin: String
+
+  """Newest first."""
+  notes: [CareerNote!]!
+  opportunity: CareerOpportunity!
+  opportunityTitle: String!
+  organisation: String!
+
+  """Other applications from the same email."""
+  others: [CareerApplication!]!
+  phone: String!
+  reference: String!
+  resumeName: String
+
+  """Basic information, then the opportunity’s answers."""
+  sections: [CareerSection!]!
+  status: CareerStatus!
+  statusChangedAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type CareerApplicationPage {
+  items: [CareerApplication!]!
+  total: Int!
+}
+
+type CareerApplicationPayload {
+  application: CareerApplication
+  userError: UserError
+}
+
+type CareerCount {
+  count: Int!
+  opportunity: CareerOpportunity!
+  status: CareerStatus!
+}
+
+input CareerFilterInput {
+  opportunity: CareerOpportunity
+
+  """Name, email, phone, city, college / organisation or reference."""
+  search: String
+  status: CareerStatus
+}
+
+"""A user error that may name the question it is about."""
+type CareerFormError {
+  code: String!
+
+  """The question, as `section.key`: `basic.email`, `answers.reach`."""
+  field: String
+  message: String!
+  retryAfterSeconds: Int
+}
+
+"""R7 — staff only. Never shown to the applicant."""
+type CareerNote {
+  author: CareerStaff
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+}
+
+enum CareerOpportunity {
+  CAMPUS_AMBASSADOR
+  SALES_INTERNSHIP
+}
+
+"""
+careers R3 — what the applicant is shown once their application is stored.
+"""
+type CareerReceipt {
+  fullName: String!
+  opportunity: CareerOpportunity!
+  opportunityTitle: String!
+  reference: String!
+  submittedAt: DateTime!
+}
+
+input CareerResumeInput {
+  """The file name, as the applicant had it."""
+  name: String!
+
+  """The public_id Cloudinary returned for the upload."""
+  publicId: String!
+}
+
+type CareerResumeLinkPayload {
+  """Works for five minutes."""
+  url: String
+  userError: UserError
+}
+
+"""
+careers R5 — POST the PDF to `uploadUrl` as multipart form data with `file` and every field here (api_key, timestamp, signature, public_id, folder, upload_preset, type). Send the returned public_id back on submit.
+"""
+type CareerResumeUpload {
+  apiKey: String!
+  cloudName: String!
+  expiresAt: DateTime!
+  folder: String!
+  publicId: String!
+  signature: String!
+  timestamp: Int!
+  type: String!
+  uploadPreset: String!
+  uploadUrl: String!
+}
+
+type CareerResumeUploadPayload {
+  upload: CareerResumeUpload
+  userError: UserError
+}
+
+type CareerSection {
+  answers: [CareerAnswer!]!
+  title: String!
+}
+
+type CareerStaff {
+  displayName: String!
+  id: ID!
+}
+
+"""
+careers R7 — where PL4Y is with an application. Submitting makes it NEW.
+"""
+enum CareerStatus {
+  INTERVIEW
+  NEW
+  REJECTED
+  SELECTED
+  SHORTLISTED
+  UNDER_REVIEW
+}
+
+type CareerStatusChange {
+  at: DateTime!
+
+  """Null for the submission itself."""
+  by: CareerStaff
+  from: CareerStatus
+  to: CareerStatus!
+}
+
 type CategoryAnalytics {
   """Started but never paid (hold expired or payment failed)."""
   abandoned: Int!
@@ -2615,6 +2788,9 @@ type Mutation {
   Where the team becomes real, and therefore where a seat is taken — or, when the draw filled meanwhile, where the team joins the waitlist (R17).
   """
   acceptPartnerInvite(token: String!): RegistrationPayload!
+
+  """portal R7 — a note for the team. The applicant never sees it."""
+  addCareerNote(body: String!, id: ID!): CareerApplicationPayload!
   addCourt(input: CourtInput!, venueId: ID!): CourtPayload!
   addCourtBlackout(
     input: CourtBlackoutInput!
@@ -2847,6 +3023,11 @@ type Mutation {
   registration R9 — after the cancellation cutoff this refunds nothing but still returns the slot to the draw.
   """
   cancelRegistration(registrationId: ID!): RegistrationPayload!
+
+  """
+  careers R5 — a signature for ONE private PDF upload, straight to Cloudinary. No sign-in; limited per IP.
+  """
+  careerResumeUpload(clientToken: ID!): CareerResumeUploadPayload!
 
   """
   registration R10, F13 — open from two hours before the start until the end. Staff on the event check anyone in; an entrant checks themselves in only within a kilometre of the event (send `at`, the phone location).
@@ -3092,6 +3273,11 @@ type Mutation {
   Organizer staff only. Sends `message` (1–500 characters, plain text) to every confirmed entrant as a notification — feed row and push. At most 5 an hour per event.
   """
   messageEventPlayers(eventId: ID!, message: String!): MessageEventPlayersPayload!
+
+  """
+  portal R5 — a download link for the applicant’s resume that expires in five minutes.
+  """
+  openCareerResume(id: ID!): CareerResumeLinkPayload!
   openSupportTicket(input: SupportTicketInput!): SupportTicketPayload!
 
   """
@@ -3304,6 +3490,11 @@ type Mutation {
   sendMessage(input: SendMessageInput!): SendMessagePayload!
   setAvatar(publicId: String!): ProfilePayload!
 
+  """
+  portal R7 — moves an application on. Kept in its history with who did it and when.
+  """
+  setCareerStatus(id: ID!, status: CareerStatus!): CareerApplicationPayload!
+
   """The owner makes a member an admin, or an admin a member."""
   setCommunityRole(communityId: ID!, playerId: ID!, role: CommunityRole!): CommunityPayload!
   setContactPhone(phone: String): ViewerPayload!
@@ -3363,6 +3554,11 @@ type Mutation {
 
   """Opens the point log. Idempotent on a live match."""
   startMatch(firstServer: MatchSide, matchId: ID!): MatchPayload!
+
+  """
+  careers R1–R6 — the careers form, sent. No sign-in. Emails the applicant and tells the team.
+  """
+  submitCareerApplication(input: SubmitCareerApplicationInput!): SubmitCareerApplicationPayload!
   submitMatchResult(input: SubmitMatchResultInput!): MatchResultPayload!
 
   """
@@ -4448,6 +4644,18 @@ type Query {
   portal — find people by email, name, phone or id, newest first. With a status and no search, everyone in that status.
   """
   adminUsers(first: Int, offset: Int, search: String!, status: AdminUserStatus): AdminUserPage!
+  careerApplication(id: ID!): CareerApplication
+
+  """portal — careers applications, newest first. At most 100 a page."""
+  careerApplications(filter: CareerFilterInput, limit: Int = 50, offset: Int = 0): CareerApplicationPage!
+
+  """
+  portal — every application matching the filter (5,000 at most), as CSV.
+  """
+  careerApplicationsCsv(filter: CareerFilterInput): String!
+
+  """Every opportunity × status, zeros included."""
+  careerCounts: [CareerCount!]!
 
   """
   registration R13 — every confirmed entry, for scanning offline. Any staff grant on the event. Check-ins made offline replay through `checkInByToken`.
@@ -5371,6 +5579,30 @@ type StatsSnapshot {
   """0-1. Zero when nothing has been played."""
   winRate: Float!
   wins: Int!
+}
+
+input SubmitCareerApplicationInput {
+  """The opportunity’s own answers, by key."""
+  answers: JSONObject!
+
+  """Basic details, by key (R2)."""
+  basic: JSONObject!
+
+  """R3 — a UUID the form makes once per attempt."""
+  clientToken: ID!
+  consent: Boolean!
+  opportunity: CareerOpportunity!
+
+  """R5 — optional."""
+  resume: CareerResumeInput
+
+  """R6 — the hidden field. Left empty by people."""
+  trap: String
+}
+
+type SubmitCareerApplicationPayload {
+  receipt: CareerReceipt
+  userError: CareerFormError
 }
 
 """

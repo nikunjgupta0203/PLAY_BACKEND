@@ -108,6 +108,11 @@ export const configSchema = z.object({
     .string()
     .default('')
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  /** careers R4 — who hears about a new careers application. Comma-separated; empty uses PARTNERSHIP_NOTIFY_EMAILS. */
+  CAREER_NOTIFY_EMAILS: z
+    .string()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
   /** The admin portal's origin, for links in staff email ("Open in the portal"). Empty leaves the link out. */
   PORTAL_URL: z.string().default(''),
 

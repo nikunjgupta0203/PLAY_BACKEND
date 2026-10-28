@@ -147,6 +147,8 @@ model User {
   partnershipStatusMoves  PartnershipStatusChange[] @relation("partnershipStatusChanger")
   vendorNotes             VendorNote[]              @relation("vendorNoteAuthor")
   vendorStatusMoves       VendorStatusChange[]      @relation("vendorStatusChanger")
+  careerNotes             CareerNote[]              @relation("careerNoteAuthor")
+  careerStatusMoves       CareerStatusChange[]      @relation("careerStatusChanger")
 
   /// profile.search() matches display names with ILIKE '%q%', which only a
   /// trigram index can serve. The column stays owned by identity.
@@ -2268,4 +2270,77 @@ model VendorStatusChange {
 
   @@index([applicationId, createdAt])
   @@map("vendor_status_changes")
+}
+
+/// careers R1 — one submission of the careers form (Campus Ambassador Program or Sales Internship).
+model CareerApplication {
+  id                String   @id @db.Uuid
+  /// What the applicant is shown and quotes back: "CA-7K2Q9M", "SI-…".
+  reference         String   @unique
+  /// R3 — the form's own id for one attempt. A second submit with it returns the first row.
+  clientToken       String   @unique @map("client_token") @db.Uuid
+  /// campus_ambassador | sales_internship. CHECK in the migration.
+  opportunity       String
+  fullName          String   @map("full_name")
+  email             String   @db.Citext
+  phone             String
+  city              String
+  /// College, university or current organisation.
+  organisation      String
+  /// The basic-details answers (form.ts BASIC).
+  basic             Json     @default("{}")
+  /// The opportunity's own answers (form.ts QUESTIONS).
+  answers           Json     @default("{}")
+  /// R5 — a private raw Cloudinary file. Never a URL.
+  resumePublicId    String?  @map("resume_public_id")
+  resumeName        String?  @map("resume_name")
+  consentedAt       DateTime @map("consented_at") @db.Timestamptz(6)
+  /// R7 — see CAREER_STATUSES. CHECK in the migration.
+  status            String   @default("new")
+  /// R7, R8 — when the status last changed. Retention counts from here.
+  statusChangedAt   DateTime @map("status_changed_at") @db.Timestamptz(6)
+  /// R4 — pending | sent | failed. A failure never loses the application.
+  confirmationEmail String   @default("pending") @map("confirmation_email")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  notes   CareerNote[]
+  history CareerStatusChange[]
+
+  @@index([opportunity, status, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([email])
+  @@index([statusChangedAt])
+  @@map("career_applications")
+}
+
+/// careers R7 — staff's own notes on an application. Never shown to the applicant.
+model CareerNote {
+  id            String   @id @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  authorId      String   @map("author_id") @db.Uuid
+  body          String
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  application CareerApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  author      User              @relation("careerNoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([applicationId, createdAt])
+  @@map("career_notes")
+}
+
+/// careers R7 — every status an application has been in, and when. The first row is the submission.
+model CareerStatusChange {
+  id            String   @id @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  fromStatus    String?  @map("from_status")
+  toStatus      String   @map("to_status")
+  byUserId      String?  @map("by_user_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  application CareerApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  by          User?             @relation("careerStatusChanger", fields: [byUserId], references: [id])
+
+  @@index([applicationId, createdAt])
+  @@map("career_status_changes")
 }

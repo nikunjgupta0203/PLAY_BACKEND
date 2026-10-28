@@ -612,6 +612,8 @@ const SCHEDULES: [string, string, string][] = [
   [QUEUES.maintenance, 'detect-fraud-signals', '0 22 * * *'],
   // admin R7 — resolved tickets nobody reopened for a week close.
   [QUEUES.maintenance, 'close-stale-tickets', '40 * * * *'],
+  // careers R8 — applications 12 months past their last status change, nightly.
+  [QUEUES.maintenance, 'purge-career-applications', '50 4 * * *'],
 ];
 
 async function registerSchedules(): Promise<void> {
@@ -1043,6 +1045,12 @@ export async function startWorkers(): Promise<() => void> {
         const { admin } = await import('./modules/admin/index.js');
         const count = await admin.closeStaleTickets();
         if (count > 0) logger.info({ count }, 'closed stale support tickets');
+        return;
+      }
+      case 'purge-career-applications': {
+        const { careers } = await import('./modules/careers/index.js');
+        const count = await careers.purge();
+        if (count > 0) logger.info({ count }, 'deleted career applications past retention');
         return;
       }
       default:

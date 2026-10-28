@@ -49,6 +49,8 @@ export const folders = {
   partnershipRoot: (clientToken: string) => `pl4y/partners/${clientToken}`,
   /** communities — a community's cover, checked against this root the same way. */
   communityRoot: (communityId: string) => `pl4y/communities/${communityId}`,
+  /** careers R5 — one attempt at the careers form: its resume, stored private. */
+  careerRoot: (clientToken: string) => `pl4y/careers/${clientToken}`,
 };
 
 export interface UploadSignature {
@@ -154,5 +156,112 @@ export async function destroy(publicId: string, now = new Date()): Promise<void>
   }
 }
 
-export const cloudinary = { TRANSFORMS, folders, signUpload, url, destroy };
+// --- private documents (careers resumes) -------------------------------------
+//
+// A resume is personal data, so it is never a public asset: it is uploaded as
+// a `raw` file of type `private`, which Cloudinary serves only through a
+// signed, expiring download link made here for signed-in staff.
+
+const KEYS = ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'] as const;
+
+export interface PrivateUploadSignature {
+  cloudName: string;
+  apiKey: string;
+  timestamp: number;
+  publicId: string;
+  folder: string;
+  uploadPreset: string;
+  /** Always "private". Sent with the file; it is part of the signature. */
+  type: 'private';
+  signature: string;
+  uploadUrl: string;
+  expiresAt: Date;
+}
+
+/** Like signUpload, for one private raw file (a PDF). The caller checks the public_id that comes back. */
+export function signPrivateUpload(opts: { publicId: string; folder: string; now?: Date; ttlSeconds?: number }): PrivateUploadSignature {
+  requireKeys('Cloudinary', [...KEYS, 'CLOUDINARY_UPLOAD_PRESET']);
+  const now = opts.now ?? new Date();
+  const ttl = opts.ttlSeconds ?? 600;
+  const timestamp = Math.floor(now.getTime() / 1000);
+  const params = {
+    folder: opts.folder,
+    public_id: opts.publicId,
+    timestamp,
+    type: 'private',
+    upload_preset: config.CLOUDINARY_UPLOAD_PRESET,
+  };
+  return {
+    cloudName: config.CLOUDINARY_CLOUD_NAME,
+    apiKey: config.CLOUDINARY_API_KEY,
+    timestamp,
+    publicId: opts.publicId,
+    folder: opts.folder,
+    uploadPreset: config.CLOUDINARY_UPLOAD_PRESET,
+    type: 'private',
+    signature: sign(params),
+    uploadUrl: `https://api.cloudinary.com/v1_1/${config.CLOUDINARY_CLOUD_NAME}/raw/upload`,
+    expiresAt: new Date(now.getTime() + ttl * 1000),
+  };
+}
+
+/** A download link for a private raw file that stops working after `ttlSeconds`. */
+export function privateDownloadUrl(publicId: string, opts: { ttlSeconds?: number; now?: Date } = {}): string {
+  requireKeys('Cloudinary', [...KEYS]);
+  const now = opts.now ?? new Date();
+  const timestamp = Math.floor(now.getTime() / 1000);
+  const params = { public_id: publicId, type: 'private', timestamp, expires_at: timestamp + (opts.ttlSeconds ?? 300) };
+  const query = new URLSearchParams({
+    ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+    api_key: config.CLOUDINARY_API_KEY,
+    signature: sign(params),
+  });
+  return `https://api.cloudinary.com/v1_1/${config.CLOUDINARY_CLOUD_NAME}/raw/download?${query.toString()}`;
+}
+
+const adminAuth = () => `Basic ${Buffer.from(`${config.CLOUDINARY_API_KEY}:${config.CLOUDINARY_API_SECRET}`).toString('base64')}`;
+
+/**
+ * The size of a private raw file, or null when Cloudinary has no such file.
+ * Throws when Cloudinary cannot be asked (network, outage): the caller decides.
+ */
+export async function privateFileBytes(publicId: string): Promise<number | null> {
+  requireKeys('Cloudinary', [...KEYS]);
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${config.CLOUDINARY_CLOUD_NAME}/resources/raw/private/${publicId.split('/').map(encodeURIComponent).join('/')}`,
+    { headers: { authorization: adminAuth() } },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Cloudinary lookup failed: ${res.status}`);
+  const body = (await res.json()) as { bytes?: number };
+  return typeof body.bytes === 'number' ? body.bytes : null;
+}
+
+/** Deletes a private raw file. Gone already counts as done. */
+export async function destroyPrivate(publicId: string, now = new Date()): Promise<void> {
+  requireKeys('Cloudinary', [...KEYS]);
+  const timestamp = Math.floor(now.getTime() / 1000);
+  const params = { public_id: publicId, timestamp, type: 'private' };
+  const body = new URLSearchParams({
+    public_id: publicId,
+    timestamp: String(timestamp),
+    type: 'private',
+    api_key: config.CLOUDINARY_API_KEY,
+    signature: sign(params),
+  });
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${config.CLOUDINARY_CLOUD_NAME}/raw/destroy`, { method: 'POST', body });
+  if (!res.ok) throw new Error(`Cloudinary destroy failed: ${res.status} ${await res.text()}`);
+}
+
+export const cloudinary = {
+  TRANSFORMS,
+  folders,
+  signUpload,
+  url,
+  destroy,
+  signPrivateUpload,
+  privateDownloadUrl,
+  privateFileBytes,
+  destroyPrivate,
+};
 export type Cloudinary = typeof cloudinary;
