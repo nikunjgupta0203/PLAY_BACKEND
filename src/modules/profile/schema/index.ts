@@ -149,6 +149,16 @@ const MatchResultSummaryRef = builder.objectRef<MatchHistoryRow>('MatchResultSum
       resolve: (r) => (r.eventId ? events.findById(r.eventId) : null),
     }),
     won: t.exposeBoolean('won'),
+    drawn: t.boolean({ description: 'A casual match that ended level. `won` is false.', resolve: (r) => r.drawn }),
+    gameId: t.id({
+      nullable: true,
+      description: 'games R19 — the casual game this match was played in. Null for a tournament match.',
+      resolve: async (r) => {
+        if (r.eventId) return null;
+        const { gameResults } = await import('../../games/index.js');
+        return (await gameResults.confirmedById(r.matchId))?.gameId ?? null;
+      },
+    }),
     outcome: t.field({ type: MatchHistoryOutcomeEnum, resolve: (r) => r.outcome }),
     games: t.field({
       type: [PlayerGameScoreRef],
@@ -245,14 +255,23 @@ const AnalyticsPersonRef = builder.objectRef<AnalyticsPerson>('AnalyticsPerson')
 
 const PlayerAnalyticsRef = builder.objectRef<PlayerAnalytics>('PlayerAnalytics').implement({
   description:
-    "profile R16 — one sport's numbers over a period, from the match history. " +
-    'Casual games are not in it: they never count toward the record.',
+    "profile R16 — one sport's numbers over a period, from the match history: " +
+    'tournament matches and confirmed casual-game results alike (every match is ranked).',
   fields: (t) => ({
     sport: t.field({ type: SportRef, resolve: (a) => sport.byId(a.sportId) }),
     since: t.field({ type: 'DateTime', nullable: true, resolve: (a) => a.since }),
     played: t.exposeInt('played'),
     wins: t.exposeInt('wins'),
     losses: t.exposeInt('losses'),
+    draws: t.exposeInt('draws', { description: 'Casual matches that ended level.' }),
+    pointsFor: t.exposeInt('pointsFor', {
+      description: 'Points (or games, or goals) scored in the period, summed over every game of every match.',
+    }),
+    pointsAgainst: t.exposeInt('pointsAgainst', { description: 'Points conceded, counted the same way.' }),
+    recent: t.stringList({
+      description: 'The last ten results, oldest first: "won", "lost" or "drawn".',
+      resolve: (a) => a.recent,
+    }),
     winRate: t.float({ nullable: true, resolve: (a) => a.winRate }),
     previousWinRate: t.float({
       nullable: true,
@@ -524,7 +543,7 @@ builder.queryFields((t) => ({
   players: t.connection(
     {
       type: PlayerProfileRef,
-      description: 'Player search by display name. Private profiles never appear.',
+      description: 'Player search by display name. Every active player is listed, A–Z; a blank query lists them all. Visibility only withholds details.',
       args: {
         query: t.arg.string({ required: true }),
         sportId: t.arg.id(),

@@ -73,14 +73,13 @@ export function autoConfirmFor(input: { submittedAt: Date; eventEndsAt: Date; ro
 }
 
 /**
- * F5, F26 — whether a confirmed result says anything about how the players
- * play. One a player submitted that confirmed only because nobody answered
- * was never witnessed by anyone neutral.
+ * F26, as changed by the v1.0 issue list ("every match is ranked") — every
+ * confirmed result is rated, including one that confirmed itself because the
+ * other side stayed silent after being told and reminded. The one exception is
+ * a dispute nobody ever settled (gap #20): that score is one side's claim.
  */
 export function isRatable(result: { confirmedVia: string | null; submitterRole: string }): boolean {
-  // gap #20 — a dispute closed by default was never decided by anyone.
-  if (result.confirmedVia === 'default') return false;
-  return !(result.confirmedVia === 'auto' && result.submitterRole === 'player');
+  return result.confirmedVia !== 'default';
 }
 
 /** R14 — half the window, so the reminder always leaves time to act on it. */

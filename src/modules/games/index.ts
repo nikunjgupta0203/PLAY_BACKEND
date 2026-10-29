@@ -3,7 +3,7 @@ import { db } from '../../platform/db.js';
 import { consume } from '../../platform/rateLimit.js';
 import { UserError } from '../../platform/errors/index.js';
 import { createGamesRepo } from './repo/index.js';
-import { createGamesService } from './service/index.js';
+import { createGamesService, GameCode, type MatchFormat } from './service/index.js';
 import { createGameResults, ResultCode, type UnitScore } from './service/results.js';
 
 export const games = createGamesService({
@@ -18,6 +18,7 @@ export const games = createGamesService({
       const { sport } = await import('../sport/index.js');
       return sport.hasSkillBand(sportId, key);
     },
+    checkFormat: (sportId, format) => checkFormatFor(sportId, format, GameCode.INVALID_GAME),
   },
   venues: {
     async findById(venueId) {
@@ -70,6 +71,49 @@ export async function matchRuleOf(sportId: string) {
 /** "game 2 (11–10) is not a finished game" → a sentence a player reads. */
 const sentence = (reason: string): string => `${reason.charAt(0).toUpperCase()}${reason.slice(1).replace(/\.$/, '')}.`;
 
+/** games R18 — a format held to the sport's rule. Null when the sport has none to choose (one final score). */
+async function checkFormatFor(sportId: string, format: MatchFormat, code: string): Promise<MatchFormat | null> {
+  const rule = await matchRuleOf(sportId);
+  const { checkFormat, formatOptions, ScoringInputError } = await import('../scoring/index.js');
+  if (!rule || !formatOptions(rule)) return null;
+  try {
+    return checkFormat(rule, format);
+  } catch (err) {
+    if (err instanceof ScoringInputError) throw new UserError(code, sentence(err.message));
+    throw err;
+  }
+}
+
+/**
+ * games R18 — the rule a casual match is held to: the sport's, with the
+ * players' format in (or the sport's usual format, which still drops a game's
+ * points cap). Null for a sport with no match rule.
+ */
+export async function effectiveRuleOf(sportId: string, format: MatchFormat | null) {
+  const rule = await matchRuleOf(sportId);
+  if (!rule) return null;
+  const { defaultFormat, withFormat } = await import('../scoring/index.js');
+  return withFormat(rule, format ?? defaultFormat(rule));
+}
+
+/** games R18 — what one unit of a match is called: game, set, frame, map… Null when the sport has no format to choose. */
+export async function matchUnitOf(sportId: string): Promise<string | null> {
+  const rule = await matchRuleOf(sportId);
+  if (!rule) return null;
+  const { formatOptions } = await import('../scoring/index.js');
+  if (!formatOptions(rule)) return null;
+  return rule.kind === 'rally' ? 'game' : rule.kind === 'sets' ? 'set' : rule.kind === 'series' ? rule.unitName : null;
+}
+
+/** The format a game is played to: its own, or the sport's usual. Null when the sport has none to choose. */
+export async function formatOf(sportId: string, format: MatchFormat | null): Promise<MatchFormat | null> {
+  const rule = await matchRuleOf(sportId);
+  if (!rule) return null;
+  const { defaultFormat, formatOptions } = await import('../scoring/index.js');
+  if (!formatOptions(rule)) return null;
+  return format ?? defaultFormat(rule);
+}
+
 export const gameResults = createGameResults({
   db,
   games: { byId: (gameId) => games.byId(gameId) },
@@ -77,10 +121,12 @@ export const gameResults = createGameResults({
     async supported(sportId) {
       return (await matchRuleOf(sportId)) !== null;
     },
-    async judge(sportId, units: UnitScore[]) {
+    async judge(sportId, units: UnitScore[], format) {
       const { casualWinnerOf, ScoringInputError } = await import('../scoring/index.js');
       try {
-        return casualWinnerOf(units, await ruleOf(sportId));
+        const rule = await ruleOf(sportId);
+        const played = await formatOf(sportId, format);
+        return casualWinnerOf(units, (await effectiveRuleOf(sportId, played)) ?? rule, played);
       } catch (err) {
         if (err instanceof ScoringInputError) throw new UserError(ResultCode.INVALID_RESULT, sentence(err.message));
         throw err;
@@ -90,6 +136,7 @@ export const gameResults = createGameResults({
       const rule = await ruleOf(sportId);
       return rule.kind === 'bouts' ? rule.finishes : [];
     },
+    checkFormat: (sportId, format) => checkFormatFor(sportId, format, ResultCode.INVALID_RESULT),
   },
   users: {
     async namesByIds(ids) {
@@ -121,6 +168,6 @@ export {
   effectiveStatus,
   gameCursor,
 } from './service/index.js';
-export type { Game, GameComment, GameInput, GamePatch, GameStatus, GamesService } from './service/index.js';
+export type { Game, GameComment, GameInput, GamePatch, GameStatus, GamesService, MatchFormat } from './service/index.js';
 export { RESULT_AUTO_CONFIRM_MS, RESULTS_OPEN_AFTER_MS, ResultCode } from './service/results.js';
 export type { GameResult, GameResultsService, Tally } from './service/results.js';

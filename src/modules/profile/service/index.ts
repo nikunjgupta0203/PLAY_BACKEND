@@ -157,6 +157,8 @@ export interface MatchHistoryRow {
   partnerIds: string[];
   opponentIds: string[];
   won: boolean;
+  /** A casual match that ended level (games R19). `won` is false. */
+  drawn: boolean;
   outcome: MatchHistoryOutcome;
   /** Games (rally) or sets, as `for` this player and `against`. Empty for a walkover. */
   games: { for: number; against: number }[];
@@ -168,6 +170,8 @@ export interface MatchHistoryRow {
 export interface SportPort {
   byId(sportId: string): Promise<{ id: string }>;
   hasSkillBand(sportId: string, key: string): Promise<boolean>;
+  /** The sport's levels, lowest first. Optional: without it a played sport is not added to a profile. */
+  skillBandsFor?(sportId: string): Promise<{ key: string; sortOrder: number }[]>;
 }
 
 /**
@@ -201,7 +205,8 @@ export interface MatchFacts {
   eventId: string | null;
   completedAt: Date;
   outcome: MatchHistoryOutcome;
-  winnerRegistrationId: string;
+  /** Null for a level casual match: a draw. */
+  winnerRegistrationId: string | null;
   sides: [{ registrationId: string; userIds: string[] }, { registrationId: string; userIds: string[] }];
   games: { a: number; b: number }[];
 }
@@ -788,6 +793,7 @@ export function createProfileService(deps: ProfileDeps) {
           partnerIds: true,
           opponentIds: true,
           won: true,
+          drawn: true,
           outcome: true,
           games: true,
           completedAt: true,
@@ -988,9 +994,10 @@ export function createProfileService(deps: ProfileDeps) {
     const rows = await db.playerMatchHistory.findMany({
       where: { playerId, sportId },
       orderBy: [{ completedAt: 'desc' }, { matchId: 'asc' }],
-      select: { won: true, eventId: true },
+      select: { won: true, drawn: true, eventId: true },
     });
     const wins = rows.filter((r) => r.won).length;
+    const draws = rows.filter((r) => r.drawn).length;
     let currentStreak = 0;
     for (const r of rows) {
       if (!r.won) break;
@@ -1001,7 +1008,7 @@ export function createProfileService(deps: ProfileDeps) {
       sportId,
       matchesPlayed: rows.length,
       wins,
-      losses: rows.length - wins,
+      losses: rows.length - wins - draws,
       winRate: rows.length === 0 ? 0 : wins / rows.length,
       currentStreak,
       tournamentsPlayed: new Set(rows.map((r) => r.eventId).filter((id) => id !== null)).size,
@@ -1039,7 +1046,8 @@ export function createProfileService(deps: ProfileDeps) {
       rows = facts.sides.flatMap((side, index) => {
         const mine = idsOf(side);
         const theirs = idsOf(facts.sides[index === 0 ? 1 : 0]);
-        const won = side.registrationId === facts.winnerRegistrationId;
+        const drawn = facts.winnerRegistrationId === null;
+        const won = !drawn && side.registrationId === facts.winnerRegistrationId;
         const games = facts.games.map((g) =>
           index === 0 ? { for: g.a, against: g.b } : { for: g.b, against: g.a },
         );
@@ -1051,6 +1059,7 @@ export function createProfileService(deps: ProfileDeps) {
           partnerIds: mine.filter((id) => id !== playerId),
           opponentIds: theirs,
           won,
+          drawn,
           outcome: facts.outcome,
           games,
           completedAt: facts.completedAt,
@@ -1067,10 +1076,38 @@ export function createProfileService(deps: ProfileDeps) {
       }
     });
 
+    // Every match is ranked (games R19): a sport a player has played is on
+    // their profile, so its rating, ranking and analytics have somewhere to
+    // live. One they never chose is added at the lowest self-rated level.
+    await ensureSports(rows);
+
     const touched = new Map<string, { playerId: string; sportId: string }>();
     for (const r of [...before, ...rows]) touched.set(`${r.playerId}|${r.sportId}`, r);
     for (const t of touched.values()) await refreshStats(t.playerId, t.sportId);
     for (const playerId of new Set(rows.map((r) => r.playerId))) await awardMatchBadges(playerId);
+  }
+
+  async function ensureSports(rows: { playerId: string; sportId: string }[]): Promise<void> {
+    if (rows.length === 0 || !sport.skillBandsFor) return;
+    const sportIds = [...new Set(rows.map((r) => r.sportId))];
+    const have = await db.playerSport.findMany({
+      where: { playerId: { in: [...new Set(rows.map((r) => r.playerId))] }, sportId: { in: sportIds } },
+      select: { playerId: true, sportId: true },
+    });
+    const held = new Set(have.map((h) => `${h.playerId}|${h.sportId}`));
+    const missing = rows.filter((r) => !held.has(`${r.playerId}|${r.sportId}`));
+    if (missing.length === 0) return;
+    const lowest = new Map<string, string>();
+    for (const sportId of new Set(missing.map((m) => m.sportId))) {
+      const bands = [...(await sport.skillBandsFor(sportId))].sort((a, b) => a.sortOrder - b.sortOrder);
+      if (bands[0]) lowest.set(sportId, bands[0].key);
+    }
+    await db.playerSport.createMany({
+      data: missing
+        .filter((m) => lowest.has(m.sportId))
+        .map((m) => ({ playerId: m.playerId, sportId: m.sportId, skillBand: lowest.get(m.sportId)! })),
+      skipDuplicates: true,
+    });
   }
 
   const encodeHistoryCursor = (r: { completedAt: Date; matchId: string }): string =>
@@ -1092,6 +1129,7 @@ export function createProfileService(deps: ProfileDeps) {
     partnerIds: string[];
     opponentIds: string[];
     won: boolean;
+    drawn: boolean;
     outcome: string;
     games: Prisma.JsonValue;
     completedAt: Date;
@@ -1144,9 +1182,12 @@ export function createProfileService(deps: ProfileDeps) {
   // --- search ----------------------------------------------------------------
 
   /**
-   * Player search. Private profiles never appear, and players_only profiles
-   * appear only to a signed-in viewer: R4's "not distinguishable from missing"
-   * applies to discovery as much as to a direct read.
+   * Player search. Every registered player with an active account is listed
+   * for everyone (v1.0 issue list #6): no filter by visibility, city, rating or
+   * connection. Visibility still decides what the card shows — a private or
+   * players-only profile is listed by name and photo, with its details withheld
+   * (toPublic), exactly as on its own page. `sportId` narrows only when the
+   * viewer picks a sport.
    *
    * Ordered and paged on (display_name, id) so the cursor stays stable when two
    * players share a name (conventions.md §4).
@@ -1162,12 +1203,10 @@ export function createProfileService(deps: ProfileDeps) {
     // A blank query browses every visible player, A–Z (issue log 2026-10-06 #8).
     const term = opts.query.trim();
 
-    const visible: Visibility[] = opts.viewerUserId ? ['public', 'players_only'] : ['public'];
     const cursor = opts.after ? decodeCursor(opts.after) : null;
 
     const rows = await db.playerProfile.findMany({
       where: {
-        visibility: { in: visible },
         // identity R19 — only active accounts are discoverable.
         user: { status: 'active', ...(term ? { displayName: { contains: term, mode: 'insensitive' as const } } : {}) },
         ...(opts.sportId ? { sports: { some: { sportId: opts.sportId } } } : {}),

@@ -18,9 +18,11 @@ import {
   type GamesService,
 } from '../src/modules/games/service/index.js';
 import { createIdentityService } from '../src/modules/identity/service/index.js';
+import { createProfileService, type MatchFacts } from '../src/modules/profile/service/index.js';
+import { usersPortFor, FakeMedia } from './helpers/modules.js';
 import { FOOTBALL, PICKLEBALL, RUNNING, seedSport, TENNIS } from '../src/modules/sport/seed.js';
 import { UserError } from '../src/platform/errors/index.js';
-import { casualWinnerOf, ScoringInputError } from '../src/modules/scoring/engine.js';
+import { casualWinnerOf, checkFormat, defaultFormat, ScoringInputError, withFormat } from '../src/modules/scoring/engine.js';
 import {
   createGameResults,
   RESULT_AUTO_CONFIRM_MS,
@@ -108,6 +110,14 @@ beforeEach(async () => {
     sport: {
       findById: (id) => modules.sport.byId(id).catch(() => null),
       hasSkillBand: (id, key) => modules.sport.hasSkillBand(id, key),
+      checkFormat: async (id, format) => {
+        try {
+          return checkFormat(await modules.sport.scoringRuleFor(id), format);
+        } catch (err) {
+          if (err instanceof ScoringInputError) throw new UserError(GameCode.INVALID_GAME, err.message);
+          throw err;
+        }
+      },
     },
     venues: { findById: (id) => modules.venues.findById(id) },
     users: {
@@ -137,10 +147,20 @@ beforeEach(async () => {
         const rule = await ruleOf(id);
         return rule.kind !== 'performance' && rule.kind !== 'scorecard';
       },
-      // The real judge: held to the seeded sport's own rule.
-      judge: async (id, units) => {
+      // The real judge: held to the match format (R18) over the seeded sport's own rule.
+      judge: async (id, units, format) => {
         try {
-          return casualWinnerOf(units, await ruleOf(id));
+          const rule = await ruleOf(id);
+          const played = format ?? defaultFormat(rule);
+          return casualWinnerOf(units, withFormat(rule, played), played);
+        } catch (err) {
+          if (err instanceof ScoringInputError) throw new UserError(ResultCode.INVALID_RESULT, err.message);
+          throw err;
+        }
+      },
+      checkFormat: async (id, format) => {
+        try {
+          return checkFormat(await ruleOf(id), format);
         } catch (err) {
           if (err instanceof ScoringInputError) throw new UserError(ResultCode.INVALID_RESULT, err.message);
           throw err;
@@ -512,7 +532,7 @@ describe('games — discover and my games', () => {
   });
 });
 
-describe('games — results (unranked matches)', () => {
+describe('games — results', () => {
   /** A doubles game of four that started 90 minutes ago, so results are open. */
   async function played(over: Partial<GameInput> = {}) {
     const host = await user('Asha');
@@ -698,5 +718,122 @@ describe('games — results (unranked matches)', () => {
     expect(
       await codeOf(() => results.add(host, { gameId: game.id, sideA: [host.userId], sideB: [b.userId], games: [{ a: 11, b: 8 }] })),
     ).toBe(ResultCode.RESULTS_CLOSED);
+  });
+});
+
+describe('games — every match is ranked (v1.0 issues #1–#3, games R18, R19)', () => {
+  async function played(over: Partial<GameInput> = {}) {
+    const host = await user('Asha');
+    const b = await user('Bina');
+    const game = await games.create(host, input({ maxPlayers: 2, ...over }));
+    await games.join(b, game.id);
+    clock = new Date(game.startsAt.getTime() + 90 * MIN);
+    return { game, host, b };
+  }
+  const singles = (g: Awaited<ReturnType<typeof played>>, scores: { a: number; b: number }[]) => ({
+    gameId: g.game.id,
+    sideA: [g.host.userId],
+    sideB: [g.b.userId],
+    games: scores,
+  });
+
+  it('R18: the host chooses the points and the number of games; the sport only fills in the default', async () => {
+    const g = await played({ matchFormat: { pointsToWin: 15, games: 5, bestOf: true } });
+    expect((await games.byId(g.game.id)).matchFormat).toEqual({ pointsToWin: 15, games: 5, bestOf: true });
+
+    // Games are held to 15, not the sport's 11 — and there is no cap at 15.
+    expect((await results.add(g.host, singles(g, [{ a: 15, b: 9 }]))).winner).toBe('a');
+    expect((await results.add(g.host, singles(g, [{ a: 18, b: 16 }]))).winner).toBe('a');
+    expect(await codeOf(() => results.add(g.host, singles(g, [{ a: 11, b: 9 }])))).toBe(ResultCode.INVALID_RESULT);
+    // Best of five: three straight ends it.
+    expect(
+      await codeOf(() =>
+        results.add(g.host, singles(g, [{ a: 15, b: 1 }, { a: 15, b: 2 }, { a: 15, b: 3 }, { a: 1, b: 15 }])),
+      ),
+    ).toBe(ResultCode.INVALID_RESULT);
+
+    // Numbers that are not a match are refused when the game is made.
+    expect(await codeOf(() => games.create(g.host, input({ matchFormat: { pointsToWin: 0, games: 3, bestOf: true } })))).toBe(
+      GameCode.INVALID_GAME,
+    );
+  });
+
+  it('R18: one match may be played to its own format — exactly four games may end level', async () => {
+    const g = await played();
+    const own = { pointsToWin: 21, games: 4, bestOf: false };
+    const r = await results.add(g.host, {
+      ...singles(g, [{ a: 21, b: 10 }, { a: 21, b: 12 }, { a: 10, b: 21 }, { a: 12, b: 21 }]),
+      format: own,
+    });
+    expect(r.winner).toBeNull();
+    expect(r.matchFormat).toEqual(own);
+  });
+
+  it('R19: a confirmed result is announced for rating and match history, in the same transaction', async () => {
+    const g = await played();
+    const r = await results.add(g.host, singles(g, [{ a: 11, b: 7 }]));
+    expect(await prisma.outbox.count({ where: { topic: 'game_result.confirmed' } })).toBe(0);
+    await results.confirm(g.b, r.id);
+    const sent = await prisma.outbox.findMany({ where: { topic: 'game_result.confirmed' } });
+    expect(sent.map((o) => (o.payload as { resultId: string }).resultId)).toEqual([r.id]);
+
+    // One confirmed by silence is announced by the sweep.
+    const quiet = await results.add(g.host, singles(g, [{ a: 7, b: 11 }]));
+    clock = new Date(clock.getTime() + RESULT_AUTO_CONFIRM_MS + MIN);
+    expect(await results.sweep()).toBe(1);
+    expect(await prisma.outbox.count({ where: { topic: 'game_result.confirmed' } })).toBe(2);
+
+    // The rating port sees both, in order.
+    const week = await results.confirmedBetween(sportId, new Date(0), new Date(clock.getTime() + HOUR));
+    expect(week.map((w) => w.id)).toEqual([r.id, quiet.id]);
+    expect((await results.confirmedById(r.id))?.winner).toBe('a');
+  });
+
+  it('R19: match history takes a casual result — a draw is a draw, and a sport never chosen is added', async () => {
+    const g = await played();
+    const db = prisma as unknown as Db;
+    const [pa, pb] = await Promise.all(
+      [g.host.userId, g.b.userId].map((u) => prisma.$transaction((tx) => modules.profile.createFor(tx as never, u))),
+    );
+    // As the production wiring does (profile/index.ts): a casual result is facts like any match.
+    const profile = createProfileService({
+      db,
+      sport: modules.sport,
+      users: usersPortFor(prisma),
+      media: new FakeMedia(),
+      matches: {
+        async factsFor(id): Promise<MatchFacts | null> {
+          const r = await results.confirmedById(id);
+          if (!r) return null;
+          return {
+            matchId: id,
+            sportId: r.sportId,
+            eventId: null,
+            completedAt: r.playedAt,
+            outcome: 'played',
+            winnerRegistrationId: r.winner,
+            sides: [
+              { registrationId: 'a', userIds: r.sideA },
+              { registrationId: 'b', userIds: r.sideB },
+            ],
+            games: r.games,
+          };
+        },
+      },
+    });
+
+    const r = await results.add(g.host, singles(g, [{ a: 11, b: 5 }, { a: 4, b: 11 }]));
+    await results.confirm(g.b, r.id);
+    await profile.projectMatch(r.id);
+
+    const rows = await prisma.playerMatchHistory.findMany({ where: { matchId: r.id }, orderBy: { playerId: 'asc' } });
+    expect(rows).toHaveLength(2);
+    expect(rows.every((h) => h.drawn && !h.won && h.sportId === sportId && h.eventId === null)).toBe(true);
+    // Neither had chosen pickleball: it is on their profiles now, so a rating has somewhere to go.
+    expect(await prisma.playerSport.count({ where: { sportId, playerId: { in: [pa!, pb!] } } })).toBe(2);
+
+    const a = await profile.analytics(pa!, sportId, { days: null, viewerUserId: null });
+    expect(a).toMatchObject({ played: 1, wins: 0, losses: 0, draws: 1, pointsFor: 15, pointsAgainst: 16, recent: ['drawn'] });
+    expect((await profile.statsSnapshot(pa!, sportId)).losses).toBe(0);
   });
 });

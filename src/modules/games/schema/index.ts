@@ -16,8 +16,8 @@ import { SportRef } from '../../sport/schema/index.js';
 import { sport } from '../../sport/index.js';
 import { VenueRef } from '../../venues/schema/index.js';
 import { GameScoreInput, GameScoreRef, MatchSideEnum, ScoringRuleRef } from '../../scoring/schema/index.js';
-import { gameCursor, gameResults, games, matchRuleOf } from '../index.js';
-import type { Game, GameComment, GameResult, Tally } from '../index.js';
+import { effectiveRuleOf, formatOf, gameCursor, gameResults, games, matchUnitOf } from '../index.js';
+import type { Game, GameComment, GameResult, MatchFormat, Tally } from '../index.js';
 
 const GameStatusEnum = builder.enumType('GameStatus', {
   description: 'OPEN — places left. FULL — every place taken. COMPLETED — its end time has passed, or the host marked it played.',
@@ -28,6 +28,33 @@ const GameStatusEnum = builder.enumType('GameStatus', {
     COMPLETED: { value: 'completed' },
   } as const,
 });
+
+// ─── match format (games R18) ─────────────────────────────────────────────────────
+
+const MatchFormatRef = builder.objectRef<MatchFormat>('MatchFormat').implement({
+  description:
+    'games R18 — how a casual match is played, chosen by the players: the points a game (or set, or map) is played to, ' +
+    'and how many of them. bestOf true = best of N (it stops once a side has won most); false = play exactly N (level is a draw).',
+  fields: (t) => ({
+    pointsToWin: t.exposeInt('pointsToWin', {
+      nullable: true,
+      description: 'Points to win a game (rally), games to win a set (sets), points to win a unit (series). Null where it does not apply.',
+    }),
+    games: t.exposeInt('games', { description: 'Games, sets or units in the match.' }),
+    bestOf: t.exposeBoolean('bestOf'),
+  }),
+});
+
+const MatchFormatInput = builder.inputType('MatchFormatInput', {
+  fields: (t) => ({
+    pointsToWin: t.int({ description: 'Leave out where it does not apply (chess, pool).' }),
+    games: t.int({ required: true }),
+    bestOf: t.boolean({ required: true }),
+  }),
+});
+
+const formatFrom = (f: { pointsToWin?: number | null; games: number; bestOf: boolean } | null | undefined): MatchFormat | null =>
+  f ? { pointsToWin: f.pointsToWin ?? null, games: f.games, bestOf: f.bestOf } : null;
 
 const present = (rows: (PublicProfile | null | Error)[]): PublicProfile[] =>
   rows.filter((r): r is PublicProfile => r !== null && !(r instanceof Error));
@@ -48,7 +75,7 @@ const GameCommentRef = builder.objectRef<GameComment>('GameComment').implement({
 });
 
 const GameRef = builder.objectRef<Game>('Game').implement({
-  description: 'A casual game: no fee, no bracket, no rating. Separate from events.',
+  description: 'A casual game: no fee, no bracket. Its confirmed results are ranked (games R19). Separate from events.',
   fields: (t) => ({
     id: t.exposeID('id'),
     sport: t.field({ type: SportRef, resolve: (g) => sport.byId(g.sportId) }),
@@ -191,6 +218,7 @@ const CreateGameInput = builder.inputType('CreateGameInput', {
     minPlayers: t.int(),
     skillBand: t.string(),
     notes: t.string(),
+    matchFormat: t.field({ type: MatchFormatInput, description: 'games R18 — leave out for the sport’s usual format.' }),
     inviteUserIds: t.idList({ description: 'Players to invite as the game is published. Player ids.' }),
   }),
 });
@@ -210,6 +238,7 @@ const UpdateGameInput = builder.inputType('UpdateGameInput', {
     minPlayers: t.int({ description: 'Null clears the minimum.' }),
     skillBand: t.string({ description: 'Null clears it.' }),
     notes: t.string({ description: 'Null clears them.' }),
+    matchFormat: t.field({ type: MatchFormatInput, description: 'games R18 — null goes back to the sport’s usual format.' }),
   }),
 });
 
@@ -334,6 +363,7 @@ builder.mutationFields((t) => ({
             minPlayers: i.minPlayers ?? null,
             skillBand: i.skillBand ?? null,
             notes: i.notes ?? null,
+            matchFormat: formatFrom(i.matchFormat),
           },
           { inviteUserIds },
         ),
@@ -362,6 +392,7 @@ builder.mutationFields((t) => ({
           ...(i.minPlayers !== undefined ? { minPlayers: i.minPlayers } : {}),
           ...(i.skillBand !== undefined ? { skillBand: i.skillBand } : {}),
           ...(i.notes !== undefined ? { notes: i.notes } : {}),
+          ...(i.matchFormat !== undefined ? { matchFormat: formatFrom(i.matchFormat) } : {}),
         }),
       );
       return { game: data, userError };
@@ -449,7 +480,7 @@ builder.mutationFields((t) => ({
   }),
 }));
 
-// ─── results: the "unranked matches" (games R12–R17) ────────────────────────────────
+// ─── results (games R12–R19) — every match is ranked ───────────────────────────────
 
 const GameResultStatusEnum = builder.enumType('GameResultStatus', {
   description:
@@ -464,7 +495,7 @@ const GameResultStatusEnum = builder.enumType('GameResultStatus', {
 
 const GameResultRef = builder.objectRef<GameResult>('GameResult').implement({
   description:
-    'One match played inside a casual game. Unranked: it never moves a rating, a ranking or a badge.',
+    'One match played inside a casual game. Ranked: once confirmed it moves ratings and rankings and counts in match history and analytics.',
   fields: (t) => ({
     id: t.exposeID('id'),
     gameId: t.exposeID('gameId'),
@@ -512,6 +543,12 @@ const GameResultRef = builder.objectRef<GameResult>('GameResult').implement({
       description: 'The viewer is on the side that did not enter it, and it is still waiting.',
       resolve: (r, _args, ctx) => gameResults.viewerCan(r, ctx.actor?.userId ?? null).confirm,
     }),
+    matchFormat: t.field({
+      type: MatchFormatRef,
+      nullable: true,
+      description: 'games R18 — the format it was entered under, when it had its own. Null = the game’s.',
+      resolve: (r) => r.matchFormat,
+    }),
     viewerCanRemove: t.boolean({
       description: 'The viewer entered it and nobody has confirmed it.',
       resolve: (r, _args, ctx) => gameResults.viewerCan(r, ctx.actor?.userId ?? null).remove,
@@ -542,14 +579,50 @@ builder.objectFields(GameRef, (t) => ({
       'games R14 — how this sport is scored, so the result form can speak it (games to 11, sets, goals…). ' +
       'Null when the sport has no rule, or is scored in heats (a race, a scorecard): it has no result form.',
     resolve: async (g) => {
-      const rule = await matchRuleOf(g.sportId);
+      // games R18 — the sport's rule with this game's format in, so the form counts to the players' numbers.
+      const rule = await effectiveRuleOf(g.sportId, g.matchFormat);
       return rule ? { kind: rule.kind, definition: JSON.stringify(rule) } : null;
     },
+  }),
+  matchFormat: t.field({
+    type: MatchFormatRef,
+    nullable: true,
+    description:
+      'games R18 — the format this game is played to: the host’s choice, or the sport’s usual. ' +
+      'Null when the sport is played to one final score (football, cricket, a bout) or in heats.',
+    resolve: (g) => formatOf(g.sportId, g.matchFormat),
+  }),
+  sportFormat: t.field({
+    type: MatchFormatRef,
+    nullable: true,
+    description: 'games R18 — the sport’s usual format, to offer as the default.',
+    resolve: (g) => formatOf(g.sportId, null),
+  }),
+  matchUnit: t.string({
+    nullable: true,
+    description: 'games R18 — what one unit of a match is called: game, set, frame, map. Null when there is no format.',
+    resolve: (g) => matchUnitOf(g.sportId),
+  }),
+}));
+
+builder.objectFields(SportRef, (t) => ({
+  matchFormat: t.field({
+    type: MatchFormatRef,
+    nullable: true,
+    description:
+      'games R18 — the usual format of a casual match in this sport, which the players may change. ' +
+      'Null when it is played to one final score (football, cricket, a bout) or in heats.',
+    resolve: (s) => formatOf(s.id, null),
+  }),
+  matchUnit: t.string({
+    nullable: true,
+    description: 'games R18 — what one unit of a match is called: game, set, frame, map.',
+    resolve: (s) => matchUnitOf(s.id),
   }),
 }));
 
 const TallyRef = builder.objectRef<Tally>('UnrankedTally').implement({
-  description: 'games R16 — across every confirmed unranked result. Separate from the ranked record.',
+  description: 'games R16 — across every confirmed casual result. Kept for older app versions; the same results are in matchHistory.',
   fields: (t) => ({
     played: t.exposeInt('played'),
     won: t.exposeInt('won'),
@@ -595,7 +668,8 @@ const GameResultPayload = builder
 const AddGameResultInput = builder.inputType('AddGameResultInput', {
   description:
     'games R13, R14 — sides are joined players (player ids) and whoever enters it must be on one. ' +
-    'The score is held to the sport’s rule; a casual match may be shorter than the full format, or level.',
+    'The score is held to the match format (games R18): `format` when given, else the game’s, else the sport’s usual. ' +
+    'A casual match may be shorter than the full format, or level.',
   fields: (t) => ({
     gameId: t.id({ required: true }),
     sideA: t.idList({ required: true }),
@@ -603,6 +677,7 @@ const AddGameResultInput = builder.inputType('AddGameResultInput', {
     games: t.field({ type: [GameScoreInput], required: true }),
     finish: t.string({ description: 'A bout that ended early: one of the rule’s finishes. Needs `winner`.' }),
     winner: t.field({ type: MatchSideEnum }),
+    format: t.field({ type: MatchFormatInput, description: 'games R18 — this match’s own format, when it differs from the game’s.' }),
   }),
 });
 
@@ -626,6 +701,7 @@ builder.mutationFields((t) => ({
           games: i.games.map((g) => ({ a: g.a, b: g.b })),
           finish: i.finish ?? null,
           winner: i.winner ?? null,
+          format: formatFrom(i.format),
         }),
       );
       return { result: data, game: data ? await games.findById(gameId) : null, userError };

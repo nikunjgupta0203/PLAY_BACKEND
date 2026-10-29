@@ -517,6 +517,19 @@ const handlers: Record<string, OutboxHandler> = {
     );
   },
 
+  // games R19 — every match is ranked: a confirmed casual result joins match
+  // history (analytics, stats, badges) and moves ratings, like a tournament match.
+  'game_result.confirmed': async (payload) => {
+    const resultId = String(payload['resultId'] ?? '');
+    if (!resultId) return;
+    await profile.projectMatch(resultId);
+    await queue(QUEUES.rating).add(
+      'apply-provisional',
+      { matchId: resultId },
+      { ...defaultJobOptions, attempts: 5, jobId: `apply-provisional-${resultId}` },
+    );
+  },
+
   'rating.changed': async (payload) => {
     await notify.ratingChanged(payload);
   },

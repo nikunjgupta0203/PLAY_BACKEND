@@ -12,6 +12,8 @@ export interface AnalyticsRow {
   partnerIds: string[];
   opponentIds: string[];
   won: boolean;
+  /** A casual match that ended level. `won` is false. Absent = false. */
+  drawn?: boolean;
   outcome: 'played' | 'walkover' | 'retired' | 'forfeit';
   games: { for: number; against: number }[];
   completedAt: Date;
@@ -34,6 +36,11 @@ export interface Analytics {
   played: number;
   wins: number;
   losses: number;
+  /** Casual matches that ended level. Neither a win nor a loss. */
+  draws: number;
+  /** Every point (or game, or goal) scored and conceded in the period, summed over each game of each match. */
+  pointsFor: number;
+  pointsAgainst: number;
   /** 0-1; null when nothing in the period. */
   winRate: number | null;
   /** The same-length period before this one; null for all time or when empty. */
@@ -48,6 +55,8 @@ export interface Analytics {
   allTimeMatches: number;
   /** The last ten results ever, oldest first. True is a win. */
   form: boolean[];
+  /** The same ten, as won / lost / drawn: a draw is not a loss. */
+  recent: ('won' | 'lost' | 'drawn')[];
   /** The last six calendar months, oldest first, whatever the period. */
   months: (Tally & { month: string })[];
   /** Monday first; in the period. */
@@ -114,6 +123,7 @@ export function analyticsFrom(rows: AnalyticsRow[], opts: { now: Date; days: num
 
   let currentStreak = 0;
   for (let i = all.length - 1; i >= 0; i--) {
+    if (all[i]!.drawn) break;
     const won = all[i]!.won;
     if (currentStreak === 0) currentStreak = won ? 1 : -1;
     else if (won === currentStreak > 0) currentStreak += won ? 1 : -1;
@@ -159,6 +169,8 @@ export function analyticsFrom(rows: AnalyticsRow[], opts: { now: Date; days: num
   const partners = new Map<string, PersonTally>();
   const opponents = new Map<string, PersonTally>();
   const events = new Set<string>();
+  let pointsFor = 0;
+  let pointsAgainst = 0;
 
   for (const r of inPeriod) {
     const wd = weekdays[istWeekday(r.completedAt) - 1]!;
@@ -173,6 +185,8 @@ export function analyticsFrom(rows: AnalyticsRow[], opts: { now: Date; days: num
     let gamesFor = 0;
     let gamesAgainst = 0;
     for (const g of r.games) {
+      pointsFor += g.for;
+      pointsAgainst += g.against;
       const margin = g.for - g.against;
       if (margin === 0) continue;
       if (margin > 0) gamesFor += 1;
@@ -195,12 +209,16 @@ export function analyticsFrom(rows: AnalyticsRow[], opts: { now: Date; days: num
   }
 
   const wins = inPeriod.filter((r) => r.won).length;
+  const draws = inPeriod.filter((r) => r.drawn).length;
   return {
     days: opts.days,
     since,
     played: inPeriod.length,
     wins,
-    losses: inPeriod.length - wins,
+    losses: inPeriod.length - wins - draws,
+    draws,
+    pointsFor,
+    pointsAgainst,
     winRate: rate(wins, inPeriod.length),
     previousWinRate,
     currentStreak,
@@ -208,6 +226,7 @@ export function analyticsFrom(rows: AnalyticsRow[], opts: { now: Date; days: num
     events: events.size,
     allTimeMatches: all.length,
     form: all.slice(-FORM_LENGTH).map((r) => r.won),
+    recent: all.slice(-FORM_LENGTH).map((r) => (r.won ? 'won' : r.drawn ? 'drawn' : 'lost')),
     months,
     weekdays,
     activity: [...perDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, matches]) => ({ date, matches })),

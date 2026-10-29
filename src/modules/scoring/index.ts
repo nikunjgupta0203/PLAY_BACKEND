@@ -102,7 +102,19 @@ export const field = createFieldService({
 export { FieldCode, type FieldService, type HeatView } from './service/field.js';
 export type { FieldEvent, FieldRule, FieldState, Standing } from './field.js';
 export { OVERRIDE_AFTER_MS, ScoringCode } from './service/index.js';
-export { applyPoint, casualWinnerOf, initialState, kicksNext, ScoringInputError, winnerOf } from './engine.js';
+export {
+  applyPoint,
+  casualWinnerOf,
+  checkFormat,
+  defaultFormat,
+  formatOptions,
+  initialState,
+  kicksNext,
+  ScoringInputError,
+  winnerOf,
+  withFormat,
+} from './engine.js';
+export type { MatchFormat } from './engine.js';
 export type {
   Access,
   BoutState,

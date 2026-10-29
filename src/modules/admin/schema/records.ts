@@ -256,7 +256,7 @@ interface GameResultRow {
 }
 
 const GameResultRef = builder.objectRef<GameResultRow>('AdminGameResult').implement({
-  description: 'games — a result players entered. Unranked: it counts for no rating.',
+  description: 'games — a result players entered. Ranked once confirmed (games R19).',
   fields: (t) => ({
     id: t.exposeID('id'),
     sideA: t.exposeStringList('sideA', { description: 'Names.' }),

@@ -523,6 +523,117 @@ export function winnerOf(units: GameScore[], rule: ScoringRule): Side | null {
   return tally.a > tally.b ? 'a' : 'b';
 }
 
+// --- a match format the players choose ------------------------------------------
+
+/**
+ * games — how one casual match is played, chosen by the players rather than
+ * fixed by the sport: the points a game (or set, or map) is played to, and how
+ * many of them. `bestOf` true is "best of N" (it stops once a side has won most
+ * of them); false is "play N" (all of them, and level is a draw).
+ */
+export interface MatchFormat {
+  /** Points to win a game (rally), games to win a set (sets), points to win a unit (series). Null where it does not apply. */
+  pointsToWin: number | null;
+  /** Games, sets or units in the match. */
+  games: number;
+  bestOf: boolean;
+}
+
+export const FORMAT_LIMITS = { pointsToWin: [1, 99], games: [1, 15] } as const;
+
+/** Which numbers a player may choose for this kind of rule. Null when the sport has no format to choose (one final score). */
+export function formatOptions(rule: ScoringRule): { points: boolean } | null {
+  switch (rule.kind) {
+    case 'rally':
+    case 'sets':
+      return { points: true };
+    case 'series':
+      return { points: rule.unitScore !== null || rule.unitPointTarget !== null };
+    default:
+      return null;
+  }
+}
+
+/** The sport's usual format, as a starting point the players can change. */
+export function defaultFormat(rule: ScoringRule): MatchFormat | null {
+  switch (rule.kind) {
+    case 'rally':
+      return { pointsToWin: rule.pointsToWin, games: 2 * rule.gamesToWin - 1, bestOf: true };
+    case 'sets':
+      return { pointsToWin: rule.setGamesToWin, games: 2 * rule.setsToWin - 1, bestOf: true };
+    case 'series':
+      return {
+        pointsToWin: rule.unitScore?.pointsToWin ?? rule.unitPointTarget ?? null,
+        games: rule.maxUnits ?? 2 * Math.ceil(rule.unitsToWin) - 1,
+        bestOf: rule.maxUnits === null,
+      };
+    default:
+      return null;
+  }
+}
+
+/** Throws a ScoringInputError when the numbers do not make a match. */
+export function checkFormat(rule: ScoringRule, format: MatchFormat): MatchFormat {
+  const options = formatOptions(rule);
+  if (!options) throw new ScoringInputError('this sport is played to one final score, so it has no format to choose');
+  const [gLo, gHi] = FORMAT_LIMITS.games;
+  if (!Number.isInteger(format.games) || format.games < gLo || format.games > gHi) {
+    throw new ScoringInputError(`the number of games must be from ${gLo} to ${gHi}`);
+  }
+  let pointsToWin: number | null = null;
+  if (options.points && format.pointsToWin !== null) {
+    const [pLo, pHi] = FORMAT_LIMITS.pointsToWin;
+    if (!Number.isInteger(format.pointsToWin) || format.pointsToWin < pLo || format.pointsToWin > pHi) {
+      throw new ScoringInputError(`points to win must be from ${pLo} to ${pHi}`);
+    }
+    pointsToWin = format.pointsToWin;
+  }
+  return { pointsToWin, games: format.games, bestOf: format.bestOf };
+}
+
+/**
+ * The sport's rule with the players' format in. There is no cap on a game's
+ * points: a game is won at the target, by the sport's margin, however long
+ * that takes. A shorter deciding game survives only while the target is the
+ * sport's own and the match is a best-of.
+ */
+export function withFormat(rule: ScoringRule, format: MatchFormat | null): ScoringRule {
+  if (!format || !formatOptions(rule)) return rule;
+  const toWin = Math.floor(format.games / 2) + 1;
+  switch (rule.kind) {
+    case 'rally': {
+      const pointsToWin = format.pointsToWin ?? rule.pointsToWin;
+      const keepDecider = format.bestOf && pointsToWin === rule.pointsToWin && rule.decidingGame;
+      const next: RallyRule = { ...rule, pointsToWin, hardCap: null, gamesToWin: toWin };
+      if (keepDecider) next.decidingGame = { pointsToWin: rule.decidingGame!.pointsToWin, hardCap: null };
+      else delete next.decidingGame;
+      return next;
+    }
+    case 'sets': {
+      const games = format.pointsToWin ?? rule.setGamesToWin;
+      return {
+        ...rule,
+        setGamesToWin: games,
+        setTiebreakAt: rule.setTiebreakAt === null ? null : games,
+        setsToWin: toWin,
+        finalSetMatchTiebreak: format.bestOf ? (rule.finalSetMatchTiebreak ?? null) : null,
+      };
+    }
+    case 'series': {
+      const p = format.pointsToWin;
+      return {
+        ...rule,
+        unitsToWin: format.bestOf ? toWin : format.games,
+        maxUnits: format.games,
+        unitScore: rule.unitScore && p ? { ...rule.unitScore, pointsToWin: p } : rule.unitScore,
+        unitPointTarget: rule.unitPointTarget !== null && p ? p : rule.unitPointTarget,
+      };
+    }
+    default:
+      return rule;
+  }
+}
+
 /**
  * games — the winner a casual result implies, or null for a draw.
  *
@@ -532,7 +643,7 @@ export function winnerOf(units: GameScore[], rule: ScoringRule): Side | null {
  * need not run its full length (one game to 11 is a result) and may end
  * level, so the side with more units wins and equal is a draw.
  */
-export function casualWinnerOf(units: GameScore[], rule: ScoringRule): Side | null {
+export function casualWinnerOf(units: GameScore[], rule: ScoringRule, format: MatchFormat | null = null): Side | null {
   if (units.length === 0) throw new ScoringInputError('a result needs a score');
   for (const u of units) {
     if (!Number.isInteger(u.a) || !Number.isInteger(u.b) || u.a < 0 || u.b < 0) {
@@ -551,17 +662,23 @@ export function casualWinnerOf(units: GameScore[], rule: ScoringRule): Side | nu
 
   const name = rule.kind === 'rally' ? 'game' : rule.kind === 'sets' ? 'set' : rule.unitName;
   const most =
-    rule.kind === 'rally'
+    format?.games ??
+    (rule.kind === 'rally'
       ? 2 * rule.gamesToWin - 1
       : rule.kind === 'sets'
         ? 2 * rule.setsToWin - 1
-        : (rule.maxUnits ?? 2 * rule.unitsToWin - 1);
+        : (rule.maxUnits ?? 2 * rule.unitsToWin - 1));
   if (units.length > most) {
     throw new ScoringInputError(`a match is at most ${most} ${name}${most === 1 ? '' : 's'}`);
   }
+  // Best of N stops once a side has won most of them.
+  const decidedAt = format?.bestOf ? Math.floor(format.games / 2) + 1 : null;
 
   const tally = zero();
   for (const [i, u] of units.entries()) {
+    if (decidedAt !== null && (tally.a >= decidedAt || tally.b >= decidedAt)) {
+      throw new ScoringInputError(`${name} ${i + 1} was played after the match was decided`);
+    }
     if (u.a === u.b) {
       // Only a series whose units can be drawn (a chess game) may be level.
       if (rule.kind === 'series' && rule.allowDraws) continue;

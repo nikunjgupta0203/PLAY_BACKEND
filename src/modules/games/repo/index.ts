@@ -11,6 +11,13 @@ import { kmToMetres, type GeoPoint } from '../../../platform/geo.js';
 
 export type StoredStatus = 'open' | 'full' | 'cancelled' | 'completed';
 
+/** 053 — the format the players chose (scoring MatchFormat). Null = the sport's usual. */
+export interface MatchFormat {
+  pointsToWin: number | null;
+  games: number;
+  bestOf: boolean;
+}
+
 export interface GameRow {
   id: string;
   hostUserId: string;
@@ -27,6 +34,7 @@ export interface GameRow {
   minPlayers: number | null;
   skillBand: string | null;
   notes: string | null;
+  matchFormat: MatchFormat | null;
   status: StoredStatus;
   cancelReason: string | null;
   createdAt: Date;
@@ -50,6 +58,7 @@ export interface NewGame {
   minPlayers: number | null;
   skillBand: string | null;
   notes: string | null;
+  matchFormat: MatchFormat | null;
 }
 
 export interface SearchFilter {
@@ -73,7 +82,7 @@ const COLUMNS = Prisma.sql`
   g.id, g.host_user_id AS "hostUserId", g.sport_id AS "sportId", g.venue_id AS "venueId",
   g.place_name AS "placeName", g.city, g.starts_at AS "startsAt", g.ends_at AS "endsAt",
   g.timezone, g.max_players AS "maxPlayers", g.min_players AS "minPlayers",
-  g.skill_band AS "skillBand", g.notes, g.status, g.cancel_reason AS "cancelReason",
+  g.skill_band AS "skillBand", g.notes, g.match_format AS "matchFormat", g.status, g.cancel_reason AS "cancelReason",
   g.created_at AS "createdAt",
   ST_Y(g.geo::geometry) AS lat, ST_X(g.geo::geometry) AS lng`;
 
@@ -81,11 +90,12 @@ export function createGamesRepo(db: Db) {
   async function insert(tx: Tx, g: NewGame): Promise<void> {
     await tx.$executeRaw`
       INSERT INTO games (id, host_user_id, sport_id, venue_id, geo, place_name, city, starts_at, ends_at,
-                         max_players, min_players, skill_band, notes)
+                         max_players, min_players, skill_band, notes, match_format)
       VALUES (${g.id}::uuid, ${g.hostUserId}::uuid, ${g.sportId}::uuid, ${g.venueId}::uuid,
               ${g.location ? point(g.location) : Prisma.sql`NULL`}, ${g.placeName}, ${g.city},
               ${g.startsAt}, ${g.endsAt}, ${g.maxPlayers}::smallint, ${g.minPlayers}::smallint,
-              ${g.skillBand}, ${g.notes})`;
+              ${g.skillBand}, ${g.notes},
+              ${g.matchFormat ? JSON.stringify(g.matchFormat) : null}::jsonb)`;
     // games R1 — the host is a player from the first moment.
     await tx.gameParticipant.create({ data: { gameId: g.id, userId: g.hostUserId } });
   }

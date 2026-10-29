@@ -1,8 +1,8 @@
 /**
  * games — casual games (docs/modules/12-games.md, "Create Game Flow v2").
  *
- * Someone needs a fourth on Saturday morning. No payment, no approval, no
- * rating: a game is created, people join until it is full, it is played, and
+ * Someone needs a fourth on Saturday morning. No payment, no approval: a
+ * game is created, people join until it is full, it is played, and
  * it completes by itself when its end time passes.
  *
  * Rules, as the tests name them:
@@ -17,13 +17,17 @@
  *   R9  a game is at a listed venue or a pin — never free text alone
  *   R10 one reminder, an hour before the start
  *   R11 invites: the host only, and only to accounts that can be reached
+ *   R18 the host chooses the match format (points to win, best of N or exactly N); null = the sport's usual
  */
+import { Prisma } from '@prisma/client';
 import type { Db, Tx } from '../../../platform/db.js';
 import { UserError, forbidden } from '../../../platform/errors/index.js';
 import { isValidPoint, radiusTooLarge, type GeoPoint } from '../../../platform/geo.js';
 import { newId } from '../../../platform/ids.js';
 import type { LimitResult, Window } from '../../../platform/rateLimit.js';
-import type { GameRow, GamesRepo, StoredStatus } from '../repo/index.js';
+import type { GameRow, GamesRepo, MatchFormat, StoredStatus } from '../repo/index.js';
+
+export type { MatchFormat } from '../repo/index.js';
 
 export const GameCode = {
   GAME_NOT_FOUND: 'GAME_NOT_FOUND',
@@ -72,6 +76,8 @@ export interface GameInput {
   minPlayers?: number | null;
   skillBand?: string | null;
   notes?: string | null;
+  /** R18 — null or absent = the sport's usual format. */
+  matchFormat?: MatchFormat | null;
 }
 
 export type GamePatch = Partial<GameInput>;
@@ -90,6 +96,8 @@ export interface GamesDeps {
   sport: {
     findById(sportId: string): Promise<{ id: string; name: string; active: boolean } | null>;
     hasSkillBand(sportId: string, key: string): Promise<boolean>;
+    /** R18 — the format held to this sport's rule, or a UserError saying why not. Null when the sport has no format to choose. */
+    checkFormat?(sportId: string, format: MatchFormat): Promise<MatchFormat | null>;
   };
   venues: { findById(venueId: string): Promise<{ id: string; name: string; city: string } | null> };
   users: {
@@ -184,6 +192,7 @@ export function createGamesService(deps: GamesDeps) {
     minPlayers: number | null;
     skillBand: string | null;
     notes: string | null;
+    matchFormat: MatchFormat | null;
   }
 
   async function check(input: GameInput, opts: { timeChanged: boolean }): Promise<Checked> {
@@ -231,7 +240,10 @@ export function createGamesService(deps: GamesDeps) {
     const notes = input.notes?.trim() || null;
     if (notes && notes.length > NOTES_MAX) throw invalid(`Notes can be up to ${NOTES_MAX} characters.`);
 
-    return { sportId: sport.id, venueId, placeName, city, location, startsAt, endsAt, maxPlayers, minPlayers, skillBand, notes };
+    const matchFormat =
+      input.matchFormat && deps.sport.checkFormat ? await deps.sport.checkFormat(sport.id, input.matchFormat) : null;
+
+    return { sportId: sport.id, venueId, placeName, city, location, startsAt, endsAt, maxPlayers, minPlayers, skillBand, notes, matchFormat };
   }
 
   // --- reads -------------------------------------------------------------------
@@ -349,6 +361,13 @@ export function createGamesService(deps: GamesDeps) {
       minPlayers: patch.minPlayers === undefined ? before.minPlayers : patch.minPlayers,
       skillBand: patch.skillBand === undefined ? before.skillBand : patch.skillBand,
       notes: patch.notes === undefined ? before.notes : patch.notes,
+      // A new sport is scored its own way: an old format does not carry over unless given again.
+      matchFormat:
+        patch.matchFormat !== undefined
+          ? patch.matchFormat
+          : patch.sportId && patch.sportId !== before.sportId
+            ? null
+            : before.matchFormat,
     };
     const timeChanged =
       merged.startsAt.getTime() !== before.startsAt.getTime() || merged.endsAt.getTime() !== before.endsAt.getTime();
@@ -376,6 +395,7 @@ export function createGamesService(deps: GamesDeps) {
           minPlayers: checked.minPlayers,
           skillBand: checked.skillBand,
           notes: checked.notes,
+          matchFormat: checked.matchFormat ? (checked.matchFormat as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
           // R3 — a raised or lowered maximum can open or fill the game.
           status: joined >= checked.maxPlayers ? 'full' : 'open',
           // R10 — a moved start is reminded about afresh.

@@ -61,28 +61,62 @@ async function sidesOf(result: {
 }
 
 /**
- * F26 — whether a result may move a rating: somebody actually confirmed it
- * (not silence on a player's own score, F5), and it came from a draw big
- * enough not to be two friends trading wins.
+ * F26 — whether a result may move a rating. Every match is ranked (v1.0 issue
+ * list): any confirmed result is, whatever the size of its draw, except a
+ * dispute nobody settled.
  */
 async function ratable(result: { matchId: string; confirmedVia: string | null; submitterRole: string }): Promise<boolean> {
   const { isRatable } = await import('../scoring/finality.js');
-  if (!isRatable(result)) return false;
-  const { tournament } = await import('../tournament/index.js');
-  const match = await tournament.matchById(result.matchId).catch(() => null);
-  if (!match) return true;
-  const { registration } = await import('../registration/index.js');
-  return (await registration.confirmedForCategory(match.eventCategoryId)).length >= MIN_RATED_DRAW_ENTRIES;
+  return isRatable(result);
 }
 
-/** F26 — a draw needs this many entries for its results to be rated. */
-export const MIN_RATED_DRAW_ENTRIES = 4;
+/**
+ * games R19 — a confirmed casual result, as rating sees a match. Its sides
+ * are user ids; a side with anyone who has no player profile is not rated,
+ * exactly as a tournament side with a walk-in guest is not.
+ */
+async function casualResult(r: {
+  id: string;
+  sportId: string;
+  sideA: string[];
+  sideB: string[];
+  winner: 'a' | 'b' | null;
+  confirmedAt: Date | null;
+}): Promise<ConfirmedResult | null> {
+  if (!r.confirmedAt) return null;
+  const side = async (key: 'a' | 'b', userIds: string[]): Promise<MatchSide> => {
+    const playerIds: string[] = [];
+    for (const userId of userIds) {
+      const player = await profile.findByUserId(userId);
+      if (player) playerIds.push(player.id);
+    }
+    return { registrationId: `${r.id}:${key}`, playerIds: playerIds.length === userIds.length ? playerIds : [] };
+  };
+  const a = await side('a', r.sideA);
+  const b = await side('b', r.sideB);
+  return {
+    matchId: r.id,
+    sportId: r.sportId,
+    outcome: 'played',
+    confirmedAt: r.confirmedAt,
+    ratable: true,
+    winner: r.winner === 'b' ? b : a,
+    loser: r.winner === 'b' ? a : b,
+    drawn: r.winner === null,
+  };
+}
 
 const matches: MatchesPort = {
   async confirmedResult(matchId) {
     const { scoring } = await import('../scoring/index.js');
-    const result = await scoring.confirmedResult(matchId);
-    if (!result?.confirmedAt) return null;
+    const result = await scoring.confirmedResult(matchId).catch(() => null);
+    if (!result) {
+      // Not a tournament match: perhaps a casual game's result (games R19).
+      const { gameResults } = await import('../games/index.js');
+      const casual = await gameResults.confirmedById(matchId);
+      return casual ? casualResult(casual) : null;
+    }
+    if (!result.confirmedAt) return null;
     const sides = await sidesOf(result);
     if (!sides) return null;
     return {
@@ -110,6 +144,13 @@ const matches: MatchesPort = {
         ...sides,
       });
     }
+    // games R19 — the week's confirmed casual results are rated with it.
+    const { gameResults } = await import('../games/index.js');
+    for (const g of await gameResults.confirmedBetween(sportId, from, to)) {
+      const casual = await casualResult(g);
+      if (casual) out.push(casual);
+    }
+    out.sort((x, y) => x.confirmedAt.getTime() - y.confirmedAt.getTime() || x.matchId.localeCompare(y.matchId));
     return out;
   },
 };

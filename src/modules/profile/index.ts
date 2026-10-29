@@ -38,7 +38,26 @@ const matches: MatchesPort = {
       import('../scoring/index.js'),
       import('../registration/index.js'),
     ]);
-    const match = await tournament.matchById(matchId);
+    const match = await tournament.matchById(matchId).catch(() => null);
+    if (!match) {
+      // games R19 — not a tournament match: a confirmed casual result, ranked like one.
+      const { gameResults } = await import('../games/index.js');
+      const r = await gameResults.confirmedById(matchId);
+      if (!r) return null;
+      return {
+        matchId,
+        sportId: r.sportId,
+        eventId: null,
+        completedAt: r.playedAt,
+        outcome: 'played' as const,
+        winnerRegistrationId: r.winner === null ? null : r.winner,
+        sides: [
+          { registrationId: 'a', userIds: r.sideA },
+          { registrationId: 'b', userIds: r.sideB },
+        ],
+        games: r.games,
+      };
+    }
     const { sideARegistrationId: a, sideBRegistrationId: b, winnerRegistrationId: winner } = match;
     // A bye has one side and is not a match anybody played.
     if (!match.completedAt || !winner || !a || !b) return null;

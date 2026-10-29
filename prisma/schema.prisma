@@ -484,6 +484,8 @@ model PlayerMatchHistory {
   partnerIds  String[] @default([]) @map("partner_ids") @db.Uuid
   opponentIds String[] @default([]) @map("opponent_ids") @db.Uuid
   won         Boolean
+  /// 053 — a casual match that ended level. `won` is false.
+  drawn       Boolean  @default(false)
   /// played | walkover | retired | forfeit
   outcome     String
   /// [{ for, against }] — games (rally) or sets, from this player's side.
@@ -1334,9 +1336,8 @@ model RatingEvent {
   id              BigInt  @id @default(autoincrement())
   playerId        String  @map("player_id") @db.Uuid
   sportId         String  @map("sport_id") @db.Uuid
-  /// tournament owns `matches`. 008 carried no foreign key because the table
-  /// did not exist yet; 009 added it, exactly as 005 added the one
-  /// `event_staff` had been waiting for since 001.
+  /// A tournament match or (053) a casual game result. No foreign key since
+  /// 053: the id may name a row in either table.
   matchId         String? @map("match_id") @db.Uuid
   ratingPeriodId  String? @map("rating_period_id") @db.Uuid
   /// R8 — 'glicko2-v1'. A new model is a new value here, never a migration.
@@ -1857,6 +1858,8 @@ model Game {
   cancelledAt    DateTime?                              @map("cancelled_at") @db.Timestamptz(6)
   completedAt    DateTime?                              @map("completed_at") @db.Timestamptz(6)
   reminderSentAt DateTime?                              @map("reminder_sent_at") @db.Timestamptz(6)
+  /// 053 — { pointsToWin, games, bestOf } the players chose. Null = the sport's usual format.
+  matchFormat    Json?                                  @map("match_format")
   createdAt      DateTime                               @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime                               @default(now()) @map("updated_at") @db.Timestamptz(6)
 
@@ -1928,8 +1931,11 @@ model GameResult {
   disputedAt    DateTime? @map("disputed_at") @db.Timestamptz(6)
   playedAt      DateTime  @map("played_at") @db.Timestamptz(6)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// 053 — the format this match was entered under. Null = the game's, or the sport's.
+  matchFormat   Json?     @map("match_format")
 
   @@index([gameId, createdAt], map: "game_results_game_idx")
+  @@index([sportId, confirmedAt], map: "game_results_sport_confirmed_idx")
   @@map("game_results")
 }
 

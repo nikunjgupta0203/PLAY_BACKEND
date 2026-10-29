@@ -1,10 +1,11 @@
 /**
- * games — results of casual games: the "unranked matches" on a profile.
+ * games — results of casual games.
  *
  * One game holds many results, because one session is often several matches.
- * A result names who was on each side and the score, held to the sport's own
- * scoring rule one game (or set, or frame) at a time. It never touches rating,
- * rankings, badges or the ranked W–L.
+ * A result names who was on each side and the score, held one game (or set,
+ * or frame) at a time to the format the players chose (R18) over the sport's
+ * own rule. Every match is ranked: once confirmed, a result moves ratings and
+ * rankings and joins match history and analytics like a tournament match.
  *
  * Rules, as the tests name them:
  *   R12 results open an hour after the game starts, and close a week after it ends
@@ -13,12 +14,15 @@
  *   R15 the other side confirms or says "not right"; unanswered, it confirms itself after an hour
  *   R16 a profile shows confirmed results only; a disputed one counts for nothing
  *   R17 a confirmed result makes its players "played together" (chat R2)
+ *   R18 the score is held to the match's format: the result's own, else the game's, else the sport's
+ *   R19 a confirmed result is ranked: rating, rankings, match history, analytics (onConfirmed)
  */
 import { Prisma } from '@prisma/client';
-import type { Db } from '../../../platform/db.js';
+import type { Db, Tx } from '../../../platform/db.js';
+import { write as outboxWrite } from '../../../platform/outbox.js';
 import { UserError, forbidden } from '../../../platform/errors/index.js';
 import { newId } from '../../../platform/ids.js';
-import type { Game } from './index.js';
+import type { Game, MatchFormat } from './index.js';
 
 export const ResultCode = {
   RESULT_NOT_FOUND: 'RESULT_NOT_FOUND',
@@ -64,6 +68,8 @@ export interface GameResult {
   confirmedVia: string | null;
   playedAt: Date;
   createdAt: Date;
+  /** R18 — the format it was entered under; null = the game's or the sport's usual. */
+  matchFormat: MatchFormat | null;
 }
 
 export interface Tally {
@@ -85,6 +91,8 @@ export interface ResultInput {
   /** A bout that ended early: one of the rule's finishes, with `winner`. */
   finish?: string | null;
   winner?: Side | null;
+  /** R18 — this match's own format, when it differs from the game's. */
+  format?: MatchFormat | null;
 }
 
 type Template = 'game.result_pending' | 'game.result_disputed';
@@ -99,8 +107,10 @@ export interface ResultsDeps {
    */
   rules: {
     supported(sportId: string): Promise<boolean>;
-    judge(sportId: string, games: UnitScore[]): Promise<Side | null>;
+    judge(sportId: string, games: UnitScore[], format: MatchFormat | null): Promise<Side | null>;
     finishes(sportId: string): Promise<string[]>;
+    /** R18 — the format held to the sport's rule, or a UserError; null when the sport has none to choose. */
+    checkFormat(sportId: string, format: MatchFormat): Promise<MatchFormat | null>;
   };
   users: { namesByIds(ids: string[]): Promise<Map<string, string>> };
   sportName(sportId: string): Promise<string>;
@@ -139,8 +149,16 @@ export function createGameResults(deps: ResultsDeps) {
       confirmedVia: auto ? 'auto' : r.confirmedVia,
       playedAt: r.playedAt,
       createdAt: r.createdAt,
+      matchFormat: (r.matchFormat as unknown as MatchFormat | null) ?? null,
     };
   };
+
+  /** R19 — in the confirming transaction: the worker rates it and adds it to match history. */
+  async function announce(tx: Tx, resultIds: string[]): Promise<void> {
+    for (const resultId of resultIds) {
+      await outboxWrite(tx, { topic: 'game_result.confirmed', payload: { resultId } });
+    }
+  }
 
   const inMatch = (r: { sideA: string[]; sideB: string[] }, userId: string): Side | null =>
     r.sideA.includes(userId) ? 'a' : r.sideB.includes(userId) ? 'b' : null;
@@ -196,6 +214,9 @@ export function createGameResults(deps: ResultsDeps) {
     if (![...sideA, ...sideB].every((u) => joined.has(u))) throw invalid('Only players who joined this game can be in a result.');
     if (!sideA.includes(actor.userId) && !sideB.includes(actor.userId)) throw forbidden();
 
+    // R18 — the match's format: its own, else the game's, else the sport's usual.
+    const format = input.format ? await deps.rules.checkFormat(game.sportId, input.format) : (game.matchFormat ?? null);
+
     // R14 — the sport's own rule.
     let winner: Side | null;
     let method: string | null = null;
@@ -209,7 +230,7 @@ export function createGameResults(deps: ResultsDeps) {
       winner = input.winner;
       method = finish;
     } else {
-      winner = await deps.rules.judge(game.sportId, input.games);
+      winner = await deps.rules.judge(game.sportId, input.games, format);
       if (input.winner && input.winner !== winner) {
         throw invalid(winner ? 'The score says the other side won.' : 'The score is level: a draw.');
       }
@@ -234,6 +255,7 @@ export function createGameResults(deps: ResultsDeps) {
         enteredBy: actor.userId,
         autoConfirmAt: new Date(at.getTime() + RESULT_AUTO_CONFIRM_MS),
         playedAt: game.startsAt,
+        ...(input.format && format ? { matchFormat: format as unknown as Prisma.InputJsonValue } : {}),
       },
     });
 
@@ -270,9 +292,13 @@ export function createGameResults(deps: ResultsDeps) {
   async function confirm(actor: Actor, resultId: string): Promise<GameResult> {
     const row = await forAnswer(actor, resultId);
     if (live(row).status === 'confirmed') return live(row);
-    const moved = await db.gameResult.updateMany({
-      where: { id: resultId, status: 'pending' },
-      data: { status: 'confirmed', confirmedAt: now(), confirmedVia: 'opponent' },
+    const moved = await db.$transaction(async (tx) => {
+      const m = await tx.gameResult.updateMany({
+        where: { id: resultId, status: 'pending' },
+        data: { status: 'confirmed', confirmedAt: now(), confirmedVia: 'opponent' },
+      });
+      if (m.count > 0) await announce(tx, [resultId]);
+      return m;
     });
     if (moved.count === 0) throw settled();
     return live(await db.gameResult.findUniqueOrThrow({ where: { id: resultId } }));
@@ -335,7 +361,7 @@ export function createGameResults(deps: ResultsDeps) {
 
   const confirmedSql = (at: Date) => Prisma.sql`(r.status = 'confirmed' OR (r.status = 'pending' AND r.auto_confirm_at <= ${at}))`;
 
-  /** R16 — a profile's Unranked list: confirmed results this player was in, newest game first. */
+  /** R16 — a player's casual results (kept for older app versions): confirmed results this player was in, newest game first. */
   async function forUser(userId: string, opts: { first: number }): Promise<GameResult[]> {
     const first = Math.min(Math.max(opts.first, 1), 50);
     const ids = await db.$queryRaw<{ id: string }[]>`
@@ -350,7 +376,7 @@ export function createGameResults(deps: ResultsDeps) {
     return ids.flatMap(({ id }) => (byId.has(id) ? [live(byId.get(id)!)] : []));
   }
 
-  /** R16 — played, won, lost, drawn across every confirmed unranked result. */
+  /** R16 — played, won, lost, drawn across every confirmed casual result. */
   async function tallyFor(userId: string): Promise<Tally> {
     const at = now();
     const rows = await db.$queryRaw<{ played: number; won: number; drawn: number }[]>`
@@ -379,14 +405,71 @@ export function createGameResults(deps: ResultsDeps) {
   /** R15 — writes what the reads already say: an unanswered result past its hour is confirmed. */
   async function sweep(): Promise<number> {
     const at = now();
-    const { count } = await db.gameResult.updateMany({
+    const due = await db.gameResult.findMany({
       where: { status: 'pending', autoConfirmAt: { lte: at } },
-      data: { status: 'confirmed', confirmedAt: at, confirmedVia: 'auto' },
+      select: { id: true },
+      take: 500,
     });
+    if (due.length === 0) return 0;
+    let count = 0;
+    // One at a time, so each row and its announcement commit together.
+    for (const { id } of due) {
+      count += await db.$transaction(async (tx) => {
+        const m = await tx.gameResult.updateMany({
+          where: { id, status: 'pending', autoConfirmAt: { lte: at } },
+          data: { status: 'confirmed', confirmedAt: at, confirmedVia: 'auto' },
+        });
+        if (m.count > 0) await announce(tx, [id]);
+        return m.count;
+      });
+    }
     return count;
   }
 
-  return { windowOf, canAdd, add, confirm, dispute, remove, forGame, viewerCan, forUser, tallyFor, haveShared, sweep };
+  /** R19 — the rating port: one confirmed result, or null. */
+  async function confirmedById(resultId: string): Promise<GameResult | null> {
+    const row = await db.gameResult.findUnique({ where: { id: resultId } });
+    if (!row) return null;
+    const r = live(row);
+    return r.status === 'confirmed' ? r : null;
+  }
+
+  /** R19 — the rating period's input: results confirmed in [from, to), oldest first. */
+  async function confirmedBetween(sportId: string, from: Date, to: Date): Promise<GameResult[]> {
+    const rows = await db.gameResult.findMany({
+      where: { sportId, status: 'confirmed', confirmedAt: { gte: from, lt: to } },
+      orderBy: [{ confirmedAt: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map(live);
+  }
+
+  /** R19 — every confirmed result, for the backfill. */
+  async function allConfirmedIds(): Promise<string[]> {
+    const rows = await db.gameResult.findMany({
+      where: { OR: [{ status: 'confirmed' }, { status: 'pending', autoConfirmAt: { lte: now() } }] },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((r) => r.id);
+  }
+
+  return {
+    windowOf,
+    canAdd,
+    add,
+    confirm,
+    dispute,
+    remove,
+    forGame,
+    viewerCan,
+    forUser,
+    tallyFor,
+    haveShared,
+    sweep,
+    confirmedById,
+    confirmedBetween,
+    allConfirmedIds,
+  };
 }
 
 export type GameResultsService = ReturnType<typeof createGameResults>;

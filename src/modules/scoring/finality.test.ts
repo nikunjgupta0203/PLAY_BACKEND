@@ -51,7 +51,9 @@ describe('scoring — finality rules', () => {
   });
 
   it('F26: a player’s result confirmed by silence is not rated; anything a person or staff confirmed is', () => {
-    expect(isRatable({ confirmedVia: 'auto', submitterRole: 'player' })).toBe(false);
+    // Every match is ranked: silence after being told counts as agreement.
+    expect(isRatable({ confirmedVia: 'auto', submitterRole: 'player' })).toBe(true);
+    expect(isRatable({ confirmedVia: 'default', submitterRole: 'player' })).toBe(false);
     expect(isRatable({ confirmedVia: 'auto', submitterRole: 'staff' })).toBe(true);
     expect(isRatable({ confirmedVia: 'opponent', submitterRole: 'player' })).toBe(true);
     expect(isRatable({ confirmedVia: 'staff', submitterRole: 'player' })).toBe(true);

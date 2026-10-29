@@ -422,7 +422,7 @@ describe('profile', () => {
   });
 
   describe('search', () => {
-    it('excludes private profiles, and players_only from signed-out viewers', async () => {
+    it('v1.0 issue #6: lists every active player for everyone; visibility only withholds details', async () => {
       const open = await makePlayer('Ravi Kumar', 'ravi@example.com');
       const gated = await makePlayer('Ravi Sharma', 'sharma@example.com');
       const hidden = await makePlayer('Ravi Nair', 'nair@example.com');
@@ -430,18 +430,22 @@ describe('profile', () => {
 
       await profile.setVisibility(gated.actor, 'players_only');
       await profile.setVisibility(hidden.actor, 'private');
+      await profile.updateDetails(hidden.actor, { bio: 'Plays at dawn' });
 
+      const all = [open.playerId, gated.playerId, hidden.playerId].sort();
       const anonymous = await profile.search({ query: 'Ravi', first: 10 });
-      expect(anonymous.nodes.map((n) => n.id)).toEqual([open.playerId]);
+      expect(anonymous.nodes.map((n) => n.id).sort()).toEqual(all);
 
-      const signedIn = await profile.search({
-        query: 'Ravi',
-        first: 10,
-        viewerUserId: viewer.userId,
-      });
-      expect(signedIn.nodes.map((n) => n.id).sort()).toEqual(
-        [open.playerId, gated.playerId].sort(),
-      );
+      const signedIn = await profile.search({ query: 'Ravi', first: 10, viewerUserId: viewer.userId });
+      expect(signedIn.nodes.map((n) => n.id).sort()).toEqual(all);
+      // Listed, but a private profile's details stay hidden.
+      const nair = signedIn.nodes.find((n) => n.id === hidden.playerId)!;
+      expect(nair.detailsVisible).toBe(false);
+      expect(nair.bio).toBeNull();
+
+      // A blank query lists everyone, the viewer included.
+      const everyone = await profile.search({ query: '', first: 10, viewerUserId: viewer.userId });
+      expect(everyone.nodes.map((n) => n.id).sort()).toEqual([...all, viewer.playerId].sort());
     });
 
     it('pages on (display_name, id) without repeating or skipping a row', async () => {
