@@ -52,7 +52,7 @@ const ReferralRef = builder.objectRef<Referral>('Referral').implement({
   fields: (t) => ({
     id: t.exposeID('id'),
     status: t.field({ type: ReferralStatusEnum, resolve: (r) => r.status }),
-    holdReason: t.exposeString('holdReason', { nullable: true, description: 'shared_phone | monthly_cap | referrer_inactive | referrals_off' }),
+    holdReason: t.exposeString('holdReason', { nullable: true, description: 'shared_phone | shared_device | monthly_cap | referrer_inactive | referrals_off' }),
     code: t.exposeString('code'),
     convertedAt: t.field({ type: 'DateTime', nullable: true, resolve: (r) => r.convertedAt }),
     createdAt: t.field({ type: 'DateTime', resolve: (r) => r.createdAt }),

@@ -9,6 +9,7 @@
  * never reads another module's tables and imports none of them; working out
  * WHO to tell and WHAT the facts are is the caller's job (src/notify.ts).
  */
+import { createHash } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import type { Db } from '../../../platform/db.js';
 import { UserError } from '../../../platform/errors/index.js';
@@ -92,6 +93,9 @@ const DEFAULTS: Preferences = { pushEnabled: true, muted: [], quietHours: true }
 
 /** Expo push tokens. A string that is not one never reaches the table. */
 const TOKEN = /^Expo(nent)?PushToken\[[^\]]{1,200}\]$/;
+
+/** 056 — matches the migration's backfill: encode(sha256(convert_to(token, 'UTF8')), 'hex'). */
+const hashToken = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex');
 
 type Row = {
   id: string;
@@ -384,6 +388,24 @@ export function createNotificationsService(deps: NotificationsDeps) {
       create: { id: newId(), userId: actor.userId, token: input.token, platform: input.platform },
       update: { userId: actor.userId, platform: input.platform, lastSeenAt: now() },
     });
+    // The registration moves on; the sighting stays, for the referral checks.
+    const tokenHash = hashToken(input.token);
+    await db.deviceSighting.upsert({
+      where: { tokenHash_userId: { tokenHash, userId: actor.userId } },
+      create: { tokenHash, userId: actor.userId, firstSeenAt: now(), lastSeenAt: now() },
+      update: { lastSeenAt: now() },
+    });
+  }
+
+  /** Whether two accounts have ever registered the same phone (056). */
+  async function sharesDevice(userA: string, userB: string): Promise<boolean> {
+    if (userA === userB) return false;
+    const mine = await db.deviceSighting.findMany({ where: { userId: userA }, select: { tokenHash: true } });
+    if (mine.length === 0) return false;
+    const shared = await db.deviceSighting.count({
+      where: { userId: userB, tokenHash: { in: mine.map((s) => s.tokenHash) } },
+    });
+    return shared > 0;
   }
 
   async function unregisterDevice(actor: Actor, token: string): Promise<void> {
@@ -426,6 +448,7 @@ export function createNotificationsService(deps: NotificationsDeps) {
     markAllRead,
     registerDevice,
     unregisterDevice,
+    sharesDevice,
     preferences,
     setPreferences,
   };

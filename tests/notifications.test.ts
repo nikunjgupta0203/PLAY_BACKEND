@@ -126,6 +126,23 @@ describe('notifications', () => {
     expect(await service.deliver([chat.id])).toEqual({ [chat.id]: 'sent' });
   });
 
+  it('056: a phone that changes hands still links both accounts, by hash only', async () => {
+    const asha = await user();
+    const ravi = await user();
+    const other = await user();
+    await service.registerDevice({ userId: asha }, { token: TOKEN('shared'), platform: 'android' });
+    await service.registerDevice({ userId: ravi }, { token: TOKEN('shared'), platform: 'android' });
+    await service.registerDevice({ userId: other }, { token: TOKEN('own'), platform: 'ios' });
+    // The registration moved to Ravi; the sightings kept Asha.
+    expect(await prisma.deviceRegistration.count({ where: { userId: asha } })).toBe(0);
+    expect(await service.sharesDevice(asha, ravi)).toBe(true);
+    expect(await service.sharesDevice(ravi, asha)).toBe(true);
+    expect(await service.sharesDevice(asha, other)).toBe(false);
+    expect(await service.sharesDevice(asha, asha)).toBe(false);
+    const rows = await prisma.deviceSighting.findMany();
+    expect(rows.every((r) => /^[0-9a-f]{64}$/.test(r.tokenHash))).toBe(true);
+  });
+
   it('notifications R2: a muted kind is not pushed, other kinds are', async () => {
     const u = await user();
     await service.registerDevice({ userId: u }, { token: TOKEN('a'), platform: 'android' });

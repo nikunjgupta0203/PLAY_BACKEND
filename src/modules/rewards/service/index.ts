@@ -140,6 +140,8 @@ export interface RewardsDeps {
   }): Promise<unknown>;
   /** PL4Y's finance inbox. */
   alert?(subject: string, text: string): Promise<void>;
+  /** Whether the two accounts have ever registered the same phone for push. */
+  sharesDevice?(userA: string, userB: string): Promise<boolean>;
   /** Picks a code's random characters. Tests pass a fixed source. */
   random?: () => number;
   now?: () => Date;
@@ -523,12 +525,13 @@ export function createRewardsService(deps: RewardsDeps) {
     const referral = await db.referral.findUnique({ where: { referredId } });
     if (!referral || referral.status !== 'pending') return;
 
-    const [referrer, referred, recent] = await Promise.all([
+    const [referrer, referred, recent, sameDevice] = await Promise.all([
       db.user.findUnique({ where: { id: referral.referrerId }, select: { status: true, phoneE164: true } }),
       db.user.findUnique({ where: { id: referredId }, select: { phoneE164: true, displayName: true } }),
       db.referral.count({
         where: { referrerId: referral.referrerId, status: 'converted', convertedAt: { gt: new Date(now().getTime() - CAP_WINDOW_MS) } },
       }),
+      deps.sharesDevice ? deps.sharesDevice(referral.referrerId, referredId) : Promise.resolve(false),
     ]);
 
     let verdict: { status: 'converted' | 'held' | 'rejected'; reason: string | null };
@@ -536,7 +539,8 @@ export function createRewardsService(deps: RewardsDeps) {
     else if (!s.referralEnabled) verdict = { status: 'rejected', reason: 'referrals_off' };
     else if (referrer.phoneE164 && referred?.phoneE164 && referrer.phoneE164 === referred.phoneE164) {
       verdict = { status: 'held', reason: 'shared_phone' };
-    } else if (recent >= s.referralMonthlyCap) verdict = { status: 'held', reason: 'monthly_cap' };
+    } else if (sameDevice) verdict = { status: 'held', reason: 'shared_device' };
+    else if (recent >= s.referralMonthlyCap) verdict = { status: 'held', reason: 'monthly_cap' };
     else verdict = { status: 'converted', reason: null };
 
     const at = now();
@@ -567,7 +571,7 @@ export function createRewardsService(deps: RewardsDeps) {
         subjectType: 'user',
         subjectId: referral.referrerId,
         detector: 'referral_reward',
-        score: verdict.reason === 'shared_phone' ? 70 : 40,
+        score: verdict.reason === 'shared_phone' || verdict.reason === 'shared_device' ? 70 : 40,
         dedupeKey: `referral:${referral.id}`,
         evidence: { referralId: referral.id, referredId, reason: verdict.reason },
       }).catch((err: unknown) => logger.warn({ err, referralId: referral.id }, 'referral fraud signal failed'));

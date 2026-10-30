@@ -133,6 +133,7 @@ model User {
   resultsDisputed         MatchResult[]             @relation("resultDisputedBy")
   notifications           Notification[]
   deviceRegistrations     DeviceRegistration[]
+  deviceSightings         DeviceSighting[]
   notificationPreferences NotificationPreferences[]
   venueReviews            VenueReview[]             @relation("venueReviewAuthor")
   venueReviewReplies      VenueReview[]             @relation("venueReviewReplier")
@@ -1541,6 +1542,21 @@ model DeviceRegistration {
 
   @@index([userId])
   @@map("device_registrations")
+}
+
+/// 056 — every account a push token has been registered to, kept after the
+/// registration moves. Referral fraud checks compare these. SHA-256 of the token.
+model DeviceSighting {
+  tokenHash   String   @map("token_hash")
+  userId      String   @map("user_id") @db.Uuid
+  firstSeenAt DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([tokenHash, userId])
+  @@index([userId])
+  @@map("device_sightings")
 }
 
 /// R2 — gates PUSH only. The feed row is written whatever these say.

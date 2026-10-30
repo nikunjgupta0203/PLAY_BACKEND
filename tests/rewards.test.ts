@@ -35,7 +35,9 @@ let gateway: FakeGateway;
 let clock: Date;
 let football: string;
 const notices: { userId: string; template: string; payload: Record<string, unknown> }[] = [];
-const signals: { subjectId: string; detector: string; dedupeKey: string }[] = [];
+const signals: { subjectId: string; detector: string; dedupeKey: string; score: number }[] = [];
+/** `${referrerId}:${referredId}` pairs that have shared a phone. */
+const sharedDevices = new Set<string>();
 
 const DAY = 86_400_000;
 
@@ -101,6 +103,7 @@ beforeEach(async () => {
   await truncateAll(prisma);
   notices.length = 0;
   signals.length = 0;
+  sharedDevices.clear();
   clock = new Date('2026-10-30T04:30:00.000Z');
   football = await seedSport(prisma, FOOTBALL);
   modules.sport.refresh();
@@ -130,6 +133,9 @@ beforeEach(async () => {
     },
     async recordSignal(input) {
       signals.push(input);
+    },
+    async sharesDevice(a, b) {
+      return sharedDevices.has(`${a}:${b}`);
     },
     random: () => ((seq++ * 7) % 31) / 31,
     now: () => clock,
@@ -369,6 +375,18 @@ describe('referrals', () => {
     await rewards.reviewReferral(staff.userId, held!.id, true);
     expect((await rewards.rewardsFor(asha.userId)).filter((r) => r.kind === 'referral')).toHaveLength(1);
     expect(await codeOf(() => rewards.reviewReferral(staff.userId, held!.id, false))).toBe(RewardCode.NOT_HELD);
+  });
+
+  it('a shared phone for push holds the referral too', async () => {
+    const asha = await user('Asha');
+    const ravi = await user('Ravi');
+    sharedDevices.add(`${asha.userId}:${ravi.userId}`);
+    await rewards.applyCode(ravi, await rewards.codeFor(asha.userId));
+    await pay(ravi, await club());
+    const [held] = await rewards.referralsForStaff('held', 10);
+    expect(held).toMatchObject({ referrerId: asha.userId, holdReason: 'shared_device' });
+    expect(signals).toEqual([expect.objectContaining({ subjectId: asha.userId, score: 70 })]);
+    expect((await rewards.rewardsFor(asha.userId)).some((r) => r.kind === 'referral')).toBe(false);
   });
 
   it('the monthly cap holds the rest', async () => {

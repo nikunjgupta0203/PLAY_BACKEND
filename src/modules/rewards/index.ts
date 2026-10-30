@@ -15,6 +15,10 @@ export const rewards = createRewardsService({
     const { admin } = await import('../admin/index.js');
     return admin.recordSignal(input);
   },
+  async sharesDevice(userA, userB) {
+    const { notifications } = await import('../notifications/index.js');
+    return notifications.sharesDevice(userA, userB);
+  },
   async alert(subject, text) {
     const { opsAlert } = await import('../payments/index.js');
     await opsAlert(subject, text);
