@@ -78,6 +78,8 @@ const handlers: Record<string, OutboxHandler> = {
       },
     );
     logger.info({ eventId, slug: event.slug }, 'outbox: event.published');
+    // Feature brief §3 — news to the players near it. Never allowed to undo the deadline above.
+    await notify.eventListed(payload).catch((err: unknown) => logger.warn({ err, eventId }, 'new-event discovery notices failed'));
   },
   // events R7 — a full refund for every confirmed entry, platform fee
   // included. Enqueued rather than done here: a final failure on this queue
@@ -255,6 +257,12 @@ const handlers: Record<string, OutboxHandler> = {
   'registration.checked_in': async (payload) => {
     logger.info({ payload }, 'outbox: registration.checked_in');
     await registrationNotifier.notify('registration.checked_in', payload);
+    await notify.checkedIn(payload);
+  },
+
+  // Feature brief §3 — a venue PL4Y listed is news to the players near it.
+  'venue.listed': async (payload) => {
+    await notify.venueListed(payload);
   },
 
   // registration R17 — the offer push.
@@ -280,6 +288,7 @@ const handlers: Record<string, OutboxHandler> = {
   // payments (docs/modules/07-payments.md § Emits).
   'payment.captured': async (payload) => {
     logger.info({ payload }, 'outbox: payment.captured');
+    await notify.paymentCaptured(payload);
   },
 
   'payment.failed': async (payload) => {
@@ -609,6 +618,8 @@ const SCHEDULES: [string, string, string][] = [
   [QUEUES.payments, 'settle-due-payouts', '* * * * *'],
   // payouts R13 — transfers we have not heard about in 30 minutes.
   [QUEUES.payments, 'sweep-sending-payouts', '*/15 * * * *'],
+  // rewards — referral rewards past their date stop counting. 00:20 IST.
+  [QUEUES.payments, 'expire-rewards', '50 18 * * *'],
   // scoring R11, R13, R14 — every minute: auto_confirm_at is a floor, and a
   // minute late is the most anyone waits past it.
   [QUEUES.tournament, 'sweep-results', '* * * * *'],
@@ -738,6 +749,10 @@ export async function startWorkers(): Promise<() => void> {
         const { bookings } = await import('./modules/bookings/index.js');
         const result = await bookings.sweep();
         if (result.expired + result.completed > 0) logger.info(result, 'swept court bookings');
+        // pay at venue — started payments nobody paid stop counting.
+        const { venuePay } = await import('./modules/venuepay/index.js');
+        const lapsed = await venuePay.sweep();
+        if (lapsed > 0) logger.info({ lapsed }, 'swept venue payments');
         return;
       }
       case 'sweep-games': {
@@ -752,7 +767,8 @@ export async function startWorkers(): Promise<() => void> {
         const { communities, communityPayouts } = await import('./modules/communities/index.js');
         const result = await communities.sweep();
         // communities R10 — a held payout whose owner has since verified their bank account is ready.
-        const readied = await communityPayouts.refreshHeld();
+        const { venuePayouts } = await import('./modules/venuepay/index.js');
+        const readied = (await communityPayouts.refreshHeld()) + (await venuePayouts.refreshHeld());
         if (readied > 0 || Object.values(result).some((n) => n > 0)) logger.info({ ...result, readied }, 'swept communities');
         return;
       }
@@ -760,6 +776,9 @@ export async function startWorkers(): Promise<() => void> {
         const { communityPayouts } = await import('./modules/communities/index.js');
         const result = await communityPayouts.settleMonth();
         logger.info(result, 'settled community payouts');
+        // pay at venue — the same month, one payout per venue.
+        const { venuePayouts } = await import('./modules/venuepay/index.js');
+        logger.info(await venuePayouts.settleMonth(), 'settled venue payouts');
         return;
       }
       case 'expire-invite': {
@@ -821,6 +840,12 @@ export async function startWorkers(): Promise<() => void> {
               ? await payments.bulkRefundCategory(categoryId, reason)
               : { queued: 0 };
           logger.warn({ eventId, categoryId, ...result }, 'bulk refund queued');
+          return;
+        }
+        case 'expire-rewards': {
+          const { rewards } = await import('./modules/rewards/index.js');
+          const expired = await rewards.expireDue();
+          if (expired > 0) logger.info({ expired }, 'rewards expired');
           return;
         }
         case 'reconcile-pending': {

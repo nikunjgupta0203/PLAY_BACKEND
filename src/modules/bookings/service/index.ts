@@ -134,7 +134,9 @@ export function createBookingsService(deps: BookingsDeps) {
     if (await db.venueStaff.findFirst({ where: { userId }, select: { venueId: true } })) return true;
     const own = await db.venue.findMany({ where: { createdBy: userId, deletedAt: null }, select: { id: true } });
     if (own.length === 0) return false;
-    return (await repo.bookableVenueIds(own.map((v) => v.id))).size > 0;
+    if ((await repo.bookableVenueIds(own.map((v) => v.id))).size > 0) return true;
+    // pay at venue — an owner with hourly rates runs a venue too.
+    return (await db.venuePayRate.count({ where: { venueId: { in: own.map((v) => v.id) } } })) > 0;
   }
 
   async function staffOf(actor: Actor, venueId: string) {

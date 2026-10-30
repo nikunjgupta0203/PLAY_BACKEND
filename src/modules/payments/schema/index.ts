@@ -126,6 +126,15 @@ const CreatePaymentOrderPayload = builder
        * the client must not paper over it.
        */
       quote: t.field({ type: PriceQuoteRef, nullable: true, resolve: (p) => p.order?.quote ?? null }),
+      discountPaise: t.int({
+        description: 'rewards — what PL4Y takes off the quote. amountPaise = quote.totalPaise − discountPaise.',
+        resolve: (p) => (p.order ? paise(p.order.discount.paise) : 0),
+      }),
+      discountLabel: t.string({
+        nullable: true,
+        description: 'The checkout line: "Welcome offer", "Referral reward". Null with no discount.',
+        resolve: (p) => p.order?.discount.label ?? null,
+      }),
       userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
     }),
   });

@@ -99,6 +99,45 @@ export const payments = createPaymentsService({
       return communities.paymentIdsForUser(userId);
     },
   },
+  // pay at venue (055) — time played at a venue, paid the same way.
+  venuePayments: {
+    async byId(venuePaymentId) {
+      const { venuePay } = await import('../venuepay/index.js');
+      return venuePay.forPayments(venuePaymentId);
+    },
+    async extendHold(venuePaymentId, minutes) {
+      const { venuePay } = await import('../venuepay/index.js');
+      return venuePay.extendHold(venuePaymentId, minutes);
+    },
+    async confirmFromPayment(input) {
+      const { venuePay } = await import('../venuepay/index.js');
+      return venuePay.confirmFromPayment(input);
+    },
+    async failFromPayment(input) {
+      const { venuePay } = await import('../venuepay/index.js');
+      return venuePay.failFromPayment(input);
+    },
+    async markRefunded(venuePaymentId) {
+      const { venuePay, venuePayouts } = await import('../venuepay/index.js');
+      const r = await venuePay.markRefunded(venuePaymentId);
+      if (r?.payoutId) await venuePayouts.dropRefundedPayment(r.payoutId, venuePaymentId);
+    },
+  },
+  // rewards (054) — PL4Y's first-payment and referral discounts, on every order.
+  rewards: {
+    async discountFor(userId, grossPaise) {
+      const { rewards } = await import('../rewards/index.js');
+      return rewards.discountFor(userId, grossPaise);
+    },
+    async onCapture(order) {
+      const { rewards } = await import('../rewards/index.js');
+      return rewards.onCapture(order);
+    },
+    async onFullRefund(orderId) {
+      const { rewards } = await import('../rewards/index.js');
+      return rewards.onFullRefund(orderId);
+    },
+  },
   users: {
     async byIds(ids) {
       const { identity } = await import('../identity/index.js');

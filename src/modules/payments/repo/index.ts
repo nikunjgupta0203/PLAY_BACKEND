@@ -16,11 +16,20 @@ export interface PaymentOrderRow {
   registrationId: string | null;
   bookingId: string | null;
   communityPaymentId: string | null;
+  /** pay at venue (055). */
+  venuePaymentId: string | null;
   gatewayOrderId: string;
   entryFeePaise: bigint;
   platformFeePaise: bigint;
   taxPaise: bigint;
+  /** What the player pays: gross less PL4Y's reward discount. */
   amountPaise: bigint;
+  /** rewards (054) — the price before the discount; hosts are paid on this. */
+  grossPaise: bigint;
+  discountPaise: bigint;
+  /** The rewards the discount counted; the capture uses them. */
+  rewardIds: string[];
+  payerUserId: string | null;
   currency: string;
   status: string;
   createdAt: Date;
@@ -119,10 +128,11 @@ export function createPaymentsRepo(db: Db) {
   // --- orders ----------------------------------------------------------------
 
   async function insertOrder(
-    row: Omit<PaymentOrderRow, 'createdAt' | 'bookingId' | 'registrationId' | 'communityPaymentId'> & {
+    row: Omit<PaymentOrderRow, 'createdAt' | 'bookingId' | 'registrationId' | 'communityPaymentId' | 'venuePaymentId'> & {
       registrationId?: string | null;
       bookingId?: string | null;
       communityPaymentId?: string | null;
+      venuePaymentId?: string | null;
     },
   ): Promise<PaymentOrderRow> {
     return db.paymentOrder.create({
@@ -131,6 +141,7 @@ export function createPaymentsRepo(db: Db) {
         registrationId: row.registrationId ?? null,
         bookingId: row.bookingId ?? null,
         communityPaymentId: row.communityPaymentId ?? null,
+        venuePaymentId: row.venuePaymentId ?? null,
       },
     });
   }
@@ -180,6 +191,17 @@ export function createPaymentsRepo(db: Db) {
 
   async function ordersForCommunityPayment(communityPaymentId: string): Promise<PaymentOrderRow[]> {
     return db.paymentOrder.findMany({ where: { communityPaymentId }, orderBy: { createdAt: 'desc' } });
+  }
+
+  async function openOrderForVenuePayment(venuePaymentId: string): Promise<PaymentOrderRow | null> {
+    return db.paymentOrder.findFirst({
+      where: { venuePaymentId, status: { in: ['created', 'attempted'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async function ordersForVenuePayment(venuePaymentId: string): Promise<PaymentOrderRow[]> {
+    return db.paymentOrder.findMany({ where: { venuePaymentId }, orderBy: { createdAt: 'desc' } });
   }
 
   async function setOrderStatus(tx: Tx | Db, orderId: string, status: string): Promise<void> {
@@ -400,13 +422,17 @@ export function createPaymentsRepo(db: Db) {
    * live capture on the same entry is a duplicate. A fixed order means two
    * captures checking at once can never both decide to refund themselves.
    */
-  async function keeperCapture(subject: string | { bookingId: string } | { communityPaymentId: string }): Promise<string | null> {
+  async function keeperCapture(
+    subject: string | { bookingId: string } | { communityPaymentId: string } | { venuePaymentId: string },
+  ): Promise<string | null> {
     const match =
       typeof subject === 'string'
         ? Prisma.sql`po.registration_id = ${subject}::uuid`
         : 'bookingId' in subject
           ? Prisma.sql`po.booking_id = ${subject.bookingId}::uuid`
-          : Prisma.sql`po.community_payment_id = ${subject.communityPaymentId}::uuid`;
+          : 'venuePaymentId' in subject
+            ? Prisma.sql`po.venue_payment_id = ${subject.venuePaymentId}::uuid`
+            : Prisma.sql`po.community_payment_id = ${subject.communityPaymentId}::uuid`;
     const rows = await db.$queryRaw<{ id: string }[]>`
       SELECT p.id FROM payments p
         JOIN payment_orders po ON po.id = p.payment_order_id
@@ -484,7 +510,7 @@ export function createPaymentsRepo(db: Db) {
     if (eventIds.length === 0) return [];
     return db.$queryRaw`
       SELECT reg.event_id::text AS "eventId",
-             coalesce(sum(le.amount_paise) FILTER (WHERE le.kind = 'charge'), 0)::bigint AS "grossPaise",
+             coalesce(sum(le.amount_paise) FILTER (WHERE le.kind IN ('charge', 'reward_discount')), 0)::bigint AS "grossPaise",
              coalesce(-sum(le.amount_paise) FILTER (WHERE le.kind = 'refund'), 0)::bigint AS "refundedPaise",
              coalesce(sum(le.amount_paise) FILTER (WHERE le.kind IN ('platform_fee', 'fee_reversal')), 0)::bigint AS "platformFeePaise",
              count(*) FILTER (WHERE le.kind = 'refund')::int AS "refunds"
@@ -511,6 +537,8 @@ export function createPaymentsRepo(db: Db) {
     ordersForBooking,
     openOrderForCommunityPayment,
     ordersForCommunityPayment,
+    openOrderForVenuePayment,
+    ordersForVenuePayment,
     capturedPaymentForBooking,
     setOrderStatus,
     failOrderUnlessPaid,

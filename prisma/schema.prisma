@@ -111,6 +111,8 @@ model User {
   deletionRequestedAt DateTime? @map("deletion_requested_at") @db.Timestamptz(6)
   /// identity R19 — set while status = 'deactivated'; cleared on reactivation.
   deactivatedAt       DateTime? @map("deactivated_at") @db.Timestamptz(6)
+  /// rewards — the player's own referral code, made the first time they ask (054).
+  referralCode        String?   @unique @map("referral_code") @db.Citext
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -510,28 +512,30 @@ model PlayerMatchHistory {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Venue {
-  id             String                                @id @db.Uuid
-  name           String
-  address        String
-  city           String
+  id                String                                @id @db.Uuid
+  name              String
+  address           String
+  city              String
   /// NOT NULL, so every write goes through raw SQL: Prisma models geography as
   /// Unsupported and omits it from the typed create input.
-  geo            Unsupported("geography(Point, 4326)")
-  amenities      String[]                              @default([])
+  geo               Unsupported("geography(Point, 4326)")
+  amenities         String[]                              @default([])
   /// Cloudinary public_ids, never URLs (ADR 0003 §C3).
-  photoPublicIds String[]                              @default([]) @map("photo_public_ids")
-  description    String?
+  photoPublicIds    String[]                              @default([]) @map("photo_public_ids")
+  description       String?
   /// venues R12 — [{ day: 0-6 (Mon-Sun), opens: "HH:MM", closes: "HH:MM" }], local time.
-  openingHours   Json                                  @default("[]") @map("opening_hours")
-  contactPhone   String?                               @map("contact_phone")
+  openingHours      Json                                  @default("[]") @map("opening_hours")
+  contactPhone      String?                               @map("contact_phone")
   /// venues R7 — kept in the same transaction as every review write; hidden reviews excluded.
-  ratingAvg      Decimal?                              @map("rating_avg") @db.Decimal(3, 2)
-  ratingCount    Int                                   @default(0) @map("rating_count")
-  createdBy      String                                @map("created_by") @db.Uuid
+  ratingAvg         Decimal?                              @map("rating_avg") @db.Decimal(3, 2)
+  ratingCount       Int                                   @default(0) @map("rating_count")
+  /// pay at venue (055) — PL4Y staff switch the button on; the owner sets the rates.
+  payAtVenueEnabled Boolean                               @default(false) @map("pay_at_venue_enabled")
+  createdBy         String                                @map("created_by") @db.Uuid
   /// venues R5 — soft delete. A completed tournament must keep resolving where
   /// it was played.
-  deletedAt      DateTime?                             @map("deleted_at") @db.Timestamptz(6)
-  createdAt      DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt         DateTime?                             @map("deleted_at") @db.Timestamptz(6)
+  createdAt         DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
 
   creator          User                   @relation(fields: [createdBy], references: [id])
   courts           VenueCourt[]
@@ -990,6 +994,8 @@ model PaymentOrder {
   bookingId          String?  @map("booking_id") @db.Uuid
   /// payments R20 — a paid community membership (048). One subject per order.
   communityPaymentId String?  @map("community_payment_id") @db.Uuid
+  /// pay at venue (055) — the fourth subject.
+  venuePaymentId     String?  @map("venue_payment_id") @db.Uuid
   /// The gateway's id for the order. Unique, because it is our idempotency handle.
   gatewayOrderId     String   @unique @map("gateway_order_id")
   /// The frozen breakdown, so a receipt can be re-rendered years later (R11).
@@ -997,6 +1003,13 @@ model PaymentOrder {
   platformFeePaise   BigInt   @map("platform_fee_paise")
   taxPaise           BigInt   @map("tax_paise")
   amountPaise        BigInt   @map("amount_paise")
+  /// rewards (054) — the price before PL4Y's discount; amount = gross − discount (CHECK).
+  grossPaise         BigInt   @map("gross_paise")
+  discountPaise      BigInt   @default(0) @map("discount_paise")
+  /// rewards (054) — the rewards this order's discount counted; its capture uses them.
+  rewardIds          String[] @default([]) @map("reward_ids") @db.Uuid
+  /// rewards (054) — who pays: the captain, the booker, the member.
+  payerUserId        String?  @map("payer_user_id") @db.Uuid
   currency           String   @default("INR")
   /// created | attempted | paid | failed | expired. CHECK in the migration.
   status             String   @default("created")
@@ -2349,4 +2362,137 @@ model CareerStatusChange {
 
   @@index([applicationId, createdAt])
   @@map("career_status_changes")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rewards (054, docs/plans/2026-10-30-feature-brief.md) — the first-payment
+// discount and the referral reward, across every paid service. PL4Y funds them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The rules PL4Y staff edit in the portal. Exactly one row (id = 1).
+model RewardSettings {
+  id                 Int      @id @default(1) @db.SmallInt
+  enabled            Boolean  @default(true)
+  percentBps         Int      @default(1000) @map("percent_bps")
+  capPaise           BigInt   @default(10000) @map("cap_paise")
+  minOrderPaise      BigInt   @default(10000) @map("min_order_paise")
+  referralEnabled    Boolean  @default(true) @map("referral_enabled")
+  referralExpiryDays Int      @default(90) @map("referral_expiry_days")
+  referralMonthlyCap Int      @default(20) @map("referral_monthly_cap")
+  referralWindowDays Int      @default(7) @map("referral_window_days")
+  allowStacking      Boolean  @default(false) @map("allow_stacking")
+  updatedBy          String?  @map("updated_by") @db.Uuid
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("reward_settings")
+}
+
+/// One per referred player. pending | converted | held | rejected (CHECK).
+model Referral {
+  id             String    @id @db.Uuid
+  referrerId     String    @map("referrer_id") @db.Uuid
+  referredId     String    @unique(map: "referrals_referred_key") @map("referred_id") @db.Uuid
+  code           String
+  status         String    @default("pending")
+  holdReason     String?   @map("hold_reason")
+  paymentOrderId String?   @map("payment_order_id") @db.Uuid
+  convertedAt    DateTime? @map("converted_at") @db.Timestamptz(6)
+  reviewedBy     String?   @map("reviewed_by") @db.Uuid
+  reviewedAt     DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([referrerId, createdAt(sort: Desc)], map: "referrals_referrer_idx")
+  @@index([status, createdAt], map: "referrals_status_idx")
+  @@map("referrals")
+}
+
+/// A discount a player holds. first_payment | referral; available | used | expired | void.
+/// The partial unique index (one first_payment per user) is migration-only.
+model Reward {
+  id            String    @id @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  kind          String
+  status        String    @default("available")
+  percentBps    Int       @map("percent_bps")
+  capPaise      BigInt    @map("cap_paise")
+  referralId    String?   @unique(map: "rewards_referral_key") @map("referral_id") @db.Uuid
+  expiresAt     DateTime? @map("expires_at") @db.Timestamptz(6)
+  usedOrderId   String?   @map("used_order_id") @db.Uuid
+  usedAt        DateTime? @map("used_at") @db.Timestamptz(6)
+  discountPaise BigInt?   @map("discount_paise")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId, createdAt(sort: Desc)], map: "rewards_user_idx")
+  @@map("rewards")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// pay at venue (055, docs/plans/2026-10-30-feature-brief.md) — a player pays
+// through PL4Y for the time they played; the venue is paid monthly, by hand.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model VenuePayRate {
+  id               String   @id @db.Uuid
+  venueId          String   @map("venue_id") @db.Uuid
+  label            String
+  sportId          String?  @map("sport_id") @db.Uuid
+  ratePerHourPaise BigInt   @map("rate_per_hour_paise")
+  active           Boolean  @default(true)
+  position         Int      @default(0) @db.SmallInt
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([venueId, position], map: "venue_pay_rates_venue_idx")
+  @@map("venue_pay_rates")
+}
+
+/// held | paid | expired | failed | refunded (CHECK).
+model VenuePayment {
+  id               String    @id @db.Uuid
+  venueId          String    @map("venue_id") @db.Uuid
+  rateId           String    @map("rate_id") @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  label            String
+  minutes          Int
+  ratePerHourPaise BigInt    @map("rate_per_hour_paise")
+  amountPaise      BigInt    @map("amount_paise")
+  commissionPaise  BigInt    @map("commission_paise")
+  status           String    @default("held")
+  holdExpiresAt    DateTime  @map("hold_expires_at") @db.Timestamptz(6)
+  paymentId        String?   @map("payment_id") @db.Uuid
+  paidAt           DateTime? @map("paid_at") @db.Timestamptz(6)
+  payoutId         String?   @map("payout_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([venueId, createdAt(sort: Desc)], map: "venue_payments_venue_idx")
+  @@index([userId, createdAt(sort: Desc)], map: "venue_payments_user_idx")
+  @@map("venue_payments")
+}
+
+/// One per venue per month (India time), paid by hand. held | ready | paid (CHECK).
+model VenuePayout {
+  id                 String    @id @db.Uuid
+  venueId            String    @map("venue_id") @db.Uuid
+  ownerUserId        String    @map("owner_user_id") @db.Uuid
+  payoutAccountId    String?   @map("payout_account_id") @db.Uuid
+  period             String
+  paymentCount       Int       @map("payment_count")
+  grossPaise         BigInt    @map("gross_paise")
+  commissionPaise    BigInt    @map("commission_paise")
+  commissionTaxPaise BigInt    @map("commission_tax_paise")
+  tdsPaise           BigInt    @map("tds_paise")
+  amountPaise        BigInt    @map("amount_paise")
+  status             String    @default("held")
+  holdReason         String?   @map("hold_reason")
+  utr                String?
+  paidAt             DateTime? @map("paid_at") @db.Timestamptz(6)
+  markedBy           String?   @map("marked_by") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([venueId, period], map: "venue_payouts_period_key")
+  @@index([status, createdAt], map: "venue_payouts_status_idx")
+  @@map("venue_payouts")
 }

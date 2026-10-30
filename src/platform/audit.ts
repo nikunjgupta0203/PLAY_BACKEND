@@ -43,7 +43,11 @@ export interface AuditEntry {
     | 'community'
     | 'community_post'
     | 'community_payout'
-    | 'community_payment';
+    | 'community_payment'
+    | 'reward_settings'
+    | 'referral'
+    | 'venue_payment'
+    | 'venue_payout';
   targetId: string;
   reason?: string | null;
   details?: Record<string, unknown>;

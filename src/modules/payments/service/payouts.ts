@@ -231,7 +231,7 @@ function payoutLedger(payoutId: string, q: PayoutQuote, sign: 1n | -1n) {
     .map((r) => ({ payoutId, kind: r.kind, amountPaise: r.amountPaise * sign }));
 }
 
-const ENTRY_KINDS = ['charge', 'platform_fee', 'tax', 'refund', 'fee_reversal', 'tax_reversal'];
+const ENTRY_KINDS = ['charge', 'platform_fee', 'tax', 'refund', 'fee_reversal', 'tax_reversal', 'reward_discount', 'reward_reversal'];
 
 const DECIDERS: Staff['role'][] = ['admin', 'finance'];
 

@@ -28,6 +28,8 @@ import './modules/communities/schema/staff.js';
 import './modules/partnerships/schema/index.js';
 import './modules/vendors/schema/index.js';
 import './modules/careers/schema/index.js';
+import './modules/rewards/schema/index.js';
+import './modules/venuepay/schema/index.js';
 import './modules/admin/schema/index.js';
 import './modules/admin/schema/queues.js';
 import './modules/admin/schema/records.js';

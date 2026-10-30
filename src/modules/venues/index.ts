@@ -68,6 +68,10 @@ export const venues = createVenueService({
   repo,
   schedule,
   visits,
+  async announce(venueId) {
+    const [{ db }, { write }] = await Promise.all([import('../../platform/db.js'), import('../../platform/outbox.js')]);
+    await db.$transaction((tx) => write(tx, { topic: 'venue.listed', payload: { venueId } }));
+  },
   media: {
     signUpload: (opts) => cloudinary.signUpload(opts),
     venueRoot: (venueId) => cloudinary.folders.venueRoot(venueId),

@@ -10,6 +10,8 @@
  * Every function is safe to run twice: the outbox is at-least-once, and a
  * duplicate feed row is a smaller harm than a lost one.
  */
+import { Prisma } from '@prisma/client';
+import { db } from './platform/db.js';
 import { events } from './modules/events/index.js';
 import { identity } from './modules/identity/index.js';
 import { notifications } from './modules/notifications/index.js';
@@ -85,7 +87,119 @@ async function entryName(registrationId: string): Promise<string> {
 const humanise = (key: string) =>
   key.replace(/[._-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 
+/**
+ * Feature brief §3 — discovery notices go to the players a listing is for, not
+ * to everyone: same city or within this far of it, and playing one of its
+ * sports. At most this many a week each, so a busy week never reads as spam.
+ * A player who muted the kind gets no row at all (it is promotional).
+ */
+export const DISCOVERY_RADIUS_M = 25_000;
+export const DISCOVERY_PER_WEEK = 3;
+const DISCOVERY_MAX_RECIPIENTS = 5_000;
+const DISCOVERY_TEMPLATES = ['venue.new_nearby', 'event.new_nearby'];
+
+async function nearbyPlayers(input: {
+  template: 'venue.new_nearby' | 'event.new_nearby';
+  targetId: string;
+  city: string;
+  geo: Prisma.Sql;
+  sportIds: string[];
+  exclude: string[];
+}): Promise<string[]> {
+  const rows = await db.$queryRaw<{ userId: string }[]>`
+    SELECT pp.user_id::text AS "userId"
+      FROM player_profiles pp
+      JOIN users u ON u.id = pp.user_id AND u.status = 'active' AND NOT u.is_guest
+      LEFT JOIN notification_preferences np ON np.user_id = pp.user_id
+     WHERE (lower(btrim(coalesce(pp.city, ''))) = lower(btrim(${input.city}))
+            OR (pp.geo IS NOT NULL AND ST_DWithin(pp.geo, (${input.geo}), ${DISCOVERY_RADIUS_M})))
+       AND (cardinality(${input.sportIds}::uuid[]) = 0
+            OR EXISTS (SELECT 1 FROM player_sports ps WHERE ps.player_id = pp.id AND ps.sport_id = ANY(${input.sportIds}::uuid[])))
+       AND NOT (pp.user_id = ANY(${input.exclude}::uuid[]))
+       AND NOT (${input.template} = ANY(coalesce(np.muted, '{}')))
+       AND NOT EXISTS (SELECT 1 FROM notifications n
+                        WHERE n.user_id = pp.user_id AND n.template = ${input.template} AND n.target_id = ${input.targetId})
+       AND (SELECT count(*) FROM notifications n
+             WHERE n.user_id = pp.user_id AND n.template = ANY(${DISCOVERY_TEMPLATES}::text[])
+               AND n.created_at > now() - interval '7 days') < ${DISCOVERY_PER_WEEK}
+     LIMIT ${DISCOVERY_MAX_RECIPIENTS}
+  `;
+  return rows.map((r) => r.userId);
+}
+
 export const notify = {
+  /** Feature brief §3 — "Check-in successful", to everyone on the entry. */
+  async checkedIn(payload: Record<string, unknown>): Promise<void> {
+    const ctx = await entryContext(str(payload['registrationId']) ?? '');
+    if (!ctx) return;
+    await notifications.emitBulk(
+      await membersOf(ctx.entry.id),
+      'checkin.done',
+      { eventTitle: ctx.event.title, categoryName: ctx.category.name },
+      eventTarget(ctx.event),
+    );
+  },
+
+  /** Feature brief §3 — a venue PL4Y listed: the players near it who play what it offers. */
+  async venueListed(payload: Record<string, unknown>): Promise<void> {
+    const venueId = str(payload['venueId']);
+    if (!venueId) return;
+    const venue = await db.venue.findFirst({ where: { id: venueId, deletedAt: null }, select: { id: true, name: true, city: true, createdBy: true } });
+    if (!venue) return;
+    const courts = await db.venueCourt.findMany({ where: { venueId, active: true }, select: { sportIds: true } });
+    const sportIds = [...new Set(courts.flatMap((c) => c.sportIds))];
+    const userIds = await nearbyPlayers({
+      template: 'venue.new_nearby',
+      targetId: venueId,
+      city: venue.city,
+      geo: Prisma.sql`SELECT geo FROM venues WHERE id = ${venueId}::uuid`,
+      sportIds,
+      exclude: [venue.createdBy],
+    });
+    if (userIds.length === 0) return;
+    await notifications.emitBulk(userIds, 'venue.new_nearby', { venueName: venue.name, city: venue.city }, { kind: 'venue', id: venueId });
+  },
+
+  /** Feature brief §3 — a published event: the players near it who play its sport. */
+  async eventListed(payload: Record<string, unknown>): Promise<void> {
+    const eventId = str(payload['eventId']);
+    if (!eventId) return;
+    const event = await events.findById(eventId);
+    if (!event || (event.status !== 'published' && event.status !== 'live')) return;
+    const staff = (await identity.staffFor(eventId)).map((g) => g.userId);
+    const sportName = (await sport.list()).find((s) => s.id === event.sportId)?.name ?? 'your sport';
+    const userIds = await nearbyPlayers({
+      template: 'event.new_nearby',
+      targetId: eventId,
+      city: event.city,
+      geo: Prisma.sql`SELECT coalesce(e.geo, v.geo) FROM events e LEFT JOIN venues v ON v.id = e.venue_id WHERE e.id = ${eventId}::uuid`,
+      sportIds: [event.sportId],
+      exclude: [event.organizerId, ...staff],
+    });
+    if (userIds.length === 0) return;
+    await notifications.emitBulk(
+      userIds,
+      'event.new_nearby',
+      { eventTitle: event.title, city: event.city, sportName, startsAt: event.startsAt.toISOString() },
+      eventTarget(event),
+    );
+  },
+
+  /** Feature brief §3 — "Payment confirmation" for a membership (entries, courts and venues say so themselves). */
+  async paymentCaptured(payload: Record<string, unknown>): Promise<void> {
+    const communityPaymentId = str(payload['communityPaymentId']);
+    const payerId = str(payload['payerUserId']);
+    if (!communityPaymentId || !payerId) return;
+    const row = await db.communityPayment.findUnique({ where: { id: communityPaymentId }, select: { communityId: true, community: { select: { name: true } } } });
+    if (!row) return;
+    await notifications.emit(
+      payerId,
+      'payment.confirmed',
+      { what: `Membership of ${row.community.name}`, amountPaise: str(payload['paidPaise']) ?? str(payload['amountPaise']) ?? '0' },
+      { kind: 'community', id: row.communityId },
+    );
+  },
+
   async registrationConfirmed(payload: Record<string, unknown>): Promise<void> {
     const ctx = await entryContext(str(payload['registrationId']) ?? '');
     if (!ctx) return;

@@ -62,7 +62,7 @@ export function createPayoutsRepo(db: Db) {
           JOIN registrations r ON r.id = le.registration_id
           JOIN event_categories ec ON ec.id = r.event_category_id
          WHERE r.event_id = ${eventId}::uuid
-           AND le.kind IN ('charge', 'platform_fee', 'tax', 'refund', 'fee_reversal', 'tax_reversal', 'gateway_fee')`;
+           AND le.kind IN ('charge', 'platform_fee', 'tax', 'refund', 'fee_reversal', 'tax_reversal', 'gateway_fee', 'reward_discount', 'reward_reversal')`;
       return rows.map((r) => ({
         registrationId: r.registration_id,
         kind: r.kind,

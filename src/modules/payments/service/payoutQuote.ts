@@ -7,6 +7,10 @@
  * already negative. A full refund reverses fee and tax too, so it nets the
  * entry fee to zero; a partial refund writes no reversal, so all of it comes
  * out of the entry fee — the host bears it, never the platform fee or the tax.
+ *
+ * rewards (054) — PL4Y funds a player's discount. `reward_discount` credits the
+ * host with what the player did not pay, so the host is paid on the full price;
+ * a full refund's `reward_reversal` takes it back out with the rest.
  */
 
 export interface QuoteRow {
@@ -57,7 +61,11 @@ export function payoutQuote(rows: QuoteRow[], openReceivablesPaise: bigint, rate
     const e = entries.get(row.registrationId) ?? { fee: 0n, refunded: 0n, bps: row.commissionBps };
     switch (row.kind) {
       case 'charge':
+      case 'reward_discount':
         e.fee += row.amountPaise;
+        break;
+      case 'reward_reversal':
+        e.refunded -= row.amountPaise;
         break;
       case 'platform_fee':
       case 'tax':

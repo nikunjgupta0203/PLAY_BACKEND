@@ -56,8 +56,11 @@ export interface OrderHandle {
   gatewayOrderId: string;
   /** The signed form the client posts to the provider's hosted page. */
   checkout: CheckoutForm;
+  /** What the gateway charges: the quote's total less PL4Y's reward discount. */
   amountPaise: bigint;
   currency: string;
+  /** rewards — what PL4Y took off, and the checkout line's words. Zero and null with no reward. */
+  discount: { paise: bigint; label: string | null };
   quote: {
     entryFeePaise: bigint;
     platformFeePaise: bigint;
@@ -191,6 +194,43 @@ export interface CommunityPaymentsPort {
   idsForUser?(userId: string): Promise<string[]>;
 }
 
+/**
+ * rewards (054) — PL4Y's first-payment and referral discounts. Payments asks
+ * what comes off when it opens an order, and says when one is captured or
+ * refunded in full. Every call is safe to repeat.
+ */
+export interface RewardsPort {
+  discountFor(userId: string, grossPaise: bigint): Promise<{ discountPaise: bigint; rewardIds: string[]; label: string | null }>;
+  onCapture(order: { id: string; payerUserId: string | null; grossPaise: bigint; discountPaise: bigint; rewardIds: string[] }): Promise<void>;
+  onFullRefund(orderId: string): Promise<void>;
+}
+
+/**
+ * pay at venue (055) — a player pays for time played at a venue. Nothing
+ * scarce is held, so a late capture still confirms; only a refunded payment
+ * cannot.
+ */
+export interface VenuePaymentsPort {
+  byId(venuePaymentId: string): Promise<{
+    id: string;
+    userId: string;
+    status: string;
+    amountPaise: bigint;
+    holdExpiresAt: Date;
+    description: string;
+  }>;
+  extendHold(venuePaymentId: string, minutes: number): Promise<unknown>;
+  confirmFromPayment(input: {
+    venuePaymentId: string;
+    paymentId: string;
+    gatewayPaymentId: string | null;
+    discountPaise: bigint;
+  }): Promise<{ confirmedNow: boolean }>;
+  failFromPayment(input: { venuePaymentId: string; paymentId: string; reason: string }): Promise<unknown>;
+  /** A refund in full: the payment is refunded and leaves any unsent payout. */
+  markRefunded?(venuePaymentId: string): Promise<unknown>;
+}
+
 export interface UsersPort {
   byIds(ids: string[]): Promise<{ id: string; displayName: string; email: string; phone: string | null }[]>;
 }
@@ -215,6 +255,10 @@ export interface PaymentsDeps {
   bookings?: BookingsPort;
   /** Absent where communities are not wired (most tests). */
   communityPayments?: CommunityPaymentsPort;
+  /** Absent where rewards are not wired (most tests): every order is full price. */
+  rewards?: RewardsPort;
+  /** Absent where pay at venue is not wired (most tests). */
+  venuePayments?: VenuePaymentsPort;
   users: UsersPort;
   email: EmailPort;
   queue: QueuePort;
@@ -224,6 +268,9 @@ export interface PaymentsDeps {
 }
 
 const CURRENCY = 'INR';
+
+type OrderDiscount = { discountPaise: bigint; rewardIds: string[]; label: string | null };
+const NO_DISCOUNT: OrderDiscount = { discountPaise: 0n, rewardIds: [], label: null };
 
 /**
  * How long a payment may sit pending before reconciliation goes looking (R9).
@@ -279,6 +326,37 @@ export function createPaymentsService(deps: PaymentsDeps) {
   const { db, repo, gateway, events, registration, users, email, queue } = deps;
   const now = deps.now ?? (() => new Date());
 
+  /**
+   * rewards — what PL4Y takes off this payer's order. A rewards failure never
+   * stops a payment: the player is charged the full price instead.
+   */
+  async function discountFor(payerId: string, grossPaise: bigint): Promise<OrderDiscount> {
+    if (!deps.rewards) return NO_DISCOUNT;
+    try {
+      return await deps.rewards.discountFor(payerId, grossPaise);
+    } catch (err) {
+      logger.error({ err, payerId }, 'reward lookup failed — charging the full price');
+      return NO_DISCOUNT;
+    }
+  }
+
+  /** An open order is reused only for the same price and the same discount. */
+  const reusable = (
+    open: { grossPaise: bigint; discountPaise: bigint; createdAt: Date } | null,
+    grossPaise: bigint,
+    d: OrderDiscount,
+  ): boolean =>
+    !!open &&
+    open.grossPaise === grossPaise &&
+    open.discountPaise === d.discountPaise &&
+    now().getTime() - open.createdAt.getTime() < ORDER_REUSE_MS;
+
+  /** The discount line for an order: the fresh label when known, a generic one on a reused order. */
+  const discountLine = (row: { discountPaise: bigint }, d: OrderDiscount): OrderHandle['discount'] => ({
+    paise: row.discountPaise,
+    label: row.discountPaise > 0n ? (d.label ?? 'PL4Y reward') : null,
+  });
+
   // --- orders ----------------------------------------------------------------
 
   /**
@@ -329,20 +407,18 @@ export function createPaymentsService(deps: PaymentsDeps) {
     // gap #22 — the seat stays held while they pay; UPI can take minutes.
     await registration.extendHold(registrationId, HOLD_WHILE_PAYING_MINUTES);
 
+    const discount = await discountFor(actor.userId, quote.totalPaise);
     const open = await repo.openOrderFor(registrationId);
-    if (
-      open &&
-      open.amountPaise === quote.totalPaise &&
-      now().getTime() - open.createdAt.getTime() < ORDER_REUSE_MS
-    ) {
-      return handle(open, quote, reg);
+    if (reusable(open, quote.totalPaise, discount)) {
+      return handle(open!, quote, reg, discount);
     }
 
     const id = newId();
+    const amountPaise = quote.totalPaise - discount.discountPaise;
     let order;
     try {
       order = await gateway.createOrder({
-        amountPaise: quote.totalPaise,
+        amountPaise,
         currency: quote.currency,
         // Gateways cap the receipt (40 characters is the common limit), and our
         // own id is what we want to see on a settlement report.
@@ -361,12 +437,16 @@ export function createPaymentsService(deps: PaymentsDeps) {
       entryFeePaise: quote.entryFeePaise,
       platformFeePaise: quote.platformFeePaise,
       taxPaise: quote.taxPaise,
-      amountPaise: quote.totalPaise,
+      amountPaise,
+      grossPaise: quote.totalPaise,
+      discountPaise: discount.discountPaise,
+      rewardIds: discount.rewardIds,
+      payerUserId: actor.userId,
       currency: quote.currency,
       status: 'created',
     });
 
-    return handle(row, quote, reg);
+    return handle(row, quote, reg, discount);
   }
 
   /**
@@ -404,8 +484,21 @@ export function createPaymentsService(deps: PaymentsDeps) {
     return deps.communityPayments;
   }
 
-  /** Who paid for an order: the captain of an entry, the booker of a court, the member of a community. */
-  async function payerOf(order: { registrationId: string | null; bookingId: string | null; communityPaymentId: string | null }): Promise<string | null> {
+  function venuePaymentsPort(): VenuePaymentsPort {
+    if (!deps.venuePayments) throw new SystemError('INTERNAL', 'Pay at venue is not available.');
+    return deps.venuePayments;
+  }
+
+  /** Who paid for an order: the captain of an entry, the booker of a court, the member of a community, the player at a venue. */
+  async function payerOf(order: {
+    registrationId: string | null;
+    bookingId: string | null;
+    communityPaymentId: string | null;
+    venuePaymentId?: string | null;
+    payerUserId?: string | null;
+  }): Promise<string | null> {
+    if (order.payerUserId) return order.payerUserId;
+    if (order.venuePaymentId) return (await venuePaymentsPort().byId(order.venuePaymentId)).userId;
     if (order.bookingId) return (await bookingsPort().byId(order.bookingId)).userId;
     if (order.communityPaymentId) return (await communityPaymentsPort().byId(order.communityPaymentId)).userId;
     return (await registration.byId(order.registrationId!)).captainUserId;
@@ -427,16 +520,18 @@ export function createPaymentsService(deps: PaymentsDeps) {
 
     const quote = { entryFeePaise: held.pricePaise, platformFeePaise: 0n, taxPaise: 0n, totalPaise: held.pricePaise, currency: CURRENCY };
     const description = `Membership of ${held.communityName}`;
+    const discount = await discountFor(actor.userId, quote.totalPaise);
     const open = await repo.openOrderForCommunityPayment(communityPaymentId);
-    if (open && open.amountPaise === quote.totalPaise && now().getTime() - open.createdAt.getTime() < ORDER_REUSE_MS) {
-      return subjectHandle(open, quote, actor.userId, description);
+    if (reusable(open, quote.totalPaise, discount)) {
+      return subjectHandle(open!, quote, actor.userId, description, discount);
     }
 
     const id = newId();
+    const amountPaise = quote.totalPaise - discount.discountPaise;
     let order;
     try {
       order = await gateway.createOrder({
-        amountPaise: quote.totalPaise,
+        amountPaise,
         currency: quote.currency,
         receipt: id.replace(/-/g, '').slice(0, 40),
         notes: { communityPaymentId },
@@ -452,11 +547,120 @@ export function createPaymentsService(deps: PaymentsDeps) {
       entryFeePaise: quote.entryFeePaise,
       platformFeePaise: quote.platformFeePaise,
       taxPaise: quote.taxPaise,
-      amountPaise: quote.totalPaise,
+      amountPaise,
+      grossPaise: quote.totalPaise,
+      discountPaise: discount.discountPaise,
+      rewardIds: discount.rewardIds,
+      payerUserId: actor.userId,
       currency: quote.currency,
       status: 'created',
     });
-    return subjectHandle(row, quote, actor.userId, description);
+    return subjectHandle(row, quote, actor.userId, description, discount);
+  }
+
+  /**
+   * pay at venue — the order for a started payment. The amount is the price
+   * frozen on it when the player started, never one from the client.
+   */
+  async function createVenueOrder(actor: Actor, venuePaymentId: string): Promise<OrderHandle> {
+    const port = venuePaymentsPort();
+    const held = await port.byId(venuePaymentId);
+    if (held.userId !== actor.userId) throw new SystemError('FORBIDDEN', 'This checkout is not yours.');
+    if (held.status === 'paid') throw new UserError(PaymentCode.ORDER_ALREADY_PAID, 'This is already paid for.');
+    if (held.status === 'refunded' || held.status === 'expired' || held.holdExpiresAt <= now()) {
+      throw new UserError(PaymentCode.HOLD_EXPIRED, 'This checkout ran out. Please start again.');
+    }
+    await port.extendHold(venuePaymentId, HOLD_WHILE_PAYING_MINUTES);
+
+    const quote = { entryFeePaise: held.amountPaise, platformFeePaise: 0n, taxPaise: 0n, totalPaise: held.amountPaise, currency: CURRENCY };
+    const discount = await discountFor(actor.userId, quote.totalPaise);
+    const open = await repo.openOrderForVenuePayment(venuePaymentId);
+    if (reusable(open, quote.totalPaise, discount)) {
+      return subjectHandle(open!, quote, actor.userId, held.description, discount);
+    }
+
+    const id = newId();
+    const amountPaise = quote.totalPaise - discount.discountPaise;
+    let order;
+    try {
+      order = await gateway.createOrder({
+        amountPaise,
+        currency: quote.currency,
+        receipt: id.replace(/-/g, '').slice(0, 40),
+        notes: { venuePaymentId },
+      });
+    } catch (err) {
+      logger.error({ err, venuePaymentId }, 'gateway order creation failed');
+      throw new SystemError(PaymentCode.GATEWAY_UNAVAILABLE, 'Payments are briefly unavailable.');
+    }
+    const row = await repo.insertOrder({
+      id,
+      venuePaymentId,
+      gatewayOrderId: order.id,
+      entryFeePaise: quote.entryFeePaise,
+      platformFeePaise: quote.platformFeePaise,
+      taxPaise: quote.taxPaise,
+      amountPaise,
+      grossPaise: quote.totalPaise,
+      discountPaise: discount.discountPaise,
+      rewardIds: discount.rewardIds,
+      payerUserId: actor.userId,
+      currency: quote.currency,
+      status: 'created',
+    });
+    return subjectHandle(row, quote, actor.userId, held.description, discount);
+  }
+
+  /** The pay-at-venue twin of `refreshPayment`: asks the gateway, through the one settle path. */
+  async function refreshVenuePayment(actor: Actor, venuePaymentId: string): Promise<{ settled: boolean }> {
+    const held = await venuePaymentsPort().byId(venuePaymentId);
+    if (held.userId !== actor.userId) throw new SystemError('FORBIDDEN', 'This checkout is not yours.');
+    if (held.status === 'paid') return { settled: true };
+    let settled = false;
+    for (const order of await repo.ordersForVenuePayment(venuePaymentId)) {
+      if (order.status !== 'created' && order.status !== 'attempted') continue;
+      try {
+        if (await settleOrderFromGateway(order.gatewayOrderId)) settled = true;
+      } catch (err) {
+        logger.warn({ err, orderId: order.id }, 'venue payment refresh failed; reconciliation will retry');
+      }
+    }
+    return { settled };
+  }
+
+  /** The pay-at-venue half of `applyCapture`. A second capture for a paid payment is refunded in full. */
+  async function settleVenueCapture(
+    order: { venuePaymentId: string | null; discountPaise: bigint },
+    payment: { id: string; amountPaise: bigint; gatewayPaymentId: string },
+  ): Promise<void> {
+    const venuePaymentId = order.venuePaymentId!;
+    try {
+      await venuePaymentsPort().confirmFromPayment({
+        venuePaymentId,
+        paymentId: payment.id,
+        gatewayPaymentId: payment.gatewayPaymentId,
+        discountPaise: order.discountPaise,
+      });
+    } catch (err) {
+      if (!isIllegalTransition(err)) throw err;
+      logger.warn({ err, paymentId: payment.id, venuePaymentId }, 'capture for a venue payment that cannot complete — refunding in full');
+      await refund(null, {
+        paymentId: payment.id,
+        amountPaise: payment.amountPaise,
+        reason: LATE_CAPTURE_REASON,
+        idempotencyKey: lateCaptureKey(payment.id),
+      });
+      return;
+    }
+    const keeper = await repo.keeperCapture({ venuePaymentId });
+    if (keeper && keeper !== payment.id) {
+      await refund(null, {
+        paymentId: payment.id,
+        amountPaise: payment.amountPaise,
+        reason: DUPLICATE_PAYMENT_REASON,
+        idempotencyKey: duplicateKey(payment.id),
+      });
+    }
   }
 
   /** The membership twin of `refreshPayment`: asks the gateway, through the one settle path. */
@@ -529,16 +733,18 @@ export function createPaymentsService(deps: PaymentsDeps) {
       totalPaise: booking.amountPaise,
       currency: CURRENCY,
     };
+    const discount = await discountFor(actor.userId, quote.totalPaise);
     const open = await repo.openOrderForBooking(bookingId);
-    if (open && open.amountPaise === quote.totalPaise && now().getTime() - open.createdAt.getTime() < ORDER_REUSE_MS) {
-      return bookingHandle(open, quote, actor.userId, booking.venueName);
+    if (reusable(open, quote.totalPaise, discount)) {
+      return bookingHandle(open!, quote, actor.userId, booking.venueName, discount);
     }
 
     const id = newId();
+    const amountPaise = quote.totalPaise - discount.discountPaise;
     let order;
     try {
       order = await gateway.createOrder({
-        amountPaise: quote.totalPaise,
+        amountPaise,
         currency: quote.currency,
         receipt: id.replace(/-/g, '').slice(0, 40),
         notes: { bookingId },
@@ -554,11 +760,15 @@ export function createPaymentsService(deps: PaymentsDeps) {
       entryFeePaise: quote.entryFeePaise,
       platformFeePaise: quote.platformFeePaise,
       taxPaise: quote.taxPaise,
-      amountPaise: quote.totalPaise,
+      amountPaise,
+      grossPaise: quote.totalPaise,
+      discountPaise: discount.discountPaise,
+      rewardIds: discount.rewardIds,
+      payerUserId: actor.userId,
       currency: quote.currency,
       status: 'created',
     });
-    return bookingHandle(row, quote, actor.userId, booking.venueName);
+    return bookingHandle(row, quote, actor.userId, booking.venueName, discount);
   }
 
   function bookingHandle(
@@ -566,8 +776,9 @@ export function createPaymentsService(deps: PaymentsDeps) {
     quote: OrderHandle['quote'],
     payerId: string,
     venueName: string,
+    discount: OrderDiscount,
   ): Promise<OrderHandle> {
-    return subjectHandle(row, quote, payerId, `Court at ${venueName}`);
+    return subjectHandle(row, quote, payerId, `Court at ${venueName}`, discount);
   }
 
   /** The checkout for a booking or a membership order: the payer's details and one line of description. */
@@ -576,6 +787,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
     quote: OrderHandle['quote'],
     payerId: string,
     description: string,
+    discount: OrderDiscount,
   ): Promise<OrderHandle> {
     const [payer] = await users.byIds([payerId]);
     if (!payer) throw new SystemError('FORBIDDEN', 'The payer could not be found.');
@@ -593,7 +805,15 @@ export function createPaymentsService(deps: PaymentsDeps) {
       logger.error({ err, orderId: row.id }, 'gateway checkout form failed');
       throw new SystemError(PaymentCode.GATEWAY_UNAVAILABLE, 'Payments are briefly unavailable.');
     }
-    return { orderId: row.id, gatewayOrderId: row.gatewayOrderId, checkout, amountPaise: row.amountPaise, currency: row.currency, quote };
+    return {
+      orderId: row.id,
+      gatewayOrderId: row.gatewayOrderId,
+      checkout,
+      amountPaise: row.amountPaise,
+      currency: row.currency,
+      discount: discountLine(row, discount),
+      quote,
+    };
   }
 
   /** The booking twin of `refreshPayment`: asks the gateway, through the one settle path. */
@@ -649,6 +869,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
     row: Awaited<ReturnType<PaymentsRepo['insertOrder']>>,
     quote: Awaited<ReturnType<EventsPort['priceQuote']>>,
     reg: Awaited<ReturnType<RegistrationPort['byId']>>,
+    discount: OrderDiscount,
   ): Promise<OrderHandle> {
     const [[payer], event] = await Promise.all([users.byIds([reg.captainUserId]), events.byId(reg.eventId)]);
     if (!payer) throw new SystemError('FORBIDDEN', 'The payer could not be found.');
@@ -672,6 +893,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
       checkout,
       amountPaise: row.amountPaise,
       currency: row.currency,
+      discount: discountLine(row, discount),
       quote,
     };
   }
@@ -843,17 +1065,40 @@ export function createPaymentsService(deps: PaymentsDeps) {
             amountPaise: order.taxPaise,
           },
         ]);
+        // rewards — what PL4Y paid on the player's behalf. Credits the host
+        // side of a payout (payoutQuote), so the seller is paid on the gross.
+        if (order.discountPaise > 0n) {
+          await repo.writeLedger(tx, [
+            { registrationId: order.registrationId, paymentId: payment.id, kind: 'reward_discount', amountPaise: order.discountPaise },
+          ]);
+        }
         await outboxWrite(tx, {
           topic: 'payment.captured',
           payload: {
             paymentId: payment.id,
             registrationId: order.registrationId,
+            bookingId: order.bookingId,
+            communityPaymentId: order.communityPaymentId,
+            venuePaymentId: order.venuePaymentId,
+            payerUserId: order.payerUserId,
             amountPaise: order.amountPaise.toString(),
           },
         });
       }
       return { payment };
     });
+
+    // rewards — the order's rewards are used and the payer's referral
+    // converts. Idempotent, and never allowed to stop a confirmation: a
+    // rewards failure is finance's to sort out, not the player's.
+    if (deps.rewards) {
+      try {
+        await deps.rewards.onCapture(order);
+      } catch (err) {
+        logger.error({ err, orderId: order.id }, 'rewards capture hook failed');
+        await deps.alert?.('Rewards capture hook failed', `Order ${order.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
 
     // Already refunded as a late capture: never confirm it afterwards, even
     // if the entry has since become confirmable again (a new hold on retry).
@@ -865,6 +1110,10 @@ export function createPaymentsService(deps: PaymentsDeps) {
     }
     if (order.communityPaymentId) {
       await settleCommunityCapture(order.communityPaymentId, result.payment);
+      return;
+    }
+    if (order.venuePaymentId) {
+      await settleVenueCapture(order, { ...result.payment, gatewayPaymentId: entity.id });
       return;
     }
     const registrationId = order.registrationId!;
@@ -1009,6 +1258,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
             registrationId: order.registrationId,
             bookingId: order.bookingId,
             communityPaymentId: order.communityPaymentId,
+            venuePaymentId: order.venuePaymentId,
             reason,
           },
         });
@@ -1023,6 +1273,10 @@ export function createPaymentsService(deps: PaymentsDeps) {
       }
       if (order.communityPaymentId) {
         await communityPaymentsPort().failFromPayment({ communityPaymentId: order.communityPaymentId, paymentId: result.payment.id, reason });
+        return;
+      }
+      if (order.venuePaymentId) {
+        await venuePaymentsPort().failFromPayment({ venuePaymentId: order.venuePaymentId, paymentId: result.payment.id, reason });
         return;
       }
       const registrationId = order.registrationId!;
@@ -1315,6 +1569,12 @@ export function createPaymentsService(deps: PaymentsDeps) {
             amountPaise: -order.taxPaise,
           },
         ]);
+        // rewards — the host's credit for PL4Y's discount goes back too.
+        if (order.discountPaise > 0n) {
+          await repo.writeLedger(tx, [
+            { registrationId: order.registrationId, paymentId: payment.id, refundId: row.id, kind: 'reward_reversal', amountPaise: -order.discountPaise },
+          ]);
+        }
       }
 
       await outboxWrite(tx, {
@@ -1327,6 +1587,16 @@ export function createPaymentsService(deps: PaymentsDeps) {
       });
       return true;
     });
+
+    // rewards — a payment refunded in full gives its rewards back.
+    if (firstApplication && order && deps.rewards) {
+      const total = await repo.refundedTotal(db, payment.id);
+      if (total >= payment.amountPaise) {
+        await deps.rewards.onFullRefund(order.id).catch((err: unknown) => {
+          logger.error({ err, orderId: order.id }, 'rewards refund hook failed');
+        });
+      }
+    }
 
     if (firstApplication && order?.registrationId) {
       await sendPaymentEmail(order.registrationId, 'refunded', row.amountPaise, {
@@ -1392,9 +1662,14 @@ export function createPaymentsService(deps: PaymentsDeps) {
     // entry fee's share of the tax goes back.
     const base = order.entryFeePaise + order.platformFeePaise;
     const entryTaxPaise = base > 0n ? (order.taxPaise * order.entryFeePaise) / base : 0n;
+    // rewards — the discount comes off the entry fee's share first: a player
+    // never gets back more than they paid.
+    const entryShare = order.entryFeePaise + entryTaxPaise - order.discountPaise;
     const full = input.includePlatformFee
       ? payment.amountPaise
-      : order.entryFeePaise + entryTaxPaise;
+      : entryShare > payment.amountPaise
+        ? payment.amountPaise
+        : entryShare;
     const amount =
       input.fractionBps !== undefined ? (full * BigInt(input.fractionBps)) / 10_000n : full;
     if (amount <= 0n) return null;
@@ -1548,6 +1823,33 @@ export function createPaymentsService(deps: PaymentsDeps) {
     });
   }
 
+  /**
+   * portal — PL4Y refunds a pay-at-venue payment in full: a mistaken amount,
+   * a payment the venue disputes. The payment leaves any unsent payout.
+   */
+  async function staffRefundVenuePayment(
+    staff: { userId: string; role: string },
+    input: { venuePaymentId: string; reason: string },
+  ): Promise<Refund> {
+    if (!['admin', 'finance', 'support'].includes(staff.role)) {
+      throw new SystemError('FORBIDDEN', 'Only PL4Y staff can issue a refund.');
+    }
+    const reason = input.reason.trim();
+    if (reason.length === 0) throw new UserError(PaymentCode.NOTHING_TO_REFUND, 'Say why this refund is being made.');
+    const keeper = await repo.keeperCapture({ venuePaymentId: input.venuePaymentId });
+    const payment = keeper ? await repo.paymentById(keeper) : null;
+    if (!payment) throw new UserError(PaymentCode.PAYMENT_NOT_FOUND, 'This payment has nothing left to refund.');
+    logger.info({ staff: staff.userId, venuePaymentId: input.venuePaymentId, reason }, 'staff venue payment refund');
+    const made = await refund(null, {
+      paymentId: payment.id,
+      amountPaise: payment.amountPaise,
+      reason: `staff:${reason}`,
+      idempotencyKey: `venue_refund:${input.venuePaymentId}`,
+    });
+    await deps.venuePayments?.markRefunded?.(input.venuePaymentId);
+    return made;
+  }
+
   // --- reconciliation (R9) ---------------------------------------------------
 
   /**
@@ -1653,15 +1955,17 @@ export function createPaymentsService(deps: PaymentsDeps) {
     const rows = await repo.ledgerForPayment(payment.id);
     // `charge` is the total the player paid; fee and tax are its breakdown, so
     // summing all three would bill them twice on their own receipt.
+    // rewards — the discount reads as money off (negative); its reversal is
+    // bookkeeping for the host's payout and stays off the receipt.
     const lines = rows
-      .filter((r) => r.kind !== 'fee_reversal' && r.kind !== 'tax_reversal')
-      .map((r) => ({ kind: r.kind, amountPaise: r.amountPaise }));
+      .filter((r) => r.kind !== 'fee_reversal' && r.kind !== 'tax_reversal' && r.kind !== 'reward_reversal')
+      .map((r) => ({ kind: r.kind, amountPaise: r.kind === 'reward_discount' ? -r.amountPaise : r.amountPaise }));
     const refunded = rows
       .filter((r) => r.kind === 'refund')
       .reduce((sum, r) => sum + -r.amountPaise, 0n);
 
     return {
-      registrationId: order.registrationId ?? order.bookingId ?? order.communityPaymentId!,
+      registrationId: order.registrationId ?? order.bookingId ?? order.communityPaymentId ?? order.venuePaymentId!,
       paymentId: payment.id,
       gatewayPaymentId: payment.gatewayPaymentId,
       method: payment.method,
@@ -1764,6 +2068,9 @@ export function createPaymentsService(deps: PaymentsDeps) {
     refreshBookingPayment,
     createCommunityOrder,
     refreshCommunityPayment,
+    createVenueOrder,
+    refreshVenuePayment,
+    staffRefundVenuePayment,
     refundForBooking,
     staffRefund,
     staffRefundBooking,

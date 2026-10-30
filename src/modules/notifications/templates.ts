@@ -30,6 +30,12 @@ export const DEEP_LINK_ROUTES = [
   'event_draw',
   /** venue hosts — the application to list a venue, and what was decided. */
   'venue_host',
+  /** rewards — the welcome offer, the player's code and rewards. */
+  'rewards',
+  /** pay at venue — `id` is the player's venue payment (their receipt). */
+  'venue_payment',
+  /** pay at venue — `id` is the venue; its desk, where payments are listed. */
+  'venue_desk',
 ] as const;
 export type DeepLinkRoute = (typeof DEEP_LINK_ROUTES)[number];
 
@@ -156,6 +162,22 @@ export interface TemplatePayloads {
   'community.membership_expired': { communityName: string };
   /** communities R10 — PL4Y sent a month's earnings to the owner's bank. */
   'community.payout_paid': { communityName: string; amountPaise: string; utr: string; period: string };
+  /** Feature brief §3 — the entry's QR was scanned at the desk. */
+  'checkin.done': { eventTitle: string; categoryName: string };
+  /** Feature brief §3 — discovery: a venue PL4Y listed near the player, for a sport they play. */
+  'venue.new_nearby': { venueName: string; city: string };
+  /** Feature brief §3 — discovery: an event published near the player, in a sport they play. */
+  'event.new_nearby': { eventTitle: string; city: string; sportName: string; startsAt: string };
+  /** pay at venue — the player's payment went through. `amountPaise` is what they paid. */
+  'payment.confirmed': { what: string; amountPaise: string };
+  /** pay at venue — the venue's owner and managers: a player paid. `amountPaise` is the undiscounted price. */
+  'venue.payment_received': { playerName: string; label: string; minutes: number; amountPaise: string; venueName: string };
+  /** pay at venue — a month's venue payout was sent. */
+  'venue.payout_paid': { venueName: string; amountPaise: string; utr: string; period: string };
+  /** rewards — a friend the player referred made their first payment. */
+  'referral.converted': { friendName: string; percentBps: number; capPaise: string };
+  /** rewards — a discount is ready to use: a held referral approved, or a refunded payment's reward back. */
+  'reward.available': { reason: 'referral' | 'restored'; percentBps: number; capPaise: string };
 }
 
 export type TemplateKey = keyof TemplatePayloads;
@@ -183,6 +205,8 @@ const ESSENTIAL = new Set<TemplateKey>([
   'payout.status',
   'payout_account.status',
   'community.payout_paid',
+  'payment.confirmed',
+  'venue.payout_paid',
 ]);
 
 export const isEssential = (key: string): boolean => ESSENTIAL.has(key as TemplateKey);
@@ -568,7 +592,62 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
       body: `${rupees(p.amountPaise).trim()} for ${p.communityName} (${p.period}) is on its way to your bank. UTR ${p.utr}.`,
     }),
   },
+  'checkin.done': {
+    render: (p) => ({ title: 'Check-in successful', body: `You’re checked in for ${p.eventTitle} · ${p.categoryName}. Good luck!` }),
+  },
+  'venue.new_nearby': {
+    render: (p) => ({ title: 'A new venue is available near you', body: `${p.venueName} in ${p.city} is now on PL4Y.` }),
+  },
+  'event.new_nearby': {
+    render: (p) => ({
+      title: 'A new event is available',
+      body: `${p.eventTitle} — ${p.sportName} in ${p.city}, ${istWhen(p.startsAt)}.`,
+    }),
+  },
+  'payment.confirmed': {
+    render: (p) => ({ title: 'Payment confirmed', body: `${p.what}.${rupees(p.amountPaise)} paid.` }),
+  },
+  'venue.payment_received': {
+    render: (p) => ({
+      title: `Payment received at ${p.venueName}`,
+      body: `${p.playerName} paid${rupees(p.amountPaise)} for ${minutesText(p.minutes)} of ${p.label}.`,
+    }),
+  },
+  'venue.payout_paid': {
+    render: (p) => ({
+      title: 'Venue earnings paid',
+      body: `${rupees(p.amountPaise).trim()} for ${p.venueName} (${p.period}) is on its way to your bank. UTR ${p.utr}.`,
+    }),
+  },
+  'referral.converted': {
+    render: (p) => ({
+      title: 'Referral reward unlocked',
+      body: `${p.friendName} made their first payment on PL4Y. You get ${offer(p.percentBps, p.capPaise)} on your next payment.`,
+    }),
+  },
+  'reward.available': {
+    render: (p) => ({
+      title: 'Your reward is available',
+      body:
+        p.reason === 'restored'
+          ? `Your payment was refunded, so your ${offer(p.percentBps, p.capPaise)} reward is back for your next payment.`
+          : `${offer(p.percentBps, p.capPaise)} is ready for your next payment.`,
+    }),
+  },
 };
+
+/** "1 hr 30 min". */
+function minutesText(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} min`;
+  return m === 0 ? `${h} hr` : `${h} hr ${m} min`;
+}
+
+/** "10% off (up to ₹100)". */
+function offer(percentBps: number, capPaise: string): string {
+  return `${percentBps / 100}% off (up to${rupees(capPaise)})`;
+}
 
 /** "Sat 12 Oct, 6:00 pm" in India time, for booking notices. */
 function istWhen(iso: string): string {

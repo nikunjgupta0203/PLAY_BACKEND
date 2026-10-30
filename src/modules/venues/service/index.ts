@@ -165,6 +165,8 @@ export interface VenueDeps {
   schedule: SchedulePort;
   media: MediaPort;
   visits?: VisitsPort;
+  /** Feature brief §3 — a venue PL4Y staff listed is announced to the players near it. */
+  announce?(venueId: string): Promise<void>;
   now?: () => Date;
 }
 
@@ -389,6 +391,9 @@ export function createVenueService(deps: VenueDeps) {
     for (const court of input.courts ?? []) {
       await addCourt(actor, id, court);
     }
+    // Only a venue PL4Y listed (an approved host application, the portal) is
+    // news: one a player added for their own event is not.
+    if (actor.platformStaff) await deps.announce?.(id);
     return byId(id);
   }
 
