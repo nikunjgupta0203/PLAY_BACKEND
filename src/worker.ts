@@ -227,6 +227,11 @@ const handlers: Record<string, OutboxHandler> = {
     await notify.partnerInvited(payload);
   },
 
+  'teammate.added': async (payload) => {
+    await registrationNotifier.notify('teammate.added', payload);
+    await notify.teammateAdded(payload);
+  },
+
   'invite.declined': async (payload) => {
     await registrationNotifier.notify('invite.declined', payload);
     await notify.partnerDeclined(payload);

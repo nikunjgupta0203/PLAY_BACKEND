@@ -50,6 +50,8 @@ export type Target =
 export interface TemplatePayloads {
   'registration.confirmed': { eventTitle: string; categoryName: string };
   'partner.invite': { eventTitle: string; categoryName: string };
+  /** Teammate registration — the captain entered this player directly and pays for the team. */
+  'partner.added': { eventTitle: string; categoryName: string; captainName: string };
   /** The captain hears that the invited partner said no. */
   'partner.declined': { eventTitle: string; categoryName: string };
   'match.starting_soon': { eventTitle: string; courtName: string | null; startsAt: string };
@@ -232,6 +234,12 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
     render: (p) => ({
       title: 'You have a partner invite',
       body: `${p.eventTitle} · ${p.categoryName}. Open the email we sent to accept.`,
+    }),
+  },
+  'partner.added': {
+    render: (p) => ({
+      title: `${p.captainName} registered you`,
+      body: `${p.eventTitle} · ${p.categoryName}. You're on their team — your ticket shows in My PL4Y once they pay.`,
     }),
   },
   'partner.declined': {

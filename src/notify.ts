@@ -225,6 +225,20 @@ export const notify = {
     );
   },
 
+  /** Teammate registration — the teammate hears they were entered, before the captain pays. */
+  async teammateAdded(payload: Record<string, unknown>): Promise<void> {
+    const teammate = str(payload['teammateUserId']);
+    const ctx = await entryContext(str(payload['registrationId']) ?? '');
+    if (!teammate || !ctx) return;
+    const [captain] = await identity.contactsByIds([ctx.entry.captainUserId]);
+    await notifications.emit(
+      teammate,
+      'partner.added',
+      { eventTitle: ctx.event.title, categoryName: ctx.category.name, captainName: captain?.displayName || 'A player' },
+      eventTarget(ctx.event),
+    );
+  },
+
   async partnerDeclined(payload: Record<string, unknown>): Promise<void> {
     const ctx = await entryContext(str(payload['registrationId']) ?? '');
     if (!ctx) return;

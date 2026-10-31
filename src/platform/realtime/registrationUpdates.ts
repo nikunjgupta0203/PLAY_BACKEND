@@ -25,6 +25,7 @@ export const REGISTRATION_UPDATE_TOPICS: readonly string[] = [
   'hold.created',
   'invite.created',
   'invite.declined',
+  'teammate.added',
   'registration.confirmed',
   'registration.payment_failed',
   'registration.expired',

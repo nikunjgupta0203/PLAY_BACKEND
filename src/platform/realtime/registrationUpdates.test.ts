@@ -98,7 +98,7 @@ describe('registration realtime notifier', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it('covers exactly the nine topics in the spec', () => {
+  it('covers exactly the nine topics in the spec, plus teammate.added', () => {
     expect([...REGISTRATION_UPDATE_TOPICS].sort()).toEqual([
       'hold.created',
       'invite.created',
@@ -109,6 +109,7 @@ describe('registration realtime notifier', () => {
       'registration.confirmed',
       'registration.expired',
       'registration.payment_failed',
+      'teammate.added',
     ]);
   });
 });

@@ -521,6 +521,11 @@ type AnalyticsWeekday {
   wins: Int!
 }
 
+type ApplyReferralCodePayload {
+  referral: Referral
+  userError: UserError
+}
+
 input ApplyToHostVenueInput {
   address: String!
 
@@ -1515,6 +1520,16 @@ type CreateOrganisationPayload {
 type CreatePaymentOrderPayload {
   amountPaise: Int
   checkoutForm: CheckoutForm
+
+  """
+  The checkout line: "Welcome offer", "Referral reward". Null with no discount.
+  """
+  discountLabel: String
+
+  """
+  rewards — what PL4Y takes off the quote. amountPaise = quote.totalPaise − discountPaise.
+  """
+  discountPaise: Int!
   gatewayOrderId: String
   quote: PriceQuote
   userError: UserError
@@ -1546,14 +1561,27 @@ enum DeepLinkRoute {
   ORGANIZER_DASHBOARD
   ORGANIZER_PAYOUTS
   PAYMENT_HISTORY
+  REWARDS
   SUPPORT_TICKET
+  VENUE_DESK
   VENUE_HOST
+  VENUE_PAYMENT
 }
 
 enum DevicePlatform {
   ANDROID
   IOS
   WEB
+}
+
+"""
+What PL4Y takes off a payment of this amount for this player, before checkout.
+"""
+type DiscountPreview {
+  discountPaise: Int!
+  grossPaise: Int!
+  label: String
+  totalPaise: Int!
 }
 
 """Plan 4 — how a batter was out off a delivery."""
@@ -2916,6 +2944,11 @@ type Mutation {
   """portal R6 — a note for the team. The applicant never sees it."""
   addPartnershipNote(body: String!, id: ID!): PartnershipApplicationPayload!
 
+  """
+  Teammate registration — the captain enters a teammate who has a PL4Y account (a PlayerProfile id from in-app search) and pays for the team; no invite to accept. When the team is whole the seat is held for payment (PAYMENT_PENDING), or the team joins the waitlist if the draw is full. Once paid, the QR ticket shows on every teammate’s own login. A teammate with no account is still invited by email.
+  """
+  addTeammate(playerId: ID!, registrationId: ID!): RegistrationPayload!
+
   """portal R6 — a note for the team. The seller never sees it."""
   addVendorNote(body: String!, id: ID!): VendorApplicationPayload!
   addVenuePhoto(
@@ -2971,6 +3004,11 @@ type Mutation {
   communities R10 — refund one membership payment in full. The period it bought is void (the member’s paid-until goes back, and the membership ends if that is already past); it comes out of the month’s payout, or finance is told to recover it if that payout was already sent. Admin and finance.
   """
   adminRefundCommunityPayment(communityPaymentId: ID!, reason: String!): StaffCommunityRefundPayload!
+
+  """
+  Portal — refund a pay-at-venue payment in full. It leaves any unsent payout. Admin, finance and support.
+  """
+  adminRefundVenuePayment(reason: String!, venuePaymentId: ID!): VenuePaymentRefundPayload!
   adminReinstateOrganisation(organisationId: ID!, reason: String!): OrganisationPayload!
   adminReinstateUser(reason: String!, userId: ID!): AdminUserPayload!
 
@@ -3020,6 +3058,11 @@ type Mutation {
   adminSetOrganisationOwner(email: String!, organisationId: ID!, reason: String!): CreateOrganisationPayload!
 
   """
+  Portal — switch Pay at venue on or off for a venue. Admin and support. The reason goes in the audit log.
+  """
+  adminSetPayAtVenue(enabled: Boolean!, reason: String!, venueId: ID!): SetPayAtVenuePayload!
+
+  """
   Admins only: make someone admin, support or finance, or (role null) take it away. By `userId` (staff already listed) or `email` (someone new).
   """
   adminSetPlatformRole(email: String, reason: String!, role: PlatformStaffRole, userId: ID): PlatformStaffPayload!
@@ -3038,6 +3081,11 @@ type Mutation {
   The next round from a round whose heats are all final: the top `perHeat` of each heat, then the `best` of the rest across heats.
   """
   advanceHeats(best: Int, eventCategoryId: ID!, name: String, perHeat: Int!): HeatPayload!
+
+  """
+  A new player names who sent them. The friend’s reward unlocks on this player’s first payment.
+  """
+  applyReferralCode(code: String!): ApplyReferralCodePayload!
 
   """
   venue hosts R1–R4 — asks PL4Y to list your venue. Saves the bank details as your payout account (the errors of savePayoutAccount apply), then queues the application for review. One open application at a time (HOST_APPLICATION_PENDING).
@@ -3192,6 +3240,11 @@ type Mutation {
   createVenue(input: CreateVenueInput!): VenuePayload!
 
   """
+  payments R20 — the order for a started venue payment. The amount is the one frozen on it.
+  """
+  createVenuePaymentOrder(venuePaymentId: ID!): CreatePaymentOrderPayload!
+
+  """
   bookings R8 — the desk books a court for someone in person or on the phone. Same constraint, no bypass.
   """
   createWalkInBooking(
@@ -3327,6 +3380,11 @@ type Mutation {
   markPayoutPaid(amountPaise: Int!, id: ID!, utr: String!): PayoutPayload!
 
   """
+  Portal — record a READY venue payout as sent. `amountPaise` must be its exact amount. Admin and finance.
+  """
+  markVenuePayoutPaid(amountPaise: Int!, id: ID!, utr: String!): VenuePayoutPayload!
+
+  """
   Organizer staff only. Sends `message` (1–500 characters, plain text) to every confirmed entrant as a notification — feed row and push. At most 5 an hour per event.
   """
   messageEventPlayers(eventId: ID!, message: String!): MessageEventPlayersPayload!
@@ -3395,6 +3453,7 @@ type Mutation {
   """
   refreshPayment(registrationId: ID!): RefreshPaymentPayload!
   refreshSession(client: AuthClient = APP, refreshToken: String!): SessionPayload!
+  refreshVenuePayment(venuePaymentId: ID!): RefreshPaymentPayload!
 
   """
   R8 — allowed until the first match leaves `scheduled`, then DRAW_LOCKED.
@@ -3512,6 +3571,11 @@ type Mutation {
   revealPayoutAccount(id: ID!, reason: String!): PayoutAccountDetailsPayload!
 
   """
+  Portal — pay out (approve) or turn down a HELD referral. Admin, finance and support.
+  """
+  reviewReferral(approve: Boolean!, id: ID!, reason: String!): ReviewReferralPayload!
+
+  """
   venues R6, R7 — only after playing here in the last 12 months (REVIEW_NOT_ELIGIBLE). A second call edits your review.
   """
   reviewVenue(input: ReviewVenueInput!): VenueReviewPayload!
@@ -3531,6 +3595,11 @@ type Mutation {
     organisationId: ID
     pan: String!
   ): PayoutAccountPayload!
+
+  """
+  Owners and managers add or change an hourly rate. Switch a rate off with active: false.
+  """
+  saveVenuePayRate(input: VenuePayRateInput!, venueId: ID!): SaveVenuePayRatePayload!
 
   """
   Runs the greedy scheduler over everything that is ready and unplaced (R11, R12). Also runs from a job whenever a match becomes ready.
@@ -3613,6 +3682,11 @@ type Mutation {
   startMatch(firstServer: MatchSide, matchId: ID!): MatchPayload!
 
   """
+  Freeze the rate and price for this stretch of play. Then createVenuePaymentOrder opens checkout.
+  """
+  startVenuePayment(minutes: Int!, rateId: ID!, venueId: ID!): StartVenuePaymentPayload!
+
+  """
   careers R1–R6 — the careers form, sent. No sign-in. Emails the applicant and tells the team.
   """
   submitCareerApplication(input: SubmitCareerApplicationInput!): SubmitCareerApplicationPayload!
@@ -3684,6 +3758,11 @@ type Mutation {
   updateProfileDetails(input: UpdateProfileDetailsInput!): ProfilePayload!
   updateProfileLocation(input: UpdateProfileLocationInput!): ProfilePayload!
   updateProfileSports(input: UpdateProfileSportsInput!): ProfilePayload!
+
+  """
+  Portal — change the reward rules. Admin and finance. The reason goes in the audit log.
+  """
+  updateRewardSettings(input: RewardSettingsInput!, reason: String!): RewardSettingsPayload!
   updateVenue(
     input: UpdateVenueInput!
 
@@ -3725,6 +3804,24 @@ type MyRanking {
 
   """When the board was last rebuilt (rating R4 — weekly)."""
   updatedAt: DateTime
+}
+
+"""Everything on the Rewards screen."""
+type MyRewards {
+  """
+  Inside the window after joining, before the first payment, no code yet.
+  """
+  canEnterCode: Boolean!
+  referralCode: String!
+  referralLink: String!
+
+  """Friends this player referred, newest first."""
+  referrals: [Referral!]!
+
+  """The code this player entered, if any."""
+  referredBy: Referral
+  rewards: [Reward!]!
+  welcomeOffer: WelcomeOffer!
 }
 
 """The place directly above yours on a board."""
@@ -3770,6 +3867,7 @@ enum NotificationKind {
   CATEGORY_CANCELLED
   CHAT_MESSAGE
   CHAT_REQUEST
+  CHECKIN_DONE
   COMMUNITY_JOIN_REQUEST
   COMMUNITY_MEMBERSHIP_EXPIRED
   COMMUNITY_MEMBER_JOINED
@@ -3781,6 +3879,7 @@ enum NotificationKind {
   DRAW_GENERATED
   EVENT_CANCELLED
   EVENT_CHANGED
+  EVENT_NEW_NEARBY
   EVENT_REPORT_RESOLVED
   GAME_CANCELLED
   GAME_CHANGED
@@ -3805,17 +3904,24 @@ enum NotificationKind {
   MATCH_STARTING_SOON
   ORGANISATION_MEMBERSHIP
   ORGANIZER_MESSAGE
+  PARTNER_ADDED
   PARTNER_DECLINED
   PARTNER_INVITE
+  PAYMENT_CONFIRMED
   PAYMENT_UPDATED
   PAYOUT_ACCOUNT_STATUS
   PAYOUT_STATUS
   RANKING_CHANGED
   RATING_CHANGED
+  REFERRAL_CONVERTED
   REGISTRATION_CONFIRMED
   REGISTRATION_EXPIRED
+  REWARD_AVAILABLE
   SUPPORT_REPLY
   VENUE_HOST_STATUS
+  VENUE_NEW_NEARBY
+  VENUE_PAYMENT_RECEIVED
+  VENUE_PAYOUT_PAID
   WAITLIST_OFFER
 }
 
@@ -4274,6 +4380,23 @@ type PartnershipStatusCount {
   status: PartnershipStatus!
 }
 
+type PayAtVenueOffer {
+  """Show the Pay at venue button."""
+  available: Boolean!
+
+  """PL4Y has switched it on for this venue."""
+  enabled: Boolean!
+  maxMinutes: Int!
+  minMinutes: Int!
+  rates: [VenuePayRate!]!
+
+  """
+  Why not, for the owner: not_enabled (PL4Y has not switched it on) | no_rates | payout_account (not verified).
+  """
+  reason: String
+  stepMinutes: Int!
+}
+
 type PaymentConnection {
   edges: [PaymentEdge!]!
   pageInfo: PageInfo!
@@ -4706,6 +4829,9 @@ type Query {
   """portal — every organisation, newest first. Staff only."""
   adminOrganisations(first: Int, offset: Int, search: String, verification: OrganisationVerification): OrganisationPage!
   adminOverview: AdminOverview!
+
+  """Portal — referrals, newest first. Filter HELD for the review queue."""
+  adminReferrals(first: Int = 100, status: ReferralStatus): [Referral!]!
   adminStaff: [PlatformStaffMember!]!
   adminSupportTicket(id: ID!): StaffSupportTicket
   adminSupportTickets(first: Int, offset: Int, search: String, status: SupportTicketStatus): StaffSupportTicketPage!
@@ -4715,6 +4841,11 @@ type Query {
   portal — find people by email, name, phone or id, newest first. With a status and no search, everyone in that status.
   """
   adminUsers(first: Int, offset: Int, search: String!, status: AdminUserStatus): AdminUserPage!
+
+  """
+  Portal — pay-at-venue payments, newest first, optionally for one venue.
+  """
+  adminVenuePayments(first: Int = 100, venueId: ID): [VenuePayment!]!
   careerApplication(id: ID!): CareerApplication
 
   """portal — careers applications, newest first. At most 100 a page."""
@@ -4879,12 +5010,14 @@ type Query {
 
   """Everything the viewer has entered, as captain or as partner."""
   myRegistrations: [Registration!]!
+  myRewards: MyRewards!
   mySupportTickets(first: Int, offset: Int): SupportTicketPage!
 
   """
   venue hosts — your latest application to list a venue, whatever was decided. Null if you never applied.
   """
   myVenueHostApplication: VenueHostApplication
+  myVenuePayments(first: Int = 30): [VenuePayment!]!
 
   """
   app States — "no availability that day" offers the next date that has some.
@@ -4957,6 +5090,9 @@ type Query {
 
   """Every money movement against one registration, oldest first."""
   registrationLedger(registrationId: ID!): [LedgerEntry!]!
+  rewardPreview(amountPaise: Int!): DiscountPreview!
+  rewardSettings: RewardSettings!
+  rewardStats: RewardStats!
   sport(slug: String!): Sport
 
   """Active sports, in display order. Retired sports are hidden (sport R3)."""
@@ -4998,6 +5134,23 @@ type Query {
   portal — applications to list a venue. PENDING is oldest first (first come, first reviewed); the others, and no status, newest first. At most 200.
   """
   venueHostApplications(status: VenueHostApplicationStatus): [VenueHostApplication!]!
+  venuePayQuote(minutes: Int!, rateId: ID!, venueId: ID!): VenuePayQuote!
+
+  """
+  The owner’s setup: every rate (switched-off ones too), why the button is or isn’t showing, and payouts. Managers and up.
+  """
+  venuePaySetup(venueId: ID!): VenuePaySetup!
+
+  """The player’s own, or one at a venue this person runs."""
+  venuePayment(id: ID!): VenuePayment
+
+  """
+  The operator dashboard: paid and refunded payments at this venue, newest first. Desk staff and up.
+  """
+  venuePaymentsAt(first: Int = 100, from: DateTime, to: DateTime, venueId: ID!): [VenuePayment!]!
+
+  """Portal — held and ready venue payouts, oldest first."""
+  venuePayoutsOpen: [VenuePayout!]!
   venueSchedule(date: String!, venueId: ID!): VenueSchedule!
   venueStaff(venueId: ID!): [VenueStaffMember!]!
 
@@ -5169,6 +5322,33 @@ input RecordScoreEventInput {
   wicket: Dismissal
 }
 
+type Referral {
+  code: String!
+  convertedAt: DateTime
+  createdAt: DateTime!
+
+  """The player who was referred."""
+  friend: PlayerProfile
+
+  """
+  shared_phone | shared_device | monthly_cap | referrer_inactive | referrals_off
+  """
+  holdReason: String
+  id: ID!
+  referrer: PlayerProfile
+  status: ReferralStatus!
+}
+
+"""
+PENDING — waiting for the friend’s first payment. CONVERTED — reward issued. HELD — PL4Y is checking it. REJECTED.
+"""
+enum ReferralStatus {
+  CONVERTED
+  HELD
+  PENDING
+  REJECTED
+}
+
 type RefreshPaymentPayload {
   settled: Boolean!
   userError: UserError
@@ -5336,6 +5516,11 @@ enum ResultSource {
   TYPED
 }
 
+type ReviewReferralPayload {
+  referral: Referral
+  userError: UserError
+}
+
 """venues R6 — creates your review, or edits it if you already wrote one."""
 input ReviewVenueInput {
   """At most 1,000 characters."""
@@ -5344,6 +5529,89 @@ input ReviewVenueInput {
   """1-5."""
   stars: Int!
   venueId: ID!
+}
+
+"""
+A discount the player holds. Funded by PL4Y; the seller is paid in full.
+"""
+type Reward {
+  capPaise: Int!
+  createdAt: DateTime!
+
+  """What it took off, once used."""
+  discountPaise: Int
+  expiresAt: DateTime
+  id: ID!
+  kind: RewardKind!
+
+  """1000 = 10%."""
+  percentBps: Int!
+  status: RewardStatus!
+  usedAt: DateTime
+}
+
+enum RewardKind {
+  FIRST_PAYMENT
+  REFERRAL
+}
+
+"""The rules. Changes apply to rewards issued from then on."""
+type RewardSettings {
+  """
+  On: the welcome offer and one referral reward can combine on a payment.
+  """
+  allowStacking: Boolean!
+  capPaise: Int!
+
+  """Off: no discount is given at all."""
+  enabled: Boolean!
+  minOrderPaise: Int!
+  percentBps: Int!
+  referralEnabled: Boolean!
+  referralExpiryDays: Int!
+
+  """
+  Rewards a referrer can earn in 30 days before the rest are held for review.
+  """
+  referralMonthlyCap: Int!
+
+  """Days after joining that a code can still be entered."""
+  referralWindowDays: Int!
+  updatedAt: DateTime!
+}
+
+input RewardSettingsInput {
+  allowStacking: Boolean
+  capPaise: Int
+  enabled: Boolean
+  minOrderPaise: Int
+  percentBps: Int
+  referralEnabled: Boolean
+  referralExpiryDays: Int
+  referralMonthlyCap: Int
+  referralWindowDays: Int
+}
+
+type RewardSettingsPayload {
+  settings: RewardSettings
+  userError: UserError
+}
+
+type RewardStats {
+  discountGivenPaise: Int!
+  firstPaymentUsed: Int!
+  referralsConverted: Int!
+  referralsHeld: Int!
+}
+
+"""
+AVAILABLE — counts on the next payment. USED — spent on a payment. EXPIRED, VOID — never counts.
+"""
+enum RewardStatus {
+  AVAILABLE
+  EXPIRED
+  USED
+  VOID
 }
 
 """
@@ -5386,6 +5654,11 @@ input RuleTweaksInput {
 
   """Set sports: sets to win (1 = one set, 2 = best of 3)."""
   setsToWin: Int
+}
+
+type SaveVenuePayRatePayload {
+  rate: VenuePayRate
+  userError: UserError
 }
 
 """
@@ -5534,6 +5807,11 @@ type SessionPayload {
   userError: UserError
 }
 
+type SetPayAtVenuePayload {
+  offer: PayAtVenueOffer
+  userError: UserError
+}
+
 """Kicks taken, in order: true scored, false missed."""
 type Shootout {
   a: [Boolean!]!
@@ -5645,6 +5923,11 @@ type StandingRow {
   registration: Registration
   seed: Int!
   wins: Int!
+}
+
+type StartVenuePaymentPayload {
+  userError: UserError
+  venuePayment: VenuePayment
 }
 
 """profile R8 — one sport's record, materialised on match completion."""
@@ -6221,6 +6504,11 @@ type Venue {
   location: GeoPoint!
   name: String!
   openingHours: [OpeningHours!]!
+
+  """
+  Pay at venue: whether the button shows, and the activities with their hourly rates.
+  """
+  payAtVenue: PayAtVenueOffer!
   photoUrls: [String!]!
 
   """
@@ -6501,9 +6789,124 @@ enum VenuePartnership {
   LISTING
 }
 
+"""
+The breakdown shown before paying: duration, rate, amount, PL4Y’s reward, total.
+"""
+type VenuePayQuote {
+  amountPaise: Int!
+  discountLabel: String
+  discountPaise: Int!
+  label: String!
+  minutes: Int!
+  ratePerHourPaise: Int!
+  totalPaise: Int!
+}
+
+"""An hourly rate for one activity or resource at a venue."""
+type VenuePayRate {
+  active: Boolean!
+  id: ID!
+  label: String!
+  position: Int!
+  ratePerHourPaise: Int!
+  sportId: ID
+}
+
+input VenuePayRateInput {
+  active: Boolean = true
+
+  """Set to change a rate; omit to add one."""
+  id: ID
+  label: String!
+  position: Int = 0
+  ratePerHourPaise: Int!
+  sportId: ID
+}
+
+type VenuePaySetup {
+  offer: PayAtVenueOffer!
+  payouts: [VenuePayout!]!
+  rates: [VenuePayRate!]!
+}
+
 type VenuePayload {
   userError: UserError
   venue: Venue
+}
+
+"""One stretch of play paid for at a venue."""
+type VenuePayment {
+  """The price of the time. The venue is paid on this."""
+  amountPaise: Int!
+  createdAt: DateTime!
+
+  """PL4Y’s reward discount on it, once paid."""
+  discountPaise: Int!
+  id: ID!
+  label: String!
+  method: String
+  minutes: Int!
+  paidAt: DateTime
+
+  """What the player paid: amount − discount."""
+  paidPaise: Int!
+  player: PlayerProfile
+  ratePerHourPaise: Int!
+
+  """The gateway’s payment id: what support and the venue quote."""
+  reference: String
+  status: VenuePaymentStatus!
+  venueId: ID!
+  venueName: String!
+}
+
+type VenuePaymentRefundPayload {
+  refundId: ID
+  userError: UserError
+}
+
+enum VenuePaymentStatus {
+  EXPIRED
+  FAILED
+  HELD
+  PAID
+  REFUNDED
+}
+
+"""
+One month of pay-at-venue payments for one venue, less PL4Y’s 10%, GST on it and TDS.
+"""
+type VenuePayout {
+  amountPaise: Int!
+  commissionPaise: Int!
+  commissionTaxPaise: Int!
+  createdAt: DateTime!
+  grossPaise: Int!
+  holdReason: String
+  id: ID!
+  owner: PlayerProfile
+  paidAt: DateTime
+  paymentCount: Int!
+
+  """Masked. PL4Y staff only."""
+  payoutAccount: PayoutAccount
+  period: String!
+  status: VenuePayoutStatus!
+  tdsPaise: Int!
+  utr: String
+  venueId: ID!
+  venueName: String!
+}
+
+type VenuePayoutPayload {
+  payout: VenuePayout
+  userError: UserError
+}
+
+enum VenuePayoutStatus {
+  HELD
+  PAID
+  READY
 }
 
 type VenuePhoto {
@@ -6626,4 +7029,14 @@ input WalkInBookingInput {
 enum WalkInPayment {
   COMP
   OFFLINE
+}
+
+"""
+The first-payment discount. `available` is false once spent, or for a player who had already paid.
+"""
+type WelcomeOffer {
+  available: Boolean!
+  capPaise: Int!
+  minOrderPaise: Int!
+  percentBps: Int!
 }

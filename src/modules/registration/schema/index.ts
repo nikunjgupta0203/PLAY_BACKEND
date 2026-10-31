@@ -374,6 +374,30 @@ builder.mutationFields((t) => ({
     },
   }),
 
+  addTeammate: t.field({
+    type: RegistrationPayload,
+    description:
+      'Teammate registration — the captain enters a teammate who has a PL4Y account (a ' +
+      'PlayerProfile id from in-app search) and pays for the team; no invite to accept. ' +
+      'When the team is whole the seat is held for payment (PAYMENT_PENDING), or the team ' +
+      'joins the waitlist if the draw is full. Once paid, the QR ticket shows on every ' +
+      'teammate’s own login. A teammate with no account is still invited by email.',
+    args: {
+      registrationId: t.arg.id({ required: true }),
+      playerId: t.arg.id({ required: true }),
+    },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() =>
+        registration.addTeammate(actor, {
+          registrationId: String(args.registrationId),
+          playerId: String(args.playerId),
+        }),
+      );
+      return { registration: data, userError };
+    },
+  }),
+
   acceptPartnerInvite: t.field({
     type: RegistrationPayload,
     description:

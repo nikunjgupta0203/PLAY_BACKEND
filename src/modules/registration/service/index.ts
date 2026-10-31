@@ -1089,6 +1089,116 @@ export function createRegistrationService(deps: RegistrationDeps) {
     return byId(row.id);
   }
 
+  /**
+   * Teammate registration — the captain enters a teammate directly and pays
+   * for both, with no invite to accept. The teammate must already have a
+   * PL4Y account (picked from in-app search), so the entry, and once paid its
+   * QR ticket, shows on their own login. A teammate with no account still
+   * goes through `invitePartner` by email.
+   *
+   * Everything `acceptInvite` checks for the partner is checked here instead,
+   * because here is the only moment we see them: eligibility (R7), not already
+   * entered (gap #27), and a free spot on the team (plan 3b). When the team is
+   * whole the seat is taken (R2) — or the team queues if the draw filled (R17).
+   */
+  async function addTeammate(
+    actor: Actor,
+    input: { registrationId: string; playerId: string },
+  ): Promise<Registration> {
+    const row = await repo.byId(input.registrationId);
+    if (!row) throw notFound();
+    if (row.captainUserId !== actor.userId) throw forbidden();
+    const status = row.status as RegistrationStatus;
+    if (status !== 'draft' && status !== 'awaiting_partner') {
+      throw new UserError(RegistrationCode.TEAM_COMPLETE, 'This entry already has its team.');
+    }
+
+    // I1 — a private or unknown profile reads the same: not found.
+    if (!UUID_RE.test(input.playerId)) throw notFound();
+    const teammateId = await profile.userIdForPlayer(input.playerId);
+    if (!teammateId) throw notFound();
+    if (teammateId === actor.userId) {
+      throw new UserError(RegistrationCode.CANNOT_INVITE_SELF, 'You are already on this entry.');
+    }
+
+    const category = await events.categoryById(row.eventCategoryId);
+    if (category.teamSize < 2) throw forbidden();
+    await assertOpen(row.eventCategoryId, { allowFull: true });
+
+    const teammate = await profile.findByUserId(teammateId);
+    if (!teammate || teammate.sports.length === 0) {
+      throw new UserError(RegistrationCode.PARTNER_INELIGIBLE, 'That player has not chosen a sport yet.');
+    }
+    await assertPartnerEligible(teammateId, category);
+
+    const alreadyEntered = () =>
+      new UserError(RegistrationCode.PARTNER_ALREADY_ENTERED, 'That player is already entered in this draw.');
+    if (await repo.playerHasLiveEntry(teammateId, row.eventCategoryId, LIVE_STATUSES)) throw alreadyEntered();
+
+    const spots = category.teamSize - 1;
+
+    await db.$transaction(async (tx) => {
+      // Ahead of createTeam, which references the category — repo.lockCategory.
+      // It also serialises this against an invite being accepted in the draw.
+      await repo.lockCategory(tx, row.eventCategoryId);
+      if (await repo.playerHasLiveEntry(teammateId, row.eventCategoryId, LIVE_STATUSES, tx)) throw alreadyEntered();
+
+      const current = (await repo.byId(row.id)) ?? row;
+      const from = current.status as RegistrationStatus;
+      if (from !== 'draft' && from !== 'awaiting_partner') {
+        throw new UserError(RegistrationCode.TEAM_COMPLETE, 'This entry already has its team.');
+      }
+
+      const pending = (await repo.invitesFor(row.id)).filter((i) => i.status === 'pending');
+      // A pair has one seat for a partner: adding one directly supersedes any
+      // open invite, the same as re-inviting does.
+      if (spots === 1) {
+        for (const old of pending) await repo.settleInvite(tx, old.id, 'expired');
+      }
+      const joined = current.teamId ? (await repo.countTeamMembers(tx, current.teamId)) - 1 : 0;
+      const open = spots === 1 ? 0 : pending.length;
+      if (joined + open >= spots) {
+        throw new UserError(RegistrationCode.TEAM_COMPLETE, 'Every spot on this team is taken or invited.');
+      }
+
+      let teamId = current.teamId;
+      if (!teamId) {
+        teamId = newId();
+        await repo.createTeam(tx, {
+          id: teamId,
+          eventCategoryId: row.eventCategoryId,
+          name: null,
+          members: [
+            { userId: row.captainUserId, isCaptain: true },
+            { userId: teammateId, isCaptain: false },
+          ],
+        });
+      } else {
+        await repo.addTeamMember(tx, teamId, teammateId);
+      }
+
+      await outboxWrite(tx, {
+        topic: 'teammate.added',
+        payload: { registrationId: row.id, teammateUserId: teammateId, captainUserId: row.captainUserId },
+      });
+
+      // R2 — the seat is taken when the team is whole, not before (plan 3b).
+      if ((await repo.countTeamMembers(tx, teamId)) >= category.teamSize) {
+        await seatOrQueue(tx, current, from, { queueIfFull: true, teamId });
+      } else {
+        if (!current.teamId) await repo.attachTeam(tx, row.id, teamId);
+        // A draft is not a live entry, so the teammate would not count as
+        // entered (gap #27) and could be put on a second team meanwhile.
+        if (from === 'draft') {
+          assertTransition('draft', 'awaiting_partner');
+          await repo.transition(tx, row.id, 'draft', 'awaiting_partner');
+        }
+      }
+    });
+
+    return byId(row.id);
+  }
+
   async function declineInvite(actor: Actor, token: string): Promise<void> {
     const invite = await repo.inviteByToken(token);
     if (!invite) throw notFound();
@@ -2041,6 +2151,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
     promoteWaitlist,
     invitePartner,
     acceptInvite,
+    addTeammate,
     declineInvite,
     expireInvite,
     confirmFromPayment,

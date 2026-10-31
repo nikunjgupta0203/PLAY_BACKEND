@@ -1504,3 +1504,120 @@ describe('registration — gap review fixes (2026-10-03)', () => {
     expect((await registration.byId(waiting.id)).status).toBe('expired');
   });
 });
+
+describe('teammate registration (captain enters and pays for a teammate)', () => {
+  it('a doubles captain adds a teammate directly: the seat is held at once, no invite to accept', async () => {
+    const { categoryId } = await publishedCategory({ capacity: 2, format: 'doubles' });
+    const captain = await makePlayer('Captain');
+    const mate = await makePlayer('Mate');
+
+    const reg = await registration.begin(captain.actor, { eventCategoryId: categoryId });
+    const added = await registration.addTeammate(captain.actor, { registrationId: reg.id, playerId: mate.playerId });
+
+    expect(added.status).toBe('payment_pending');
+    expect(added.holdExpiresAt).not.toBeNull();
+    expect((await registration.teamFor(reg.id)).map((m) => m.userId).sort()).toEqual(
+      [captain.userId, mate.userId].sort(),
+    );
+    expect(await prisma.outbox.count({ where: { topic: 'teammate.added' } })).toBe(1);
+    // The entry is on the teammate's own login already.
+    expect((await registration.listForUser(mate.userId)).map((r) => r.id)).toContain(reg.id);
+  });
+
+  it('once the captain pays, the teammate has the QR ticket on their own login', async () => {
+    const { categoryId } = await publishedCategory({ capacity: 4, format: 'doubles' });
+    const captain = await makePlayer('Captain');
+    const mate = await makePlayer('Mate');
+    const stranger = await makePlayer('Stranger');
+
+    const reg = await registration.begin(captain.actor, { eventCategoryId: categoryId });
+    await registration.addTeammate(captain.actor, { registrationId: reg.id, playerId: mate.playerId });
+    expect(await registration.checkInToken(mate.actor, reg.id)).toBeNull();
+    // R6 — the teammate cannot pay; the captain does.
+    expect(await errorCode(() => payments.createOrder(mate.actor, reg.id))).toBe('FORBIDDEN');
+
+    await payFor(captain, reg.id);
+
+    const mine = (await registration.listForUser(mate.userId)).find((r) => r.id === reg.id);
+    expect(mine?.status).toBe('confirmed');
+    const token = await registration.checkInToken(mate.actor, reg.id);
+    expect(token).toEqual(expect.any(String));
+    expect(await registration.checkInToken(stranger.actor, reg.id)).toBeNull();
+  });
+
+  it('adding a teammate supersedes an open invite for a pair', async () => {
+    const { categoryId } = await publishedCategory({ capacity: 4, format: 'doubles' });
+    const captain = await makePlayer('Captain');
+    const invited = await makePlayer('Invited');
+    const mate = await makePlayer('Mate');
+
+    const reg = await registration.begin(captain.actor, { eventCategoryId: categoryId });
+    const invite = await registration.invitePartner(captain.actor, { registrationId: reg.id, playerUserId: invited.userId });
+    const added = await registration.addTeammate(captain.actor, { registrationId: reg.id, playerId: mate.playerId });
+    expect(added.status).toBe('payment_pending');
+    expect(await errorCode(() => registration.acceptInvite(invited.actor, invite.token))).toBe(
+      RegistrationCode.INVITE_EXPIRED,
+    );
+  });
+
+  it('only the captain adds, never themselves, nobody already entered, private or out of band', async () => {
+    const { categoryId } = await publishedCategory({ capacity: 4, format: 'doubles', skillMin: 3.0, skillMax: 3.75 });
+    const captain = await makePlayer('Captain', '3.5');
+    const mate = await makePlayer('Mate', '3.5');
+    const ringer = await makePlayer('Ringer', '5.0');
+    const hidden = await makePlayer('Hidden', '3.5');
+    await prisma.playerProfile.update({ where: { id: hidden.playerId }, data: { visibility: 'private' } });
+    const other = await makePlayer('Other', '3.5');
+    const busy = await makePlayer('Busy', '3.5');
+
+    const reg = await registration.begin(captain.actor, { eventCategoryId: categoryId });
+    const add = (by: Player, playerId: string) =>
+      errorCode(() => registration.addTeammate(by.actor, { registrationId: reg.id, playerId }));
+
+    expect(await add(mate, other.playerId)).toBe('FORBIDDEN');
+    expect(await add(captain, captain.playerId)).toBe(RegistrationCode.CANNOT_INVITE_SELF);
+    expect(await add(captain, ringer.playerId)).toBe(RegistrationCode.PARTNER_INELIGIBLE);
+    expect(await add(captain, hidden.playerId)).toBe(RegistrationCode.REGISTRATION_NOT_FOUND);
+    expect(await add(captain, 'nope')).toBe(RegistrationCode.REGISTRATION_NOT_FOUND);
+
+    // Busy is already on another team in this draw.
+    const otherReg = await registration.begin(other.actor, { eventCategoryId: categoryId });
+    await registration.addTeammate(other.actor, { registrationId: otherReg.id, playerId: busy.playerId });
+    expect(await add(captain, busy.playerId)).toBe(RegistrationCode.PARTNER_ALREADY_ENTERED);
+    // Nothing was held for the refused attempts.
+    expect(await prisma.seatHold.count({ where: { registrationId: reg.id } })).toBe(0);
+
+    await registration.addTeammate(captain.actor, { registrationId: reg.id, playerId: mate.playerId });
+    expect(await add(captain, ringer.playerId)).toBe(RegistrationCode.TEAM_COMPLETE);
+  });
+
+  it('a team of three: direct adds and invites mix, and the seat is taken when the team is whole', async () => {
+    const basketballId = await seedSport(prisma, BASKETBALL);
+    sport.refresh();
+    const { categoryId } = await publishedCategory({ capacity: 4, format: 'three_on_three', sportId: basketballId });
+    const [captain, p1, p2] = [await makePlayer('Captain'), await makePlayer('One'), await makePlayer('Two')];
+
+    const reg = await registration.begin(captain.actor, { eventCategoryId: categoryId });
+    const half = await registration.addTeammate(captain.actor, { registrationId: reg.id, playerId: p1.playerId });
+    // Not whole yet: no seat, but the teammate already counts as entered.
+    expect(half.status).toBe('awaiting_partner');
+    expect(half.holdExpiresAt).toBeNull();
+
+    const invite = await registration.invitePartner(captain.actor, { registrationId: reg.id, playerUserId: p2.userId });
+    const whole = await registration.acceptInvite(p2.actor, invite.token);
+    expect(whole.status).toBe('payment_pending');
+    expect(await registration.teamFor(reg.id)).toHaveLength(3);
+  });
+
+  it('a pair that completes into a full draw is queued with its team, not refused', async () => {
+    const { categoryId } = await publishedCategory({ capacity: 1, format: 'doubles' });
+    const [a, b, c, d] = [await makePlayer('A'), await makePlayer('B'), await makePlayer('C'), await makePlayer('D')];
+    const first = await registration.begin(a.actor, { eventCategoryId: categoryId });
+    await registration.addTeammate(a.actor, { registrationId: first.id, playerId: b.playerId });
+
+    const second = await registration.joinWaitlist(c.actor, { eventCategoryId: categoryId });
+    const queued = await registration.addTeammate(c.actor, { registrationId: second.id, playerId: d.playerId });
+    expect(queued.status).toBe('waitlisted');
+    expect(await registration.teamFor(second.id)).toHaveLength(2);
+  });
+});
