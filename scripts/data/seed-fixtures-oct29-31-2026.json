@@ -1,0 +1,37 @@
+{
+  "batch": "oct29-31-2026",
+  "source": "PL4Y_seed_fixtures_29-31_Oct.xlsx (team, 2026-10-31)",
+  "players": [
+    { "name": "Nikunj", "city": "Delhi NCR", "email": "guptanikunj0203@gmail.com", "note": "founder account, matched by email" },
+    { "name": "Alisha", "city": "Delhi" },
+    { "name": "Gunagya Grover", "city": "Delhi" },
+    { "name": "Golu Kumar", "city": "Delhi" },
+    { "name": "Anurag Ghosh", "city": "Gurgaon" },
+    { "name": "Manan", "city": "Delhi" },
+    { "name": "Sahil Singla", "city": "Gurugram" },
+    { "name": "Ravish Mittal", "city": "Faridabad" },
+    { "name": "Naitik Gupta", "city": "Delhi" },
+    { "name": "Shubham Kuchhal", "city": "Delhi" },
+    { "name": "Vaayun", "city": "Delhi" },
+    { "name": "Shaurya Jindal", "city": "Delhi" }
+  ],
+  "fixtures": [
+    { "id": "FX-01", "kind": "completed", "sport": "badminton", "date": "2026-10-29", "start": "18:00", "minutes": 60, "city": "Delhi", "host": "Alisha", "sideA": ["Alisha"], "sideB": ["Shaurya Jindal"], "maxPlayers": 2, "score": "21-17, 18-21, 21-19", "winner": "a" },
+    { "id": "FX-02", "kind": "completed", "sport": "chess", "date": "2026-10-29", "start": "19:00", "minutes": 45, "city": "Delhi", "host": "Naitik Gupta", "sideA": ["Naitik Gupta"], "sideB": ["Golu Kumar"], "maxPlayers": 2, "score": "1-0", "winner": "a" },
+    { "id": "FX-03", "kind": "completed", "sport": "pickleball", "date": "2026-10-29", "start": "19:30", "minutes": 60, "city": "Delhi", "host": "Gunagya Grover", "sideA": ["Gunagya Grover"], "sideB": ["Shaurya Jindal"], "maxPlayers": 2, "score": "11-5, 11-8", "winner": "a" },
+    { "id": "FX-04", "kind": "completed", "sport": "pool", "date": "2026-10-29", "start": "21:00", "minutes": 60, "city": "Delhi", "host": "Ravish Mittal", "sideA": ["Ravish Mittal"], "sideB": ["Golu Kumar"], "maxPlayers": 2, "score": "3-1", "scoreIsTally": true, "winner": "a" },
+    { "id": "FX-05", "kind": "completed", "sport": "badminton", "date": "2026-10-30", "start": "18:00", "minutes": 60, "city": "Delhi", "host": "Shubham Kuchhal", "sideA": ["Shubham Kuchhal"], "sideB": ["Gunagya Grover"], "maxPlayers": 2, "score": "21-14, 21-16", "winner": "a" },
+    { "id": "FX-06", "kind": "completed", "sport": "chess", "date": "2026-10-30", "start": "19:30", "minutes": 45, "city": "Delhi", "host": "Manan", "sideA": ["Manan"], "sideB": ["Sahil Singla"], "maxPlayers": 2, "score": "1-0", "winner": "a" },
+    { "id": "FX-07", "kind": "completed", "sport": "billiards", "date": "2026-10-30", "start": "20:30", "minutes": 60, "city": "Delhi", "host": "Golu Kumar", "sideA": ["Golu Kumar"], "sideB": ["Naitik Gupta"], "maxPlayers": 2, "score": "1-2", "scoreIsTally": true, "format": { "pointsToWin": null, "games": 3, "bestOf": true }, "winner": "b" },
+    { "id": "FX-08", "kind": "completed", "sport": "carrom", "date": "2026-10-30", "start": "17:00", "minutes": 45, "city": "Delhi", "host": "Alisha", "sideA": ["Alisha"], "sideB": ["Ravish Mittal"], "maxPlayers": 2, "score": "12-25", "winner": "b" },
+    { "id": "FX-09", "kind": "completed", "sport": "padel", "date": "2026-10-30", "start": "18:00", "minutes": 90, "city": "Gurugram", "host": "Anurag Ghosh", "sideA": ["Anurag Ghosh", "Ravish Mittal"], "sideB": ["Gunagya Grover", "Vaayun"], "maxPlayers": 4, "score": "3-6, 4-6", "winner": "b" },
+    { "id": "FX-10", "kind": "upcoming", "sport": "chess", "date": "2026-10-31", "start": "16:00", "minutes": 45, "city": "Delhi", "host": "Alisha", "sideA": ["Alisha"], "sideB": ["Naitik Gupta"], "maxPlayers": 2 },
+    { "id": "FX-11", "kind": "upcoming", "sport": "pickleball", "date": "2026-10-31", "start": "18:00", "minutes": 60, "city": "Delhi", "host": "Golu Kumar", "sideA": ["Golu Kumar"], "sideB": ["Shaurya Jindal"], "maxPlayers": 2 },
+    { "id": "FX-12", "kind": "upcoming", "sport": "badminton", "date": "2026-10-31", "start": "19:00", "minutes": 60, "city": "Gurugram", "host": "Sahil Singla", "sideA": ["Sahil Singla"], "sideB": ["Ravish Mittal"], "maxPlayers": 2 },
+    { "id": "FX-13", "kind": "upcoming", "sport": "chess", "date": "2026-10-31", "start": "20:00", "minutes": 45, "city": "Delhi", "host": "Golu Kumar", "sideA": ["Golu Kumar"], "sideB": ["Manan"], "maxPlayers": 2 },
+    { "id": "OG-01", "kind": "open", "sport": "pickleball", "date": "2026-10-31", "start": "17:00", "minutes": 60, "city": "Delhi NCR", "host": "Nikunj", "maxPlayers": 4 },
+    { "id": "OG-02", "kind": "open", "sport": "pickleball", "date": "2026-10-31", "start": "19:30", "minutes": 60, "city": "Delhi", "host": "Vaayun", "maxPlayers": 4 },
+    { "id": "OG-03", "kind": "open", "sport": "basketball", "date": "2026-10-31", "start": "18:00", "minutes": 90, "city": "Faridabad", "host": "Ravish Mittal", "maxPlayers": 6 },
+    { "id": "OG-04", "kind": "open", "sport": "tennis", "date": "2026-10-31", "start": "16:30", "minutes": 90, "city": "Delhi", "host": "Shubham Kuchhal", "maxPlayers": 2 }
+  ]
+}

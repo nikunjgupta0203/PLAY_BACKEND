@@ -1022,8 +1022,9 @@ export function createProfileService(deps: ProfileDeps) {
    * R12 — writes this match's rows from scratch. Idempotent, so a retried job,
    * a re-confirmed result or a correction (scoring R8) all converge on the same
    * rows. Every player who had a row or now has one gets their stats refreshed.
+   * `quiet` awards badges without telling anyone (a backfill or a seed).
    */
-  async function projectMatch(matchId: string): Promise<void> {
+  async function projectMatch(matchId: string, opts: { quiet?: boolean } = {}): Promise<void> {
     if (!deps.matches) throw new Error('profile.projectMatch needs a MatchesPort');
     const facts = await deps.matches.factsFor(matchId);
 
@@ -1084,7 +1085,7 @@ export function createProfileService(deps: ProfileDeps) {
     const touched = new Map<string, { playerId: string; sportId: string }>();
     for (const r of [...before, ...rows]) touched.set(`${r.playerId}|${r.sportId}`, r);
     for (const t of touched.values()) await refreshStats(t.playerId, t.sportId);
-    for (const playerId of new Set(rows.map((r) => r.playerId))) await awardMatchBadges(playerId);
+    for (const playerId of new Set(rows.map((r) => r.playerId))) await awardMatchBadges(playerId, opts);
   }
 
   async function ensureSports(rows: { playerId: string; sportId: string }[]): Promise<void> {
