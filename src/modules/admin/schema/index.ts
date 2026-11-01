@@ -13,17 +13,24 @@ import { attempt, UserErrorRef, type UserErrorShape } from '../../../graphql/use
 import { cloudinary, TRANSFORMS } from '../../../platform/cloudinary.js';
 import { db } from '../../../platform/db.js';
 import { UserError } from '../../../platform/errors/index.js';
+import { newId } from '../../../platform/ids.js';
 import { EventRef, EventStatusEnum } from '../../events/schema/index.js';
 import { events } from '../../events/index.js';
 import type { Event, EventStatus } from '../../events/index.js';
 import { identity } from '../../identity/index.js';
 import { organisations } from '../../organizers/index.js';
 import { MembershipRef } from '../../organizers/schema/index.js';
+import { BIO_MAX, cleanDisplayName, profile } from '../../profile/index.js';
 
 export const AdminCode = {
   USER_NOT_FOUND: 'USER_NOT_FOUND',
   /** Nobody takes away their own admin role: another admin must. */
   CANNOT_CHANGE_OWN_ROLE: 'CANNOT_CHANGE_OWN_ROLE',
+  /** Staff change their own details in the app, where an email change is confirmed by a code. */
+  CANNOT_EDIT_SELF: 'CANNOT_EDIT_SELF',
+  ADMIN_ONLY: 'ADMIN_ONLY',
+  INVALID_INPUT: 'INVALID_INPUT',
+  NOTHING_CHANGED: 'NOTHING_CHANGED',
 } as const;
 
 // --- masking (15-admin R4) -----------------------------------------------------------
@@ -172,6 +179,30 @@ const ContactPayload = builder
       userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
     }),
   });
+
+const AdminCreateUserInput = builder.inputType('AdminCreateUserInput', {
+  fields: (t) => ({
+    email: t.string({ required: true, description: 'The address they will sign in with, by a code sent to it.' }),
+    displayName: t.string({ required: true }),
+    phone: t.string(),
+    city: t.string(),
+  }),
+});
+
+const AdminUpdateUserInput = builder.inputType('AdminUpdateUserInput', {
+  description: 'Left out: unchanged. For phone, city and bio, null or empty clears it. Changing the email is for admins only.',
+  fields: (t) => ({
+    displayName: t.string(),
+    email: t.string(),
+    phone: t.string(),
+    city: t.string(),
+    bio: t.string(),
+  }),
+});
+
+/** An optional text field from an update: undefined keeps it, null or blank clears it. */
+const optionalText = (v: string | null | undefined): string | null | undefined =>
+  v === undefined ? undefined : v?.trim() || null;
 
 const AdminUserPayload = builder
   .objectRef<{ user: AdminUser | null; userError: UserErrorShape | null }>('AdminUserPayload')
@@ -544,6 +575,81 @@ builder.mutationFields((t) => ({
           if (!(await identity.reactivateByStaff(userId))) {
             throw new UserError(AdminCode.USER_NOT_FOUND, 'This account is not deactivated.');
           }
+          return adminUserById(userId);
+        }),
+      );
+      return { user: data, userError };
+    },
+  }),
+
+  adminCreateUser: t.field({
+    type: AdminUserPayload,
+    description:
+      'portal — open an account for someone. They sign in later with a code to this email; the app asks for their sports then.',
+    args: { input: t.arg({ type: AdminCreateUserInput, required: true }), reason: t.arg.string({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const staff = await requirePlatformStaff(ctx, ['admin', 'support']);
+      const userId = newId();
+      const { data, userError } = await attempt(() =>
+        audited(staff, { action: 'user.create', targetType: 'user', targetId: userId }, args.reason, async () => {
+          const displayName = cleanDisplayName(args.input.displayName);
+          await identity.createByStaff({ id: userId, email: args.input.email, displayName, phone: args.input.phone });
+          const city = args.input.city?.trim();
+          if (city) await profile.updateLocation({ userId }, { city, geo: null });
+          return adminUserById(userId);
+        }),
+      );
+      return { user: data, userError };
+    },
+  }),
+
+  adminUpdateUser: t.field({
+    type: AdminUserPayload,
+    description:
+      'portal — correct someone’s name, email, phone, city or bio. Only the fields sent change. A new city clears their map pin, as it does in the app.',
+    args: {
+      userId: t.arg.id({ required: true }),
+      input: t.arg({ type: AdminUpdateUserInput, required: true }),
+      reason: t.arg.string({ required: true }),
+    },
+    resolve: async (_root, args, ctx) => {
+      const staff = await requirePlatformStaff(ctx, ['admin', 'support']);
+      const userId = String(args.userId);
+      const input = args.input;
+      const fields = (['displayName', 'email', 'phone', 'city', 'bio'] as const).filter((k) => input[k] !== undefined);
+      const { data, userError } = await attempt(() =>
+        audited(staff, { action: 'user.update', targetType: 'user', targetId: userId, details: { fields } }, args.reason, async () => {
+          if (userId === staff.userId) {
+            throw new UserError(AdminCode.CANNOT_EDIT_SELF, 'Change your own details in the app.');
+          }
+          if (input.email != null && staff.role !== 'admin') {
+            throw new UserError(AdminCode.ADMIN_ONLY, 'Only an admin can change the email someone signs in with.');
+          }
+          // Everything is checked before anything is written.
+          const displayName = input.displayName != null ? cleanDisplayName(input.displayName) : undefined;
+          const city = optionalText(input.city);
+          const bio = optionalText(input.bio);
+          if (bio && bio.length > BIO_MAX) {
+            throw new UserError(AdminCode.INVALID_INPUT, `Keep the bio under ${BIO_MAX} characters.`);
+          }
+          const own = await db.playerProfile.findUnique({ where: { userId }, select: { city: true, bio: true } });
+          const cityChanges = city !== undefined && city !== (own?.city ?? null);
+          const bioChanges = bio !== undefined && bio !== (own?.bio ?? null);
+          if ((cityChanges || bioChanges) && !own) {
+            throw new UserError(AdminCode.INVALID_INPUT, 'A walk-in guest has no profile, so no city or bio.');
+          }
+
+          const done = await identity.updateByStaff(userId, {
+            displayName,
+            email: input.email ?? undefined,
+            phone: input.phone === undefined ? undefined : input.phone,
+          });
+          if (!done) throw new UserError(AdminCode.USER_NOT_FOUND, 'No such person.');
+          if (done.changed.length === 0 && !cityChanges && !bioChanges) {
+            throw new UserError(AdminCode.NOTHING_CHANGED, 'Nothing has changed.');
+          }
+          if (cityChanges) await profile.updateLocation({ userId }, { city: city ?? null, geo: null });
+          if (bioChanges) await profile.updateDetails({ userId }, { bio });
           return adminUserById(userId);
         }),
       );

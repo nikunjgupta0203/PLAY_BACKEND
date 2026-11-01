@@ -46,6 +46,12 @@ export const IdentityCode = {
   ACCOUNT_DEACTIVATED: 'ACCOUNT_DEACTIVATED',
   /** R19 — the reactivation token was used already, or ran out. */
   REACTIVATION_EXPIRED: 'REACTIVATION_EXPIRED',
+  /** portal — staff gave an email another account already signs in with. */
+  EMAIL_TAKEN: 'EMAIL_TAKEN',
+  /** R12 — a contact number needs 10 to 15 digits. */
+  INVALID_PHONE: 'INVALID_PHONE',
+  /** portal — a walk-in guest, or an account being deleted, can't take this change. */
+  ACCOUNT_NOT_EDITABLE: 'ACCOUNT_NOT_EDITABLE',
 } as const;
 
 /** R19 — how long a person has to answer "reactivate?" after proving their email. */
@@ -1037,6 +1043,121 @@ export function createIdentityService(deps: IdentityDeps) {
     await db.user.update({ where: { id: userId }, data: { displayName } });
   }
 
+  // --- accounts PL4Y staff make or correct (portal) -----------------------------
+
+  /** R12 — stored as typed, but it must look like a number: 10 to 15 digits. Empty means none. */
+  function cleanPhone(raw: string | null | undefined): string | null {
+    const typed = raw?.trim().replace(/\s+/g, ' ') ?? '';
+    if (!typed) return null;
+    const digits = typed.replace(/\D/g, '').length;
+    if (digits < 10 || digits > 15 || !/^[+\d\s()-]+$/.test(typed)) {
+      throw new UserError(IdentityCode.INVALID_PHONE, 'Enter a phone number with 10 to 15 digits.');
+    }
+    return typed;
+  }
+
+  /** An address someone can sign in with: well formed, not disposable, not a guest's. */
+  function signInAddress(raw: string): string {
+    const address = assertEmailShape(raw);
+    assertDomainAllowed(address);
+    if (address.endsWith(`@${GUEST_EMAIL_DOMAIN}`)) {
+      throw new UserError(IdentityCode.INVALID_EMAIL, 'Enter a real email address.');
+    }
+    return address;
+  }
+
+  const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === 'P2002';
+  const emailTaken = () => new UserError(IdentityCode.EMAIL_TAKEN, 'Another PL4Y account already uses that email.');
+
+  /**
+   * portal — staff open an account for someone (signed up at a desk, a
+   * coach's group). The same rows a first sign-in makes: user and profile in
+   * one transaction (R9). The person signs in later with a code to this email,
+   * like anyone else, and the app's onboarding asks for their sports then.
+   * The display name is checked by the caller (profile R15 owns the rule).
+   */
+  async function createByStaff(input: {
+    id?: string;
+    email: string;
+    displayName: string;
+    phone?: string | null;
+  }): Promise<{ id: string }> {
+    const address = signInAddress(input.email);
+    const phone = cleanPhone(input.phone);
+    const id = input.id ?? newId();
+    if (await db.user.findUnique({ where: { email: address }, select: { id: true } })) throw emailTaken();
+    try {
+      await db.$transaction(async (tx) => {
+        await tx.user.create({ data: { id, email: address, displayName: input.displayName, phoneE164: phone } });
+        await profile.createFor(tx, id);
+        await outboxWrite(tx, { topic: 'user.created', payload: { userId: id } });
+      });
+    } catch (err) {
+      if (isUniqueViolation(err)) throw emailTaken();
+      throw err;
+    }
+    return { id };
+  }
+
+  /**
+   * portal — staff correct someone's name, sign-in email or contact number.
+   * Only what differs is written; the names of the changed fields come back
+   * for the audit row. A new email resets its delivery status (R13): the
+   * bounces belonged to the old one. Sessions are kept, because they belong
+   * to the person, not to the address.
+   */
+  async function updateByStaff(
+    userId: string,
+    input: { displayName?: string; email?: string; phone?: string | null },
+  ): Promise<{ changed: ('displayName' | 'email' | 'phone')[] } | null> {
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { email: true, displayName: true, phoneE164: true, status: true, isGuest: true },
+    });
+    if (!user) return null;
+    if (user.status === 'deleted') {
+      throw new UserError(
+        IdentityCode.ACCOUNT_NOT_EDITABLE,
+        'This account is waiting to be deleted. Cancel the deletion first if they want to keep it.',
+      );
+    }
+
+    const data: { displayName?: string; email?: string; emailStatus?: string; phoneE164?: string | null } = {};
+    const changed: ('displayName' | 'email' | 'phone')[] = [];
+    if (input.displayName !== undefined && input.displayName !== user.displayName) {
+      data.displayName = input.displayName;
+      changed.push('displayName');
+    }
+    if (input.email !== undefined) {
+      const address = signInAddress(input.email);
+      if (address !== user.email) {
+        if (user.isGuest) {
+          throw new UserError(IdentityCode.ACCOUNT_NOT_EDITABLE, 'A walk-in guest has no sign-in email to change.');
+        }
+        const other = await db.user.findUnique({ where: { email: address }, select: { id: true } });
+        if (other && other.id !== userId) throw emailTaken();
+        data.email = address;
+        data.emailStatus = 'ok';
+        changed.push('email');
+      }
+    }
+    if (input.phone !== undefined) {
+      const phone = cleanPhone(input.phone);
+      if (phone !== user.phoneE164) {
+        data.phoneE164 = phone;
+        changed.push('phone');
+      }
+    }
+    if (changed.length === 0) return { changed };
+    try {
+      await db.user.update({ where: { id: userId }, data });
+    } catch (err) {
+      if (isUniqueViolation(err)) throw emailTaken();
+      throw err;
+    }
+    return { changed };
+  }
+
   /** R13 — driven by the Resend delivery webhook. */
   async function recordDeliveryEvent(
     address: string,
@@ -1085,6 +1206,8 @@ export function createIdentityService(deps: IdentityDeps) {
     findByPhone,
     setAvatar,
     setDisplayName,
+    createByStaff,
+    updateByStaff,
     recordDeliveryEvent,
     normaliseEmail,
   };

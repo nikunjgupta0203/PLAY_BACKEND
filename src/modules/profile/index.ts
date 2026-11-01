@@ -102,7 +102,7 @@ export const profile = createProfileService({
   },
 });
 
-export { ProfileCode, PROVISIONAL_MATCHES, VISIBILITIES } from './service/index.js';
+export { BIO_MAX, cleanDisplayName, ProfileCode, PROVISIONAL_MATCHES, VISIBILITIES } from './service/index.js';
 export type {
   Achievement,
   AnalyticsPerson,

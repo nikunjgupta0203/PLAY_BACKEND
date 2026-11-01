@@ -48,6 +48,15 @@ type AdminContactPayload {
   userError: UserError
 }
 
+input AdminCreateUserInput {
+  city: String
+  displayName: String!
+
+  """The address they will sign in with, by a code sent to it."""
+  email: String!
+  phone: String
+}
+
 type AdminDayNumbers {
   """
   Players who entered an event, hosted or joined a game, or booked a court that day. Each counted once.
@@ -335,10 +344,22 @@ type AdminTopVenue {
 }
 
 """
+Left out: unchanged. For phone, city and bio, null or empty clears it. Changing the email is for admins only.
+"""
+input AdminUpdateUserInput {
+  bio: String
+  city: String
+  displayName: String
+  email: String
+  phone: String
+}
+
+"""
 portal — a person, with contact details masked (15-admin R4). adminRevealContact shows them, audited.
 """
 type AdminUser {
   avatarUrl: String
+  bio: String
   city: String
 
   """Courts they booked, newest first."""
@@ -2986,6 +3007,11 @@ type Mutation {
   adminCreateOrganisation(input: CreateOrganisationInput!, reason: String!): CreateOrganisationPayload!
 
   """
+  portal — open an account for someone. They sign in later with a code to this email; the app asks for their sports then.
+  """
+  adminCreateUser(input: AdminCreateUserInput!, reason: String!): AdminUserPayload!
+
+  """
   portal — PL4Y staff add a venue. With `ownerEmail`, that PL4Y account owns it: edits it and runs its desk from the app. Without, staff manage it from the portal.
   """
   adminCreateVenue(input: CreateVenueInput!, ownerEmail: String, reason: String!): VenuePayload!
@@ -3076,6 +3102,11 @@ type Mutation {
   """identity R8 — signs them out everywhere and stops new sign-ins."""
   adminSuspendUser(reason: String!, userId: ID!): AdminUserPayload!
   adminUpdateOrganisation(input: OrganisationDetailsInput!, organisationId: ID!, reason: String!): OrganisationPayload!
+
+  """
+  portal — correct someone’s name, email, phone, city or bio. Only the fields sent change. A new city clears their map pin, as it does in the app.
+  """
+  adminUpdateUser(input: AdminUpdateUserInput!, reason: String!, userId: ID!): AdminUserPayload!
 
   """
   The next round from a round whose heats are all final: the top `perHeat` of each heat, then the `best` of the rest across heats.

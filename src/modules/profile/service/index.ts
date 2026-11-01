@@ -35,6 +35,18 @@ export const DISPLAY_NAME_MIN = 2;
 export const DISPLAY_NAME_MAX = 40;
 export const BIO_MAX = 160;
 
+/** R15 — a name as players will see it: trimmed, inner spaces collapsed, 2 to 40 characters. */
+export function cleanDisplayName(raw: string): string {
+  const name = raw.trim().replace(/\s+/g, ' ');
+  if (name.length < DISPLAY_NAME_MIN || name.length > DISPLAY_NAME_MAX) {
+    throw new UserError(
+      ProfileCode.INVALID_DISPLAY_NAME,
+      `Use ${DISPLAY_NAME_MIN} to ${DISPLAY_NAME_MAX} characters for the name.`,
+    );
+  }
+  return name;
+}
+
 export const VISIBILITIES = ['public', 'players_only', 'private'] as const;
 export type Visibility = (typeof VISIBILITIES)[number];
 

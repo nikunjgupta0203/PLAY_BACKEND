@@ -360,6 +360,10 @@ builder.objectFields(AdminUserRef, (t) => ({
     nullable: true,
     resolve: async (u) => (await db.playerProfile.findUnique({ where: { userId: u.id }, select: { city: true } }))?.city ?? null,
   }),
+  bio: t.string({
+    nullable: true,
+    resolve: async (u) => (await db.playerProfile.findUnique({ where: { userId: u.id }, select: { bio: true } }))?.bio ?? null,
+  }),
   sports: t.field({
     type: [UserSportRef],
     description: 'The sports on their profile, with the rating in each.',

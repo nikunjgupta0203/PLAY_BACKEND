@@ -594,3 +594,68 @@ describe('identity — platform roles, organizer grants and account deletion', (
     expect(await prisma.otpChallenge.count({ where: { purpose: 'reactivation', consumedAt: null } })).toBe(1);
   });
 });
+
+describe('identity — accounts PL4Y staff make or correct (portal)', () => {
+  it('createByStaff makes the user and its profile, and the person can then sign in with a code', async () => {
+    const { id } = await identity.createByStaff({ email: ' Desk@Example.com ', displayName: 'Desk Player', phone: '98765 43210' });
+    const user = await prisma.user.findUniqueOrThrow({ where: { id } });
+    expect(user).toMatchObject({ email: 'desk@example.com', displayName: 'Desk Player', phoneE164: '98765 43210', status: 'active' });
+    expect(await prisma.playerProfile.count({ where: { userId: id } })).toBe(1);
+
+    const session = await signUp('desk@example.com');
+    expect(session.isNewUser).toBe(false);
+    expect(await prisma.user.count()).toBe(1);
+  });
+
+  it('createByStaff refuses an email another account uses, and a phone that is not a number', async () => {
+    await signUp('taken@example.com');
+    await expect(identity.createByStaff({ email: 'TAKEN@example.com', displayName: 'Again' })).rejects.toMatchObject({
+      code: IdentityCode.EMAIL_TAKEN,
+    });
+    await expect(identity.createByStaff({ email: 'new@example.com', displayName: 'New', phone: '12345' })).rejects.toMatchObject({
+      code: IdentityCode.INVALID_PHONE,
+    });
+    await expect(identity.createByStaff({ email: 'not-an-email', displayName: 'New' })).rejects.toMatchObject({
+      code: IdentityCode.INVALID_EMAIL,
+    });
+    expect(await prisma.user.count()).toBe(1);
+  });
+
+  it('updateByStaff writes only what differs and resets the delivery status with a new email', async () => {
+    await signUp('old@example.com');
+    const user = await prisma.user.findFirstOrThrow();
+    await prisma.user.update({ where: { id: user.id }, data: { emailStatus: 'bounced' } });
+
+    const done = await identity.updateByStaff(user.id, { displayName: user.displayName, email: 'New@Example.com', phone: '+91 98765 43210' });
+    expect(done?.changed).toEqual(['email', 'phone']);
+    expect(await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).toMatchObject({
+      email: 'new@example.com',
+      emailStatus: 'ok',
+      phoneE164: '+91 98765 43210',
+    });
+
+    expect((await identity.updateByStaff(user.id, { phone: '' }))?.changed).toEqual(['phone']);
+    expect((await identity.updateByStaff(user.id, { email: 'new@example.com' }))?.changed).toEqual([]);
+    expect(await identity.updateByStaff(randomUUID(), { displayName: 'Nobody' })).toBeNull();
+  });
+
+  it('updateByStaff refuses another account’s email, and any change to an account being deleted', async () => {
+    await signUp('a@example.com');
+    await signUp('b@example.com');
+    const a = await prisma.user.findUniqueOrThrow({ where: { email: 'a@example.com' } });
+    await expect(identity.updateByStaff(a.id, { email: 'B@example.com' })).rejects.toMatchObject({ code: IdentityCode.EMAIL_TAKEN });
+
+    await prisma.user.update({ where: { id: a.id }, data: { status: 'deleted', deletionRequestedAt: new Date() } });
+    await expect(identity.updateByStaff(a.id, { displayName: 'Still here' })).rejects.toMatchObject({
+      code: IdentityCode.ACCOUNT_NOT_EDITABLE,
+    });
+  });
+
+  it('a walk-in guest keeps its reserved address', async () => {
+    const guest = await identity.createGuest('Walk In');
+    await expect(identity.updateByStaff(guest.id, { email: 'guest@example.com' })).rejects.toMatchObject({
+      code: IdentityCode.ACCOUNT_NOT_EDITABLE,
+    });
+    expect((await identity.updateByStaff(guest.id, { displayName: 'Walk-in Ravi' }))?.changed).toEqual(['displayName']);
+  });
+});
