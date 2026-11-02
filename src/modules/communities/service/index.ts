@@ -171,7 +171,7 @@ export const BENEFITS_MAX = 6;
 export const BENEFIT_MAX = 80;
 /** R7 */
 export const MAX_MEMBERS = 5000;
-export const MAX_OWNED = 10;
+export const MAX_OWNED = 50;
 export const PRICE_MIN_PAISE = 1_000;
 export const PRICE_MAX_PAISE = 5_000_000;
 /** R4 */
