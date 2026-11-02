@@ -242,6 +242,19 @@ describe('team registration — pay first, invite after (R21)', () => {
     expect(members).toHaveLength(2);
   });
 
+  it('a used link says "already used", not "expired", and still reads as used', async () => {
+    const { captain, registrationId } = await paidTeam();
+    const x = await makePlayer('X');
+    const y = await makePlayer('Y');
+    const link = await registration.createInviteLink(captain.actor, { registrationId });
+    await registration.acceptInvite(x.actor, link.token);
+
+    expect(await errorCode(() => registration.acceptInvite(y.actor, link.token))).toBe(RegistrationCode.INVITE_USED);
+    const seen = await registration.inviteDetails(y.actor, link.token);
+    expect(seen?.status).toBe('accepted');
+    expect(seen?.canAccept).toBe(false);
+  });
+
   it('a player already on another team in the draw cannot accept', async () => {
     const draw = await doublesDraw();
     const first = await paidTeam('First', draw);
@@ -362,7 +375,7 @@ describe('team registration — invites after payment (R22)', () => {
     const cancelled = await registration.cancel(captain.actor, registrationId);
     expect(cancelled.status).toBe('refunded');
     expect((await prisma.registrationInvite.findUnique({ where: { id: invite.id } }))?.status).toBe('revoked');
-    expect(await errorCode(() => registration.acceptInvite(mate.actor, invite.token))).toBe(RegistrationCode.INVITE_EXPIRED);
+    expect(await errorCode(() => registration.acceptInvite(mate.actor, invite.token))).toBe(RegistrationCode.INVITE_CLOSED);
   });
 
   it('a teammate cannot cancel the captain’s paid entry', async () => {

@@ -540,6 +540,21 @@ describe('registration', () => {
     expect(other.status).toBe('payment_pending');
   });
 
+  it('R5: starting over after a lapsed hold begins a new entry, before the release job runs', async () => {
+    const { categoryId } = await publishedCategory({ capacity: 4 });
+    const player = await makePlayer('Again');
+    const reg = await registration.begin(player.actor, { eventCategoryId: categoryId });
+    await prisma.seatHold.updateMany({
+      where: { registrationId: reg.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    const again = await registration.begin(player.actor, { eventCategoryId: categoryId });
+    expect(again.id).not.toBe(reg.id);
+    expect(again.status).toBe('payment_pending');
+    expect((await registration.byId(reg.id)).status).toBe('expired');
+  });
+
   it('R5: the release job flips released_at and expires the registration', async () => {
     const { categoryId } = await publishedCategory({ capacity: 4 });
     const player = await makePlayer('Slow');
@@ -1556,7 +1571,7 @@ describe('teammate registration (captain enters and pays for a teammate)', () =>
     const added = await registration.addTeammate(captain.actor, { registrationId: reg.id, playerId: mate.playerId });
     expect(added.status).toBe('payment_pending');
     expect(await errorCode(() => registration.acceptInvite(invited.actor, invite.token))).toBe(
-      RegistrationCode.INVITE_EXPIRED,
+      RegistrationCode.INVITE_CLOSED,
     );
   });
 
