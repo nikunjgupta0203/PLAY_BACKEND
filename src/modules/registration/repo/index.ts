@@ -44,11 +44,35 @@ export interface SeatHoldRow {
 export interface InviteRow {
   id: string;
   registrationId: string;
-  invitedEmail: string;
+  /** R22 — null for a shareable link. */
+  invitedEmail: string | null;
   invitedUserId: string | null;
   token: string;
   status: string;
   expiresAt: Date;
+  createdAt: Date;
+  /** R25 */
+  replacesUserId: string | null;
+  lastSentAt: Date | null;
+  sentCount: number;
+}
+
+export interface CheckinRow {
+  registrationId: string;
+  userId: string;
+  checkedInAt: Date;
+  checkedInBy: string | null;
+  method: string;
+}
+
+export interface HistoryRow {
+  id: string;
+  registrationId: string;
+  kind: string;
+  actorUserId: string | null;
+  subjectUserId: string | null;
+  reason: string | null;
+  data: Prisma.JsonValue | null;
   createdAt: Date;
 }
 
@@ -597,8 +621,111 @@ export function createRegistrationRepo(db: Db) {
 
   // --- invites ---------------------------------------------------------------
 
-  async function createInvite(tx: Tx, row: Omit<InviteRow, 'createdAt'>): Promise<InviteRow> {
-    return tx.registrationInvite.create({ data: row });
+  async function createInvite(
+    tx: Tx,
+    row: Omit<InviteRow, 'createdAt' | 'replacesUserId' | 'lastSentAt' | 'sentCount'> & {
+      replacesUserId?: string | null;
+    },
+  ): Promise<InviteRow> {
+    return tx.registrationInvite.create({ data: { ...row, lastSentAt: new Date() } });
+  }
+
+  /** R22 — invites addressed to this account that are still waiting for an answer. */
+  async function pendingInvitesForUser(userId: string): Promise<InviteRow[]> {
+    return db.registrationInvite.findMany({
+      where: { invitedUserId: userId, status: 'pending', expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** R22 — a resend: counted, and conditional on the invite still being open. */
+  async function markInviteResent(inviteId: string, at: Date): Promise<boolean> {
+    const affected = await db.$executeRaw`
+      UPDATE registration_invites
+         SET last_sent_at = ${at}, sent_count = sent_count + 1
+       WHERE id = ${inviteId}::uuid AND status = 'pending'
+    `;
+    return affected > 0;
+  }
+
+  // --- R25: roster changes ----------------------------------------------------
+
+  async function removeTeamMember(tx: Tx, teamId: string, userId: string): Promise<boolean> {
+    const { count } = await tx.teamMember.deleteMany({ where: { teamId, userId, isCaptain: false } });
+    return count > 0;
+  }
+
+  async function setTeamName(client: Tx | Db, teamId: string, name: string | null): Promise<void> {
+    await client.team.update({ where: { id: teamId }, data: { name } });
+  }
+
+  async function teamNames(teamIds: string[]): Promise<Map<string, string | null>> {
+    if (teamIds.length === 0) return new Map();
+    const rows = await db.team.findMany({ where: { id: { in: teamIds } }, select: { id: true, name: true } });
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
+  // --- R24: per-player check-in -------------------------------------------------
+
+  async function checkinsFor(registrationIds: readonly string[], client: Tx | Db = db): Promise<CheckinRow[]> {
+    if (registrationIds.length === 0) return [];
+    return client.registrationCheckin.findMany({
+      where: { registrationId: { in: [...registrationIds] } },
+      orderBy: { checkedInAt: 'asc' },
+    });
+  }
+
+  /** The players newly checked in. One already in stays as they were (the primary key). */
+  async function insertCheckins(
+    tx: Tx,
+    input: { registrationId: string; userIds: string[]; by: string; method: string; at: Date },
+  ): Promise<string[]> {
+    const added: string[] = [];
+    for (const userId of input.userIds) {
+      const affected = await tx.$executeRaw`
+        INSERT INTO registration_checkins (registration_id, user_id, checked_in_at, checked_in_by, method)
+        VALUES (${input.registrationId}::uuid, ${userId}::uuid, ${input.at}, ${input.by}::uuid, ${input.method})
+        ON CONFLICT DO NOTHING
+      `;
+      if (affected > 0) added.push(userId);
+    }
+    return added;
+  }
+
+  // --- R26: history ---------------------------------------------------------
+
+  async function addHistory(
+    client: Tx | Db,
+    row: Omit<HistoryRow, 'createdAt' | 'data'> & { data?: Prisma.InputJsonValue | null },
+  ): Promise<void> {
+    await client.registrationHistory.create({
+      data: { ...row, data: row.data ?? Prisma.JsonNull },
+    });
+  }
+
+  async function historyFor(registrationId: string): Promise<HistoryRow[]> {
+    return db.registrationHistory.findMany({
+      where: { registrationId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  /** R11 dashboard — every entry of an event with its team size, check-ins and invites. */
+  async function teamStatsRows(eventId: string): Promise<
+    { id: string; status: string; teamId: string | null; paymentMode: string; amountPaise: bigint; eventCategoryId: string; members: number; checkins: number; declined: number }[]
+  > {
+    const rows = await db.$queryRaw<
+      { id: string; status: string; teamId: string | null; paymentMode: string; amountPaise: bigint; eventCategoryId: string; members: bigint; checkins: bigint; declined: bigint }[]
+    >`
+      SELECT r.id::text, r.status, r.team_id::text AS "teamId", r.payment_mode AS "paymentMode",
+             r.amount_paise AS "amountPaise", r.event_category_id::text AS "eventCategoryId",
+             (SELECT count(*) FROM team_members m WHERE m.team_id = r.team_id) AS members,
+             (SELECT count(*) FROM registration_checkins c WHERE c.registration_id = r.id) AS checkins,
+             (SELECT count(*) FROM registration_invites i WHERE i.registration_id = r.id AND i.status = 'declined') AS declined
+        FROM registrations r
+       WHERE r.event_id = ${eventId}::uuid
+    `;
+    return rows.map((r) => ({ ...r, members: Number(r.members), checkins: Number(r.checkins), declined: Number(r.declined) }));
   }
 
   async function inviteById(inviteId: string): Promise<InviteRow | null> {
@@ -620,7 +747,7 @@ export function createRegistrationRepo(db: Db) {
   async function settleInvite(
     tx: Tx,
     inviteId: string,
-    status: 'accepted' | 'declined' | 'expired',
+    status: 'accepted' | 'declined' | 'expired' | 'revoked',
   ): Promise<boolean> {
     const affected = await tx.$executeRaw`
       UPDATE registration_invites SET status = ${status}
@@ -704,6 +831,16 @@ export function createRegistrationRepo(db: Db) {
     invitesFor,
     settleInvite,
     staleInvites,
+    pendingInvitesForUser,
+    markInviteResent,
+    removeTeamMember,
+    setTeamName,
+    teamNames,
+    checkinsFor,
+    insertCheckins,
+    addHistory,
+    historyFor,
+    teamStatsRows,
   };
 }
 

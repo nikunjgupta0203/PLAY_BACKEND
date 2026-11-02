@@ -72,6 +72,16 @@ export interface CategoryRow {
   prizes?: string | null;
   rulesNote?: string | null;
   scoringRule?: Prisma.JsonValue | null;
+  // registration R21 — team draws.
+  teammatesAfterPayment?: boolean;
+  teamNameRule?: string;
+  feeBasis?: string;
+  minTeamSize?: number | null;
+  maxTeamSize?: number | null;
+  inviteDeadlineAt?: Date | null;
+  rosterLockAt?: Date | null;
+  allowReplacements?: boolean;
+  waitlistEnabled?: boolean;
 }
 
 export interface SearchFilter {

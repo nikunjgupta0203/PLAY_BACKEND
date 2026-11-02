@@ -1021,7 +1021,7 @@ builder.queryFields((t) => ({
         captainId: r.captainUserId,
         captainName: r.captain.displayName,
         partners: (r.team?.members ?? []).filter((m) => m.userId !== r.captainUserId).map((m) => m.user.displayName),
-        invitesPending: r.invites.map((i) => maskInvite(i.invitedEmail)),
+        invitesPending: r.invites.map((i) => (i.invitedEmail ? maskInvite(i.invitedEmail) : 'Shared link')),
         waitlistPlace: place.get(r.id) ?? null,
         createdAt: r.createdAt,
         confirmedAt: r.confirmedAt,

@@ -98,11 +98,13 @@ describe('registration realtime notifier', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it('covers exactly the nine topics in the spec, plus teammate.added', () => {
+  it('covers exactly the nine topics in the spec, plus teammate.added and the R22 invite answers', () => {
     expect([...REGISTRATION_UPDATE_TOPICS].sort()).toEqual([
       'hold.created',
+      'invite.accepted',
       'invite.created',
       'invite.declined',
+      'invite.expired',
       'refund.processed',
       'registration.cancelled',
       'registration.checked_in',

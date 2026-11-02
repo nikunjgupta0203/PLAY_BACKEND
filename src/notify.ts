@@ -212,14 +212,66 @@ export const notify = {
   },
 
   async partnerInvited(payload: Record<string, unknown>): Promise<void> {
-    // An invite by email to somebody with no account yet has nobody to notify:
-    // the email the registration module sent is the whole invitation.
+    // An invite by email to somebody with no account yet, or a shareable link
+    // (R22), has nobody to notify: the email or the shared message is the
+    // whole invitation.
     const invitee = str(payload['invitedUserId']);
+    const inviteId = str(payload['inviteId']);
     const ctx = await entryContext(str(payload['registrationId']) ?? '');
-    if (!invitee || !ctx) return;
+    if (!invitee || !ctx || !inviteId) return;
+    const invite = (await registration.invitesForStaff(ctx.entry.id)).find((i) => i.id === inviteId);
+    if (!invite || invite.status !== 'pending') return;
+    const [captain] = await identity.contactsByIds([ctx.entry.captainUserId]);
     await notifications.emit(
       invitee,
       'partner.invite',
+      {
+        eventTitle: ctx.event.title,
+        categoryName: ctx.category.name,
+        teamName: await registration.teamNameFor(ctx.entry.id),
+        captainName: captain?.displayName || 'A player',
+      },
+      // The invitee's own notification: the token opens the invite screen.
+      { kind: 'route', route: 'partner_invite', id: invite.token },
+    );
+  },
+
+  /** R22 — the captain hears a teammate said yes; the teammate hears they are in. */
+  async partnerAccepted(payload: Record<string, unknown>): Promise<void> {
+    const userId = str(payload['userId']);
+    const ctx = await entryContext(str(payload['registrationId']) ?? '');
+    if (!userId || !ctx) return;
+    const people = await identity.contactsByIds([userId, ctx.entry.captainUserId]);
+    const teammate = people.find((r) => r.id === userId);
+    const captain = people.find((r) => r.id === ctx.entry.captainUserId);
+    await notifications.emit(
+      ctx.entry.captainUserId,
+      'partner.accepted',
+      {
+        eventTitle: ctx.event.title,
+        categoryName: ctx.category.name,
+        teammateName: teammate?.displayName || 'Your teammate',
+        complete: payload['teamComplete'] === true,
+      },
+      eventTarget(ctx.event),
+    );
+    // Before payment the team's own confirmation push says it; after it, this does.
+    if (payload['seated'] === true) {
+      await notifications.emit(
+        userId,
+        'partner.joined',
+        { eventTitle: ctx.event.title, categoryName: ctx.category.name, captainName: captain?.displayName || 'your captain' },
+        eventTarget(ctx.event),
+      );
+    }
+  },
+
+  async partnerInviteExpired(payload: Record<string, unknown>): Promise<void> {
+    const ctx = await entryContext(str(payload['registrationId']) ?? '');
+    if (!ctx) return;
+    await notifications.emit(
+      ctx.entry.captainUserId,
+      'partner.invite_expired',
       { eventTitle: ctx.event.title, categoryName: ctx.category.name },
       eventTarget(ctx.event),
     );

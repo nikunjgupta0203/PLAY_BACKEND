@@ -671,6 +671,11 @@ enum BallExtra {
 
 input BeginRegistrationInput {
   eventCategoryId: ID!
+
+  """
+  R21 — a team draw: the team’s name (2–40 letters), when the host asks for one.
+  """
+  teamName: String
 }
 
 type BlockPayload {
@@ -927,6 +932,19 @@ type CategoryAnalytics {
   onlinePaid: Int!
   waitlisted: Int!
   withdrawn: Int!
+}
+
+type CheckInLookupPayload {
+  registration: Registration
+  userError: UserError
+}
+
+enum CheckInState {
+  ALL
+  NONE
+
+  """R24 — some players on the entry have arrived."""
+  PARTIAL
 }
 
 type CheckoutField {
@@ -1756,6 +1774,8 @@ type EventAnalytics {
 What a player actually registers for. Capacity, fee and format live here and not on the event, because one tournament sells eight draws at eight prices.
 """
 type EventCategory {
+  """R25"""
+  allowReplacements: Boolean!
   availability: Availability!
   capacity: Int!
   capacityDetail: Capacity!
@@ -1766,6 +1786,11 @@ type EventCategory {
 
   """Subtracts live holds as well as confirmed entries (events R5)."""
   entriesRemaining: Int!
+
+  """
+  R21 — TEAM | PLAYER: how the fee reads. `priceQuote` is always the whole entry’s price.
+  """
+  feeBasis: String!
   format: Format!
 
   """
@@ -1777,35 +1802,67 @@ type EventCategory {
   hostReceivesPaise: Int!
   id: ID!
 
+  """
+  R21 — last moment to accept a teammate invite. Null: until the event starts.
+  """
+  inviteDeadlineAt: DateTime
+
   """F14 — how long one match takes, for the schedule. Null = 45."""
   matchMinutes: Int
+
+  """R21 — a team never has more than this many players."""
+  maxTeamSize: Int!
 
   """
   Below this at registration close, the draw is cancelled and refunded (events R9).
   """
   minEntries: Int!
 
+  """R21 — a team is complete at this many players."""
+  minTeamSize: Int!
+
   """
   "Men’s Doubles 3.5"
   """
   name: String!
+
+  """
+  R21 — the entry fee shared across a full team, rounded down. Equal to the fee for singles.
+  """
+  perPlayerFeePaise: Int!
   priceQuote: PriceQuote!
 
   """F24"""
   prizes: String
+
+  """
+  R21 — last moment to change a team’s players. Null: until the event starts.
+  """
+  rosterLockAt: DateTime
 
   """F24 — the host’s format notes."""
   rulesNote: String
   skillMax: Float
   skillMin: Float
   status: String!
+
+  """R21 — OPTIONAL | REQUIRED."""
+  teamNameRule: String!
   teamSize: Int!
+
+  """
+  registration R21 — true: the captain pays for the whole team first, then invites teammates. false: every teammate accepts before the captain pays.
+  """
+  teammatesAfterPayment: Boolean!
 
   """F23 — a knockout without a Plate plays a match for third place."""
   thirdPlace: Boolean!
 
   """Null until an organizer generates the draw."""
   tournament: Tournament
+
+  """R17, R21"""
+  waitlistEnabled: Boolean!
 }
 
 input EventCategoryInput {
@@ -1824,6 +1881,7 @@ input EventCategoryInput {
   rulesNote: String
   skillMax: Float
   skillMin: Float
+  team: TeamSettingsInput
   thirdPlace: Boolean
   tweaks: RuleTweaksInput
 }
@@ -1963,6 +2021,11 @@ enum EventStatus {
   DRAFT
   LIVE
   PUBLISHED
+}
+
+enum FeeBasis {
+  PLAYER
+  TEAM
 }
 
 type FieldAttempt {
@@ -2482,6 +2545,9 @@ input InvitePartnerInput {
   playerId: ID
   playerUserId: ID
   registrationId: ID!
+
+  """R25 — accepting takes this teammate’s place on the team."""
+  replacesUserId: ID
 }
 
 type InvitePartnerPayload {
@@ -3168,7 +3234,13 @@ type Mutation {
   """
   registration R10, F13 — open from two hours before the start until the end. Staff on the event check anyone in; an entrant checks themselves in only within a kilometre of the event (send `at`, the phone location).
   """
-  checkIn(at: GeoPointInput, registrationId: ID!): RegistrationPayload!
+  checkIn(
+    at: GeoPointInput
+    registrationId: ID!
+
+    """R24 — staff only: which players. Omitted: everyone on the entry."""
+    userIds: [ID!]
+  ): RegistrationPayload!
 
   """
   registration R13 — a staff scan of an entrant’s QR. Idempotent: a re-scan returns the entry with its original check-in time.
@@ -3182,6 +3254,17 @@ type Mutation {
     """
     reason: String
   ): CourtBookingPayload!
+
+  """
+  R24 — staff check in some of an entry’s players (`userIds`), or all of them (omit it). A player already in keeps their original time; nobody is checked in twice.
+  """
+  checkInPlayers(
+    registrationId: ID!
+    userIds: [ID!]
+
+    """The desk found this entry by scanning its QR."""
+    viaQr: Boolean
+  ): RegistrationPayload!
 
   """
   Owner or manager. Closes registration now so the draws can be made. Draws below their minimum entries are cancelled and refunded, exactly as at the deadline.
@@ -3259,6 +3342,11 @@ type Mutation {
   Round 1: the confirmed entries split serpentine into `count` heats. Owners and managers, once per category.
   """
   createHeats(count: Int!, eventCategoryId: ID!): HeatsPayload!
+
+  """
+  R22 — a link to share on WhatsApp, addressed to nobody: the first signed-in player to accept it joins. Asking again returns the same open link. With `replacesUserId`, accepting takes that teammate’s place (R25).
+  """
+  createInviteLink(registrationId: ID!, replacesUserId: ID): InvitePartnerPayload!
 
   """
   payments R1 — the amount is recomputed from events.priceQuote(). There is deliberately no argument for a client-supplied amount to arrive in.
@@ -3546,7 +3634,17 @@ type Mutation {
   """
   Owner or manager, before the draw is made. Takes one entry out of its draw; with `refund: true` the player gets back everything they paid, platform fee included.
   """
-  removeRegistration(refund: Boolean!, registrationId: ID!): RegistrationPayload!
+  removeRegistration(
+    """PL4Y staff in the portal must give one; it goes in the audit log."""
+    reason: String
+    refund: Boolean!
+    registrationId: ID!
+  ): RegistrationPayload!
+
+  """
+  R25 — the captain takes a teammate who cannot play off a paid team, so the spot opens again. The entry, its payment and its QR stay.
+  """
+  removeTeammate(registrationId: ID!, userId: ID!): RegistrationPayload!
   replySupportTicket(body: String!, ticketId: ID!): SupportTicketPayload!
 
   """venues R8 — the venue’s one public reply to a review."""
@@ -3584,6 +3682,18 @@ type Mutation {
   """
   requestToJoinCommunity(communityId: ID!, inviteCode: String, note: String): RequestToJoinCommunityPayload!
 
+  """
+  R22 — send an open invite again (once a minute). An expired one is replaced by a new invite.
+  """
+  resendPartnerInvite(
+    inviteId: ID!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log.
+    """
+    reason: String
+  ): InvitePartnerPayload!
+
   """Admins. The old invite link stops working."""
   resetCommunityInvite(communityId: ID!): CommunityPayload!
 
@@ -3610,6 +3720,9 @@ type Mutation {
   venues R6, R7 — only after playing here in the last 12 months (REVIEW_NOT_ELIGIBLE). A second call edits your review.
   """
   reviewVenue(input: ReviewVenueInput!): VenueReviewPayload!
+
+  """R22 — the captain takes back an invite nobody has answered."""
+  revokePartnerInvite(inviteId: ID!): InvitePartnerPayload!
 
   """
   payouts R1 — saves (or replaces) the host bank details and starts the bank check. With `organisationId`, the organisation’s account instead: its owner only (org R6).
@@ -3672,6 +3785,11 @@ type Mutation {
   setProfileVisibility(visibility: ProfileVisibility!): ProfilePayload!
 
   """
+  R21 — the captain names the team (2–40 letters) until the roster locks. Null clears it.
+  """
+  setTeamName(name: String, registrationId: ID!): RegistrationPayload!
+
+  """
   chat R14 — you are typing in this conversation; the other side sees "typing…" for a few seconds. Best-effort and silent: always true. Send at most every 3 seconds.
   """
   setTyping(conversationId: ID!): Boolean!
@@ -3700,6 +3818,11 @@ type Mutation {
   ): MatchResultPayload!
 
   """
+  R25, R26 — an owner or manager (or PL4Y staff) puts a PL4Y player on a team directly, optionally in place of a teammate (`replacesUserId`). A reason is required and kept in the history.
+  """
+  staffAddTeamMember(email: String, playerId: ID, reason: String!, registrationId: ID!, replacesUserId: ID): RegistrationPayload!
+
+  """
   portal — PL4Y staff refund a court booking by hand, up to what is left of its payment. Money only: it does not cancel the booking. Admin web only.
   """
   staffRefundCourtBooking(amountPaise: Int!, bookingId: ID!, reason: String!): StaffRefundPayload!
@@ -3708,6 +3831,11 @@ type Mutation {
   gap #33 — PL4Y staff refund one entry by hand, up to what is left of its payment. Admin web only.
   """
   staffRefundRegistration(amountPaise: Int!, reason: String!, registrationId: ID!): StaffRefundPayload!
+
+  """
+  R25, R26 — staff take a teammate (never the captain) off a team. The entry and its payment stay.
+  """
+  staffRemoveTeamMember(reason: String!, registrationId: ID!, userId: ID!): RegistrationPayload!
 
   """Opens the point log. Idempotent on a live match."""
   startMatch(firstServer: MatchSide, matchId: ID!): MatchPayload!
@@ -3935,9 +4063,12 @@ enum NotificationKind {
   MATCH_STARTING_SOON
   ORGANISATION_MEMBERSHIP
   ORGANIZER_MESSAGE
+  PARTNER_ACCEPTED
   PARTNER_ADDED
   PARTNER_DECLINED
   PARTNER_INVITE
+  PARTNER_INVITE_EXPIRED
+  PARTNER_JOINED
   PAYMENT_CONFIRMED
   PAYMENT_UPDATED
   PAYOUT_ACCOUNT_STATUS
@@ -4210,11 +4341,43 @@ type PageInfo {
 }
 
 type PartnerInvite {
+  createdAt: DateTime
   expiresAt: DateTime!
   id: ID!
-  invitedEmail: String!
+
+  """R22 — null for a shareable link, which is addressed to nobody."""
+  invitedEmail: String
+  invitedName: String
   invitedUserId: ID
+
+  """R22 — a shareable link, addressed to nobody until somebody accepts it."""
+  isLink: Boolean!
+  lastSentAt: DateTime
+  replacesUserId: ID
+  sentCount: Int!
   status: String!
+  token: String
+}
+
+"""
+R22 — what an invited player sees before deciding. Nothing about payment.
+"""
+type PartnerInviteDetails {
+  canAccept: Boolean!
+  captainName: String!
+  category: EventCategory!
+  event: Event!
+  expiresAt: DateTime!
+  id: ID!
+  registrationId: ID!
+  registrationStatus: RegistrationStatus!
+
+  """R25 — the teammate this player would take the place of."""
+  replacesName: String
+
+  """pending | accepted | declined | expired | revoked"""
+  status: String!
+  teamName: String
   token: String!
 }
 
@@ -4891,6 +5054,11 @@ type Query {
   careerCounts: [CareerCount!]!
 
   """
+  R24 — a staff scan that only reads: the entry, its players and who has arrived. Then check players in with `checkInPlayers`. Any staff grant on the event.
+  """
+  checkInLookup(token: String!): CheckInLookupPayload!
+
+  """
   registration R13 — every confirmed entry, for scanning offline. Any staff grant on the event. Check-ins made offline replay through `checkInByToken`.
   """
   checkInRoster(eventId: ID!): [RosterEntry!]!
@@ -5028,6 +5196,9 @@ type Query {
 
   """Home’s "Next up": the viewer’s next game that has not ended."""
   myNextGame: Game
+
+  """R22 — invites waiting for the viewer’s answer."""
+  myPartnerInvites: [PartnerInviteDetails!]!
   myPayoutAccount: PayoutAccount
   myPayouts(after: String, before: String, first: Int, last: Int): PayoutConnection!
 
@@ -5067,6 +5238,11 @@ type Query {
   14-organizers — every event of an organisation that starts in the range (default: the last 90 days and the next 90).
   """
   organisationAnalytics(from: DateTime, organisationId: ID!, to: DateTime): OrganisationAnalytics!
+
+  """
+  R22 — the invite a link carries: event, team and captain. Null when it is not for this account.
+  """
+  partnerInvite(token: String!): PartnerInviteDetails
   partnershipApplication(id: ID!): PartnershipApplication
 
   """portal — partnership applications, newest first. At most 100 a page."""
@@ -5129,6 +5305,11 @@ type Query {
   """Active sports, in display order. Retired sports are hidden (sport R3)."""
   sports: [Sport!]!
   supportTicket(id: ID!): SupportTicket
+
+  """
+  R11 — the dashboard numbers for an event’s entries and teams. Staff on the event.
+  """
+  teamRegistrationStats(eventId: ID!): TeamRegistrationStats!
 
   """The draw for one event category, if it has been generated."""
   tournament(eventCategoryId: ID!): Tournament
@@ -5413,6 +5594,7 @@ type Registration {
   registration R13 — the payload to render as a QR. Team members only, confirmed entries only. Deterministic, so the app may cache it for offline display.
   """
   checkInQr: String
+  checkInState: CheckInState!
   checkedInAt: DateTime
   confirmedAt: DateTime
   createdAt: DateTime!
@@ -5424,16 +5606,42 @@ type Registration {
   event: Event!
 
   """
+  R26 — every change to this entry, oldest first. The team and the event’s staff.
+  """
+  history: [RegistrationHistoryEntry!]!
+
+  """
   Non-null while a seat hold is live. This is the countdown on the checkout screen.
   """
   holdExpiresAt: DateTime
   id: ID!
+
+  """
+  R22 — the entry’s invites, newest first. The captain sees the links (`token`); the team and the event’s staff see who was asked and what they said.
+  """
+  invites: [PartnerInvite!]!
+
+  """
+  R24 — everyone on the entry, captain first, each with their own check-in.
+  """
+  members: [RegistrationMember!]!
+
+  """R21 — players the team can still add before it is full."""
+  openSpots: Int!
   paymentMode: PaymentMode!
+  paymentStatus: RegistrationPaymentStatus!
+
+  """
+  R27 — a short reference to read out at the desk (PL4Y-3F9A-12C0). Not a credential.
+  """
+  reference: String!
 
   """Set at draw time."""
   seed: Int
   status: RegistrationStatus!
   team: Team
+  teamName: String
+  teamStatus: TeamStatus!
 
   """registration R17 — 1-based, non-null only while waitlisted."""
   waitlistPosition: Int
@@ -5463,9 +5671,43 @@ type RegistrationEdge {
   node: Registration!
 }
 
+"""R26 — one change to an entry: who made it, when and why."""
+type RegistrationHistoryEntry {
+  actorName: String
+  createdAt: DateTime!
+  id: ID!
+  kind: String!
+  reason: String
+  subjectName: String
+}
+
+"""R24, R27 — one player on an entry."""
+type RegistrationMember {
+  checkedInAt: DateTime
+  displayName: String!
+  isCaptain: Boolean!
+  userId: ID!
+}
+
 type RegistrationPayload {
   registration: Registration
   userError: UserError
+}
+
+"""
+R27 — the money, apart from the entry: a paid entry can still be waiting for its teammate.
+"""
+enum RegistrationPaymentStatus {
+  FAILED
+  FREE
+  NOT_DUE
+
+  """Paid at the desk, not through PL4Y."""
+  OFFLINE
+  PAID
+  PENDING
+  REFUNDED
+  REFUND_PENDING
 }
 
 """The state machine in docs/modules/06-registration.md."""
@@ -5658,6 +5900,8 @@ type RosterEntry {
 }
 
 type RosterPlayer {
+  """R24 — this player’s own check-in."""
+  checkedInAt: DateTime
   displayName: String!
   userId: ID!
 }
@@ -6143,6 +6387,58 @@ type TeamMember {
   userId: ID!
 }
 
+enum TeamNameRule {
+  OPTIONAL
+  REQUIRED
+}
+
+"""R11 — the organiser dashboard numbers for an event."""
+type TeamRegistrationStats {
+  awaitingTeammates: Int!
+  cancelled: Int!
+  checkedInParticipants: Int!
+  checkedInTeams: Int!
+  completeTeams: Int!
+  declinedInvites: Int!
+  paidEntries: Int!
+  partiallyCheckedInTeams: Int!
+  participants: Int!
+  refundPending: Int!
+  refunded: Int!
+  teamSlots: Int!
+}
+
+"""registration R21 — how a team draw takes entries. Ignored for singles."""
+input TeamSettingsInput {
+  allowReplacements: Boolean
+
+  """A label only: `entryFeePaise` is always the whole team’s price."""
+  feeBasis: FeeBasis
+  inviteDeadlineAt: DateTime
+
+  """Teams bigger than a pair only."""
+  maxTeamSize: Int
+
+  """Teams bigger than a pair only."""
+  minTeamSize: Int
+  rosterLockAt: DateTime
+  teamNameRule: TeamNameRule
+
+  """The captain pays first and invites teammates after."""
+  teammatesAfterPayment: Boolean
+  waitlistEnabled: Boolean
+}
+
+enum TeamStatus {
+  COMPLETE
+
+  """A singles entry."""
+  SOLO
+
+  """Fewer players than the team needs."""
+  TEAMMATE_PENDING
+}
+
 """
 A generated draw. One per event category, and the unique constraint behind that is what makes two simultaneous generations collide rather than interleave two half-brackets.
 """
@@ -6241,6 +6537,7 @@ input UpdateEventCategoryInput {
   rulesNote: String
   skillMax: Float
   skillMin: Float
+  team: TeamSettingsInput
   thirdPlace: Boolean
   tweaks: RuleTweaksInput
 }

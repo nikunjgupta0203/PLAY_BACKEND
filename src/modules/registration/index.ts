@@ -19,6 +19,10 @@ const payments: PaymentsPort = {
     const { payments: svc } = await import('../payments/index.js');
     await svc.refundForRegistration(input);
   },
+  async refundStates(registrationIds) {
+    const { payments: svc } = await import('../payments/index.js');
+    return svc.refundStatesForRegistrations(registrationIds);
+  },
 };
 
 const users: UsersPort = {

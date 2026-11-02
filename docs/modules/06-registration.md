@@ -464,3 +464,58 @@ See `docs/platform-flow-review-2026-10-04.md` (Status) for why; the app side is 
   `partnerName`; it seats into `open`, `full` or `closed` draws (not drawn). A guest is a `users` row with
   `is_guest`, an address on `guest.pl4y.invalid`, never emailed (the transport drops it).
 - PL4Y staff read any event's entry list.
+
+---
+
+## Additions 2026-11-02 — team registration: pay first, invite after (R21–R27)
+
+From the founder's brief "Team-based event registration, partner invitations and QR check-in".
+The rule it calls most important: **one payment, one team registration, two linked player accounts,
+the same registration visible to both**. Migration `057_team_registration`. Tests: `tests/teamRegistration.test.ts`.
+
+**R21 — Team draw settings** (on `event_categories`, all defaulting to the old behaviour):
+`teammates_after_payment` (the captain pays for the whole team at `begin`, like singles, and invites
+after), `team_name_rule` (optional | required — required is enforced at `begin`), `fee_basis`
+(team | player — a label only; `entry_fee_paise` is always the whole entry's price, and the host app
+multiplies a per-player fee by the team size), `min_team_size` / `max_team_size` (teams bigger than a
+pair; complete at min, never above max), `invite_deadline_at`, `roster_lock_at` (null = until the
+start), `allow_replacements`, `waitlist_enabled`. The host wizard defaults new team draws to pay-first.
+
+**R22 — Invites after payment.** `invitePartner` and `createInviteLink` work on a seated entry
+(`payment_pending`, `payment_failed`, `confirmed`, `checked_in`); the entry's status never changes
+when a teammate joins. A shareable link has no email and no account (`invited_email` is nullable) and
+is a bearer credential — the first signed-in player to accept takes it; `settleInvite` being
+conditional on `pending` is what stops two people both joining. Asking for a link again returns the
+same open link. `resendPartnerInvite` (once a minute; an expired invite is replaced), `revokePartnerInvite`,
+`partnerInvite(token)` (event, team, captain — before deciding), `myPartnerInvites`. A decline or an
+expiry leaves a paid entry untouched and tells the captain (`invite.declined`, `invite.expired`).
+The share link is `https://getpl4y.com/invite/{token}` (website page → `pl4y://invite/{token}`).
+
+**R23 — When a team can change.** Players: until `roster_lock_at` (or the start); accepting also
+stops at `invite_deadline_at`. An invite's expiry is the sooner of 48 h and those. Staff: until the
+event ends. Errors `TEAM_CHANGES_CLOSED`.
+
+**R24 — Per-player check-in.** `registration_checkins` has one row per player (primary key =
+no double check-in). The entry moves to `checked_in` with its first player; `checkInState` is
+NONE | PARTIAL | ALL. `checkInLookup(token)` reads a scan without writing; `checkInPlayers(registrationId,
+userIds?)` checks some or all in. Self check-in checks in only yourself. `checkInByToken` still
+checks in everyone (offline replay, older staff apps).
+
+**R25 — Replacement.** An invite (or link) with `replacesUserId`: when accepted, that teammate is
+removed and the new one added, in one transaction — same registration, payment and QR. Refused when
+the host turned replacements off (`REPLACEMENTS_OFF`) or that teammate is already checked in
+(`MEMBER_CHECKED_IN`). Staff: `staffAddTeamMember` (optionally in place of someone) and
+`staffRemoveTeamMember`, reason required.
+
+**R26 — History.** `registration_history` records every roster change, invite, check-in and
+cancellation with who, when and (for staff) why. `Registration.history`. Portal actions are also in
+the audit log.
+
+**R27 — What the card shows.** `reference` (PL4Y-XXXX-XXXX, display only — the QR stays the signed
+token of R13), `teamName`, `members` (each with `checkedInAt`), `teamStatus` (SOLO | TEAMMATE_PENDING
+| COMPLETE), `openSpots`, `paymentStatus` (kept apart from the entry's status: NOT_DUE | PENDING |
+FAILED | PAID | FREE | OFFLINE | REFUND_PENDING | REFUNDED), `invites` (tokens to the captain only).
+`teamRegistrationStats(eventId)` is the organiser dashboard.
+
+Not built: a player on two teams in one draw (rule 9's "unless the organiser allows it") — R1's
+unique index and gap #27 still refuse it everywhere.

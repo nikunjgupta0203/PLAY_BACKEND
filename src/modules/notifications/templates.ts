@@ -30,6 +30,8 @@ export const DEEP_LINK_ROUTES = [
   'event_draw',
   /** venue hosts — the application to list a venue, and what was decided. */
   'venue_host',
+  /** registration R22 — `id` is the invite's token (the notification is the invitee's own). */
+  'partner_invite',
   /** rewards — the welcome offer, the player's code and rewards. */
   'rewards',
   /** pay at venue — `id` is the player's venue payment (their receipt). */
@@ -49,7 +51,14 @@ export type Target =
 
 export interface TemplatePayloads {
   'registration.confirmed': { eventTitle: string; categoryName: string };
-  'partner.invite': { eventTitle: string; categoryName: string };
+  /** R22 — `teamName` and `captainName` are absent on rows written before 057. */
+  'partner.invite': { eventTitle: string; categoryName: string; teamName?: string | null; captainName?: string };
+  /** R22 — to the captain: a teammate said yes. `complete`: the team now has everyone it needs. */
+  'partner.accepted': { eventTitle: string; categoryName: string; teammateName: string; complete: boolean };
+  /** R22 — to the teammate: they are on the team, and the ticket is in My PL4Y. */
+  'partner.joined': { eventTitle: string; categoryName: string; captainName: string };
+  /** R22 — to the captain: an invite ran out unanswered. The paid entry stays. */
+  'partner.invite_expired': { eventTitle: string; categoryName: string };
   /** Teammate registration — the captain entered this player directly and pays for the team. */
   'partner.added': { eventTitle: string; categoryName: string; captainName: string };
   /** The captain hears that the invited partner said no. */
@@ -232,8 +241,30 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
   },
   'partner.invite': {
     render: (p) => ({
-      title: 'You have a partner invite',
-      body: `${p.eventTitle} · ${p.categoryName}. Open the email we sent to accept.`,
+      title: p.captainName ? `${p.captainName} invited you to their team` : 'You have a partner invite',
+      body: p.teamName
+        ? `You have been invited to join ${p.teamName} for ${p.eventTitle} on PL4Y. Tap to accept or decline.`
+        : `You have been invited to join a team for ${p.eventTitle} · ${p.categoryName} on PL4Y. Tap to accept or decline.`,
+    }),
+  },
+  'partner.accepted': {
+    render: (p) => ({
+      title: `${p.teammateName} joined your team`,
+      body: p.complete
+        ? `${p.eventTitle} · ${p.categoryName}. Your team is complete — you're all set.`
+        : `${p.eventTitle} · ${p.categoryName}. Invite the rest of your team to complete it.`,
+    }),
+  },
+  'partner.joined': {
+    render: (p) => ({
+      title: "You're on the team",
+      body: `${p.eventTitle} · ${p.categoryName} with ${p.captainName}. Your registration and QR ticket are in My PL4Y.`,
+    }),
+  },
+  'partner.invite_expired': {
+    render: (p) => ({
+      title: 'Your teammate invite expired',
+      body: `${p.eventTitle} · ${p.categoryName}. Your team's place is still held — invite someone again.`,
     }),
   },
   'partner.added': {
@@ -244,8 +275,8 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
   },
   'partner.declined': {
     render: (p) => ({
-      title: 'Partner declined',
-      body: `${p.eventTitle} · ${p.categoryName}. Invite someone else to keep your entry.`,
+      title: 'Teammate declined',
+      body: `${p.eventTitle} · ${p.categoryName}. Invite someone else to complete your team.`,
     }),
   },
   'match.starting_soon': {

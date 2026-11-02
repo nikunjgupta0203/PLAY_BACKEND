@@ -232,6 +232,21 @@ const handlers: Record<string, OutboxHandler> = {
     await notify.teammateAdded(payload);
   },
 
+  'invite.accepted': async (payload) => {
+    await registrationNotifier.notify('invite.accepted', payload);
+    await notify.partnerAccepted(payload);
+  },
+
+  'invite.expired': async (payload) => {
+    await registrationNotifier.notify('invite.expired', payload);
+    await notify.partnerInviteExpired(payload);
+  },
+
+  /** R22 — the same invite sent again: the push goes out once more; the expiry job is already queued. */
+  'invite.resent': async (payload) => {
+    await notify.partnerInvited(payload);
+  },
+
   'invite.declined': async (payload) => {
     await registrationNotifier.notify('invite.declined', payload);
     await notify.partnerDeclined(payload);

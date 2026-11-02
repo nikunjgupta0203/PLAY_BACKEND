@@ -27,7 +27,7 @@ import {
 import { newId } from '../../../platform/ids.js';
 import { write as outboxWrite } from '../../../platform/outbox.js';
 import { logger } from '../../../platform/logging/index.js';
-import type { RegistrationRepo, RegistrationRow } from '../repo/index.js';
+import type { InviteRow, RegistrationRepo, RegistrationRow } from '../repo/index.js';
 import {
   checkinTokenHash,
   signCheckinToken,
@@ -62,6 +62,10 @@ export const RegistrationCode = {
   /** R7 — skill band. See the note on age in `assertPartnerEligible`. */
   PARTNER_INELIGIBLE: 'PARTNER_INELIGIBLE',
   INVITE_EXPIRED: 'INVITE_EXPIRED',
+  /** Somebody already accepted this invite (a shared link is good for one player). */
+  INVITE_USED: 'INVITE_USED',
+  /** The invite was declined, or the captain cancelled it. */
+  INVITE_CLOSED: 'INVITE_CLOSED',
   CHECKIN_WINDOW_CLOSED: 'CHECKIN_WINDOW_CLOSED',
   NO_SPORT_SELECTED: 'NO_SPORT_SELECTED',
   REGISTRATION_NOT_FOUND: 'REGISTRATION_NOT_FOUND',
@@ -88,7 +92,67 @@ export const RegistrationCode = {
   CHECKIN_LOCATION_REQUIRED: 'CHECKIN_LOCATION_REQUIRED',
   /** F20 — a walk-in is an email or a name, and a doubles walk-in needs both players. */
   WALK_IN_INCOMPLETE: 'WALK_IN_INCOMPLETE',
+  /** R23 — past the invite deadline or the roster lock, or the event is over. */
+  TEAM_CHANGES_CLOSED: 'TEAM_CHANGES_CLOSED',
+  /** R21 — the host asks every team for a name. */
+  TEAM_NAME_REQUIRED: 'TEAM_NAME_REQUIRED',
+  TEAM_NAME_INVALID: 'TEAM_NAME_INVALID',
+  /** R24, R25 — that player is not on this entry. */
+  NOT_ON_TEAM: 'NOT_ON_TEAM',
+  /** R25 — the host does not allow replacing a teammate. */
+  REPLACEMENTS_OFF: 'REPLACEMENTS_OFF',
+  /** R25 — a player already checked in cannot be replaced. */
+  MEMBER_CHECKED_IN: 'MEMBER_CHECKED_IN',
+  /** R22 — a resend a moment after the last one. */
+  RESEND_TOO_SOON: 'RESEND_TOO_SOON',
+  /** R26 — a manual change by staff needs a reason. */
+  REASON_REQUIRED: 'REASON_REQUIRED',
 } as const;
+
+/** R22 — the least time between two resends of one invite. */
+export const RESEND_INTERVAL_MS = 60_000;
+/** R21 — a team name's longest. */
+export const TEAM_NAME_MAX = 40;
+
+/** R27 — a payment's state, kept apart from the entry's (a paid entry may still wait for its teammate). */
+export type PaymentStatus = 'not_due' | 'pending' | 'failed' | 'paid' | 'free' | 'offline' | 'refund_pending' | 'refunded';
+/** R24 */
+export type CheckInState = 'none' | 'partial' | 'all';
+
+/** R24, R27 — one player on an entry, as the team card shows them. */
+export interface RegistrationMember {
+  userId: string;
+  isCaptain: boolean;
+  checkedInAt: Date | null;
+}
+
+/** R26 — one line of an entry's history. */
+export interface HistoryEntry {
+  id: string;
+  registrationId: string;
+  kind: string;
+  actorUserId: string | null;
+  subjectUserId: string | null;
+  reason: string | null;
+  data: unknown;
+  createdAt: Date;
+}
+
+/** R11 (organizer dashboard) — the team numbers for one event. */
+export interface TeamStats {
+  teamSlots: number;
+  paidEntries: number;
+  completeTeams: number;
+  awaitingTeammates: number;
+  declinedInvites: number;
+  cancelled: number;
+  refundPending: number;
+  refunded: number;
+  participants: number;
+  checkedInTeams: number;
+  partiallyCheckedInTeams: number;
+  checkedInParticipants: number;
+}
 
 /** F13 — how close to the event a player must be to check themselves in. */
 export const SELF_CHECKIN_RADIUS_M = 1_000;
@@ -130,12 +194,36 @@ export interface Registration {
 export interface Invite {
   id: string;
   registrationId: string;
-  invitedEmail: string;
+  /** Null for a shareable link (R22), which is addressed to nobody. */
+  invitedEmail: string | null;
   invitedUserId: string | null;
   /** Returned to the captain so the app can share the deep link (R12). */
   token: string;
   status: string;
   expiresAt: Date;
+  /** R25 — accepting takes this member's place. */
+  replacesUserId?: string | null;
+  sentCount?: number;
+  lastSentAt?: Date | null;
+  createdAt?: Date;
+}
+
+/** R22 — what the invited player sees before deciding. Nothing about payment. */
+export interface InviteDetails {
+  inviteId: string;
+  token: string;
+  status: string;
+  expiresAt: Date;
+  registrationId: string;
+  eventId: string;
+  eventCategoryId: string;
+  captainUserId: string;
+  teamName: string | null;
+  /** The entry's own state, so the screen can say "confirmed, waiting for you". */
+  registrationStatus: RegistrationStatus;
+  replacesUserId: string | null;
+  /** Whether this viewer may accept it (the right account, still open). */
+  canAccept: boolean;
 }
 
 /** R13 — one row of the offline check-in roster. Never carries the token itself. */
@@ -145,7 +233,7 @@ export interface RosterEntry {
   status: RegistrationStatus;
   /** sha256 of the entry's QR token; the staff device hashes a scan and looks it up. */
   tokenHash: string;
-  players: { userId: string; displayName: string }[];
+  players: { userId: string; displayName: string; checkedInAt?: Date | null }[];
   checkedInAt: Date | null;
 }
 
@@ -185,6 +273,16 @@ export interface EventsPort {
     ageMax: number | null;
     /** open | full | closed | drawn | completed | cancelled */
     status: string;
+    capacity?: number;
+    /** R21 — absent on older fakes: the old flow (every teammate accepts before payment). */
+    teammatesAfterPayment?: boolean;
+    teamNameRule?: string;
+    minTeamSize?: number;
+    maxTeamSize?: number;
+    inviteDeadlineAt?: Date | null;
+    rosterLockAt?: Date | null;
+    allowReplacements?: boolean;
+    waitlistEnabled?: boolean;
   }>;
   priceQuote(categoryId: string): Promise<{ totalPaise: bigint }>;
   assertRegistrationOpen(categoryId: string): Promise<void>;
@@ -239,6 +337,8 @@ export interface PaymentsPort {
     /** F27 — a share of the entry fee only (basis points). Absent: all of it. */
     fractionBps?: number;
   }): Promise<void>;
+  /** R27 — the latest refund for each entry that has one: pending | processed | failed. */
+  refundStates?(registrationIds: string[]): Promise<Map<string, string>>;
 }
 
 export interface EmailPort {
@@ -279,6 +379,14 @@ const notFound = () =>
 const categoryFull = () =>
   new UserError(RegistrationCode.CATEGORY_FULL, 'This draw is full.');
 
+/** Why an invite that is no longer pending can't be accepted, in the player's words. */
+const inviteSettled = (status: string) =>
+  status === 'accepted'
+    ? new UserError(RegistrationCode.INVITE_USED, 'That invite has already been used.')
+    : status === 'declined' || status === 'revoked'
+      ? new UserError(RegistrationCode.INVITE_CLOSED, 'That invite is no longer open. Ask your captain for a new one.')
+      : new UserError(RegistrationCode.INVITE_EXPIRED, 'That invite has expired. Ask your partner to send a new one.');
+
 const invalidCheckinToken = () =>
   new UserError(RegistrationCode.CHECKIN_TOKEN_INVALID, 'This QR code is not a valid entry.');
 
@@ -309,6 +417,24 @@ const IN_PROGRESS: RegistrationStatus[] = [
   'payment_pending',
   'payment_failed',
 ];
+
+/**
+ * R21 — statuses in which the entry already has its seat (or is paying for
+ * it). An invite accepted here only adds a player; the entry's status stays.
+ */
+const SEATED_OR_PAYING: RegistrationStatus[] = ['payment_pending', 'payment_failed', 'confirmed', 'checked_in'];
+
+type Category = Awaited<ReturnType<EventsPort['categoryById']>>;
+
+/**
+ * R27 — a short reference a player can read out at the desk: PL4Y-3F9A-12C0.
+ * Ids are UUIDv7: the first 12 hex digits are a timestamp (entries made in the
+ * same minute share their first 8), so the reference takes the random tail.
+ */
+export const referenceFor = (registrationId: string): string => {
+  const hex = registrationId.replace(/-/g, '').toUpperCase();
+  return `PL4Y-${hex.slice(-8, -4)}-${hex.slice(-4)}`;
+};
 
 /** F13 — great-circle distance, in metres. Close enough at venue scale. */
 export function metresBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -396,6 +522,98 @@ export function createRegistrationService(deps: RegistrationDeps) {
       'Only your team captain can withdraw this entry. Ask them to do it.',
     );
   }
+
+  // --- R21–R26: team helpers ---------------------------------------------------
+
+  /** R21 — a team is complete at min and can never exceed max. Singles: 1. */
+  const minTeam = (c: Category): number => (c.teamSize > 1 ? (c.minTeamSize ?? c.teamSize) : 1);
+  const maxTeam = (c: Category): number =>
+    c.teamSize > 1 ? (c.maxTeamSize ?? Math.max(c.teamSize, minTeam(c))) : 1;
+  /** R21 — the captain pays first and invites teammates after. */
+  const paysFirst = (c: Category): boolean => c.teamSize > 1 && c.teammatesAfterPayment === true;
+
+  /** R26 — one line of history, in the caller's transaction when there is one. */
+  async function record(
+    client: Tx | Db,
+    entry: {
+      registrationId: string;
+      kind: string;
+      actorUserId?: string | null;
+      subjectUserId?: string | null;
+      reason?: string | null;
+      data?: Record<string, unknown> | null;
+    },
+  ): Promise<void> {
+    await repo.addHistory(client, {
+      id: newId(),
+      registrationId: entry.registrationId,
+      kind: entry.kind,
+      actorUserId: entry.actorUserId ?? null,
+      subjectUserId: entry.subjectUserId ?? null,
+      reason: entry.reason ?? null,
+      data: (entry.data ?? null) as never,
+    });
+  }
+
+  /**
+   * R23 — when a team may still change. Players: until the roster lock (or
+   * the start). Accepting an invite also stops at the invite deadline. Staff
+   * may fix a team until the event is over.
+   */
+  function assertTeamChangesOpen(
+    category: Category,
+    event: Awaited<ReturnType<EventsPort['byId']>>,
+    what: 'invite' | 'roster',
+    opts: { staff?: boolean } = {},
+  ): void {
+    const closed = () =>
+      new UserError(RegistrationCode.TEAM_CHANGES_CLOSED, 'This team can no longer be changed for this event.');
+    if (event.status === 'cancelled' || event.status === 'completed' || category.status === 'cancelled') throw closed();
+    const at = now().getTime();
+    if (opts.staff) {
+      const end = event.endsAt ?? event.startsAt;
+      if (at > end.getTime()) throw closed();
+      return;
+    }
+    const lock = (category.rosterLockAt ?? event.startsAt).getTime();
+    if (at >= lock) throw closed();
+    if (what === 'invite' && category.inviteDeadlineAt && at >= category.inviteDeadlineAt.getTime()) throw closed();
+  }
+
+  /** R3, R23 — an invite lives 48 hours, or until the invite deadline when that is sooner. */
+  function inviteExpiry(category: Category, event: Awaited<ReturnType<EventsPort['byId']>>): Date {
+    const ttl = now().getTime() + deps.inviteTtlSeconds * 1000;
+    const deadline = Math.min(
+      (category.inviteDeadlineAt ?? event.startsAt).getTime(),
+      (category.rosterLockAt ?? event.startsAt).getTime(),
+      event.startsAt.getTime(),
+    );
+    return new Date(Math.min(ttl, deadline));
+  }
+
+  /** Everyone on the entry: the team's members, or the one player of a singles entry. */
+  async function rosterOf(row: RegistrationRow, client?: Tx): Promise<string[]> {
+    if (!row.teamId) return [row.captainUserId];
+    const members = client
+      ? await client.teamMember.findMany({ where: { teamId: row.teamId }, select: { userId: true } })
+      : await repo.teamMembers(row.teamId);
+    return members.length > 0 ? members.map((m) => m.userId) : [row.captainUserId];
+  }
+
+  function cleanTeamName(raw: string | null | undefined): string | null {
+    const name = raw?.trim().replace(/\s+/g, ' ') ?? '';
+    if (!name) return null;
+    if (name.length < 2 || name.length > TEAM_NAME_MAX) {
+      throw new UserError(RegistrationCode.TEAM_NAME_INVALID, `A team name is 2 to ${TEAM_NAME_MAX} letters.`);
+    }
+    return name;
+  }
+
+  const needReason = (reason: string | null | undefined): string => {
+    const r = reason?.trim() ?? '';
+    if (r.length < 3) throw new UserError(RegistrationCode.REASON_REQUIRED, 'Give a reason for this change.');
+    return r.slice(0, 500);
+  };
 
   // --- holds -----------------------------------------------------------------
 
@@ -571,7 +789,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
    */
   async function begin(
     actor: Actor,
-    input: { eventCategoryId: string },
+    input: { eventCategoryId: string; teamName?: string | null },
   ): Promise<Registration> {
     return start(actor, input, { queueIfFull: false });
   }
@@ -588,17 +806,22 @@ export function createRegistrationService(deps: RegistrationDeps) {
    */
   async function joinWaitlist(
     actor: Actor,
-    input: { eventCategoryId: string },
+    input: { eventCategoryId: string; teamName?: string | null },
   ): Promise<Registration> {
     return start(actor, input, { queueIfFull: true });
   }
 
   async function start(
     actor: Actor,
-    input: { eventCategoryId: string },
+    input: { eventCategoryId: string; teamName?: string | null },
     opts: { queueIfFull: boolean },
   ): Promise<Registration> {
     const category = await events.categoryById(input.eventCategoryId);
+    // R21 — a host who turned the waitlist off gets a plain "full".
+    const queueIfFull = opts.queueIfFull && category.waitlistEnabled !== false;
+    const team = category.teamSize > 1;
+    const payFirst = paysFirst(category);
+    const teamName = team ? cleanTeamName(input.teamName) : null;
     const me = await profile.findByUserId(actor.userId);
     if (!me) throw notFound();
     await profile.assertHasSport(me.id);
@@ -631,20 +854,38 @@ export function createRegistrationService(deps: RegistrationDeps) {
       throw new UserError(RegistrationCode.ALREADY_REGISTERED, 'You are already entered in this draw.');
     }
 
+    // R21 — a host who asks every team for a name gets one before anybody pays.
+    if (team && !teamName && category.teamNameRule === 'required') {
+      throw new UserError(RegistrationCode.TEAM_NAME_REQUIRED, 'Give your team a name to register.');
+    }
+
     // Only a NEW entry has to fit.
     await assertOpen(input.eventCategoryId, {
-      allowFull: opts.queueIfFull,
+      allowFull: queueIfFull,
       previous: existing,
     });
 
     const quote = await events.priceQuote(input.eventCategoryId);
     const id = newId();
+    // R21 — the captain's team exists from the start when they pay first (so
+    // the team card has its captain) or when it already has a name.
+    const teamId = team && (payFirst || teamName) ? newId() : null;
+    const seatsNow = !team || payFirst;
 
     await db.$transaction(async (tx) => {
       // Before the insert, not after it: `registrations` references the
       // category, so inserting first and locking second is a lock upgrade and
       // a deadlock under load (repo.lockCategory).
-      if (category.teamSize === 1) await repo.lockCategory(tx, category.id);
+      if (seatsNow) await repo.lockCategory(tx, category.id);
+
+      if (teamId) {
+        await repo.createTeam(tx, {
+          id: teamId,
+          eventCategoryId: category.id,
+          name: teamName,
+          members: [{ userId: actor.userId, isCaptain: true }],
+        });
+      }
 
       const row = await repo.insert(tx, {
         id,
@@ -652,16 +893,23 @@ export function createRegistrationService(deps: RegistrationDeps) {
         eventCategoryId: category.id,
         sportId: category.sportId,
         captainUserId: actor.userId,
-        teamId: null,
+        teamId,
         status: 'draft',
         seed: null,
         amountPaise: quote.totalPaise,
       });
+      await record(tx, {
+        registrationId: id,
+        kind: 'registration_started',
+        actorUserId: actor.userId,
+        data: { payFirst, teamName },
+      });
 
-      // A singles draw has nobody to wait for, so it takes its seat now. A
-      // doubles draw waits — R2.
-      if (category.teamSize === 1) {
-        await seatOrQueue(tx, row, 'draft', { queueIfFull: opts.queueIfFull });
+      // A singles draw has nobody to wait for, so it takes its seat now. So
+      // does a team whose host lets the captain pay first (R21). Otherwise a
+      // team waits for its players — R2.
+      if (seatsNow) {
+        await seatOrQueue(tx, row, 'draft', { queueIfFull });
       }
     });
 
@@ -797,15 +1045,13 @@ export function createRegistrationService(deps: RegistrationDeps) {
       email?: string | null;
       playerUserId?: string | null;
       playerId?: string | null;
+      /** R25 — accepting takes this member's place on the team. */
+      replacesUserId?: string | null;
     },
   ): Promise<Invite> {
     const row = await repo.byId(input.registrationId);
     if (!row) throw notFound();
     if (row.captainUserId !== actor.userId) throw forbidden();
-    const status = row.status as RegistrationStatus;
-    if (status !== 'draft' && status !== 'awaiting_partner') {
-      assertTransition(status, 'awaiting_partner');
-    }
 
     // M3 — playerId wins over playerUserId when both are given, matching the
     // documented order of preference (playerId, then playerUserId, then
@@ -866,86 +1112,369 @@ export function createRegistrationService(deps: RegistrationDeps) {
       );
     }
 
+    const invite = await createInvite(actor, row, {
+      invitedEmail,
+      invitedUserId,
+      replacesUserId: input.replacesUserId ?? null,
+      kind: 'invite_sent',
+    });
+
+    // After the commit, and best effort: the outbox row is the durable record,
+    // and a bounced invite must not roll back a registration.
+    await sendInviteEmail(row, actor.userId, invite);
+
+    return {
+      ...invite,
+      // I1(d) — the real address is stored on the row as always; only the
+      // object handed back to the captain is masked, and only when they did
+      // not type it themselves.
+      invitedEmail:
+        resolvedFromAccountId && invite.invitedEmail ? maskEmail(invite.invitedEmail) : invite.invitedEmail,
+    };
+  }
+
+  /**
+   * R22 — a link the captain shares on WhatsApp, addressed to nobody. The
+   * first signed-in player to accept it joins (the accept is conditional on
+   * the invite still being pending, so two people cannot both take it).
+   */
+  async function createInviteLink(
+    actor: Actor,
+    input: { registrationId: string; replacesUserId?: string | null },
+  ): Promise<Invite> {
+    const row = await repo.byId(input.registrationId);
+    if (!row) throw notFound();
+    if (row.captainUserId !== actor.userId) throw forbidden();
+    // A captain tapping "Share link" twice gets the same open link back.
+    if (!input.replacesUserId) {
+      const open = (await repo.invitesFor(row.id)).find(
+        (i) => i.status === 'pending' && !i.invitedEmail && !i.invitedUserId && !i.replacesUserId && i.expiresAt > now(),
+      );
+      if (open) return toInvite(open);
+    }
+    return createInvite(actor, row, {
+      invitedEmail: null,
+      invitedUserId: null,
+      replacesUserId: input.replacesUserId ?? null,
+      kind: 'invite_link_created',
+    });
+  }
+
+  const toInvite = (i: InviteRow): Invite => ({
+    id: i.id,
+    registrationId: i.registrationId,
+    invitedEmail: i.invitedEmail,
+    invitedUserId: i.invitedUserId,
+    token: i.token,
+    status: i.status,
+    expiresAt: i.expiresAt,
+    replacesUserId: i.replacesUserId,
+    sentCount: i.sentCount,
+    lastSentAt: i.lastSentAt,
+    createdAt: i.createdAt,
+  });
+
+  /**
+   * The shared middle of every invite (R12, R22, R25): checks the entry can
+   * still take a player, counts the open spots, writes the invite and its
+   * outbox row. Before payment it moves a draft to `awaiting_partner`; after
+   * payment the entry's status does not change (R21).
+   */
+  async function createInvite(
+    actor: Actor,
+    row: RegistrationRow,
+    who: {
+      invitedEmail: string | null;
+      invitedUserId: string | null;
+      replacesUserId: string | null;
+      kind: 'invite_sent' | 'invite_link_created';
+      staff?: boolean;
+    },
+  ): Promise<Invite> {
+    const status = row.status as RegistrationStatus;
+    const seated = SEATED_OR_PAYING.includes(status);
+    if (!seated && status !== 'draft' && status !== 'awaiting_partner') {
+      assertTransition(status, 'awaiting_partner');
+    }
+
+    const [category, event] = await Promise.all([
+      events.categoryById(row.eventCategoryId),
+      events.byId(row.eventId),
+    ]);
+    if (category.teamSize < 2) throw forbidden();
+    assertTeamChangesOpen(category, event, 'invite', { staff: who.staff });
+
+    const members = row.teamId ? await repo.teamMembers(row.teamId) : [];
+    const replacing = who.replacesUserId;
+    if (replacing) await assertReplaceable(row, category, members, replacing, { staff: who.staff });
+
     // Plan 3b — a pair has one open spot; a bigger team has one per teammate.
-    const category = await events.categoryById(row.eventCategoryId);
-    const spots = category.teamSize - 1;
+    const max = maxTeam(category);
+    const pair = max === 2;
     const existing = await repo.invitesFor(row.id);
-    const pending = existing.filter((i) => i.status === 'pending');
-    const joined = row.teamId ? (await repo.teamMembers(row.teamId)).length - 1 : 0;
-    if (spots > 1 && joined + pending.length >= spots) {
-      throw new UserError(RegistrationCode.TEAM_COMPLETE, 'Every spot on this team is taken or invited.');
+    const pending = existing.filter((i) => i.status === 'pending' && i.expiresAt > now());
+    const joined = Math.max(members.length - 1, 0);
+    if (!pair) {
+      // An invite that replaces a player takes that player's spot, not a new one.
+      const open = max - 1 - joined - pending.filter((i) => !i.replacesUserId).length;
+      if (!replacing && open <= 0) {
+        throw new UserError(RegistrationCode.TEAM_COMPLETE, 'Every spot on this team is taken or invited.');
+      }
+    } else if (!replacing && joined >= 1) {
+      throw new UserError(RegistrationCode.TEAM_COMPLETE, 'Your team is complete.');
     }
 
     const token = inviteToken();
-    const expiresAt = new Date(now().getTime() + deps.inviteTtlSeconds * 1000);
+    const expiresAt = inviteExpiry(category, event);
     const inviteId = newId();
 
-    const invite = await db.$transaction(async (tx) => {
+    const created = await db.$transaction(async (tx) => {
       // A pair's earlier pending invite is superseded: a captain who re-invites
       // has changed their mind, and two live tokens for one seat is one too many.
-      // A bigger team keeps every open invite — each is for a different spot.
-      if (spots === 1) {
-        for (const old of pending) await repo.settleInvite(tx, old.id, 'expired');
+      // A bigger team keeps every open invite — each is for a different spot,
+      // except an earlier invite to replace the same player.
+      for (const old of pending) {
+        if (pair || (replacing && old.replacesUserId === replacing)) await repo.settleInvite(tx, old.id, 'revoked');
       }
-      const created = await repo.createInvite(tx, {
+      const invite = await repo.createInvite(tx, {
         id: inviteId,
         registrationId: row.id,
-        invitedEmail,
-        invitedUserId,
+        invitedEmail: who.invitedEmail,
+        invitedUserId: who.invitedUserId,
         token,
         status: 'pending',
         expiresAt,
+        replacesUserId: replacing,
       });
       if (status === 'draft') {
         assertTransition('draft', 'awaiting_partner');
         await repo.transition(tx, row.id, 'draft', 'awaiting_partner');
       }
+      await record(tx, {
+        registrationId: row.id,
+        kind: who.kind,
+        actorUserId: actor.userId,
+        subjectUserId: who.invitedUserId,
+        data: { inviteId, replacesUserId: replacing, link: !who.invitedEmail && !who.invitedUserId },
+      });
       await outboxWrite(tx, {
         topic: 'invite.created',
         payload: {
           inviteId,
           registrationId: row.id,
-          invitedEmail,
-          invitedUserId,
+          invitedEmail: who.invitedEmail,
+          invitedUserId: who.invitedUserId,
           expiresAt: expiresAt.toISOString(),
         },
       });
-      return created;
+      return invite;
     });
+    return toInvite(created);
+  }
 
-    // After the commit, and best effort: the outbox row is the durable record,
-    // and a bounced invite must not roll back a registration.
+  /** R25 — who may be replaced: a teammate (never the captain), not yet checked in. */
+  async function assertReplaceable(
+    row: RegistrationRow,
+    category: Category,
+    members: { userId: string; isCaptain: boolean }[],
+    userId: string,
+    opts: { staff?: boolean } = {},
+  ): Promise<void> {
+    if (!opts.staff && category.allowReplacements === false) {
+      throw new UserError(RegistrationCode.REPLACEMENTS_OFF, 'The organiser does not allow replacing a teammate here.');
+    }
+    const member = members.find((m) => m.userId === userId);
+    if (!member || member.isCaptain) {
+      throw new UserError(RegistrationCode.NOT_ON_TEAM, 'That player is not a teammate on this entry.');
+    }
+    const checkins = await repo.checkinsFor([row.id]);
+    if (checkins.some((c) => c.userId === userId)) {
+      throw new UserError(RegistrationCode.MEMBER_CHECKED_IN, 'That player is already checked in, so they cannot be replaced.');
+    }
+  }
+
+  async function sendInviteEmail(row: RegistrationRow, captainUserId: string, invite: Invite): Promise<void> {
+    if (!invite.invitedEmail) return;
+    const to = invite.invitedEmail;
     const [[captain], event] = await Promise.all([
-      users.byIds([actor.userId]),
+      users.byIds([captainUserId]),
       events.forEmail(row.eventId).catch(() => null),
     ]);
     await email
       .send({
-        to: invitedEmail,
+        to,
         ...inviteEmail({
-          to: invitedEmail,
+          to,
           captainName: captain?.displayName ?? 'A player',
-          token,
-          expiresAt,
+          token: invite.token,
+          expiresAt: invite.expiresAt,
           event,
         }),
       })
       .catch((err: unknown) => {
-        logger.error({ err, inviteId }, 'partner invite email failed');
+        logger.error({ err, inviteId: invite.id }, 'partner invite email failed');
       });
+  }
 
+  /**
+   * R22 — the captain (or staff) sends an open invite again: the push and the
+   * email go out once more and the expiry is left alone. An invite that has
+   * expired is replaced by a new one to the same player.
+   */
+  async function resendInvite(actor: Actor, inviteId: string, opts: { reason?: string | null } = {}): Promise<Invite> {
+    const invite = await repo.inviteById(inviteId);
+    if (!invite) throw notFound();
+    const row = await repo.byId(invite.registrationId);
+    if (!row) throw notFound();
+    const staff = row.captainUserId !== actor.userId;
+    if (staff) await events.assertStaff(actor, row.eventId, ['owner', 'manager']);
+    const reason = staff ? needReason(opts.reason) : null;
+
+    const lapsed = invite.status === 'expired' || (invite.status === 'pending' && invite.expiresAt <= now());
+    if (lapsed) {
+      if (invite.status === 'pending') {
+        await db.$transaction((tx) => repo.settleInvite(tx, invite.id, 'expired'));
+      }
+      const fresh = await createInvite(actor, row, {
+        invitedEmail: invite.invitedEmail,
+        invitedUserId: invite.invitedUserId,
+        replacesUserId: invite.replacesUserId,
+        kind: invite.invitedEmail || invite.invitedUserId ? 'invite_sent' : 'invite_link_created',
+        staff,
+      });
+      await sendInviteEmail(row, row.captainUserId, fresh);
+      return fresh;
+    }
+    if (invite.status !== 'pending') {
+      throw new UserError(RegistrationCode.INVITE_EXPIRED, 'That invite has already been answered.');
+    }
+    if (invite.lastSentAt && now().getTime() - invite.lastSentAt.getTime() < RESEND_INTERVAL_MS) {
+      throw new UserError(RegistrationCode.RESEND_TOO_SOON, 'You just sent this invite. Try again in a minute.', {
+        retryAfterSeconds: 60,
+      });
+    }
+    if (!(await repo.markInviteResent(invite.id, now()))) {
+      throw new UserError(RegistrationCode.INVITE_EXPIRED, 'That invite has already been answered.');
+    }
+    await db.$transaction(async (tx) => {
+      await record(tx, {
+        registrationId: row.id,
+        kind: 'invite_resent',
+        actorUserId: actor.userId,
+        subjectUserId: invite.invitedUserId,
+        reason,
+        data: { inviteId: invite.id },
+      });
+      // notify only — the worker's expiry job for this invite is already queued.
+      await outboxWrite(tx, {
+        topic: 'invite.resent',
+        payload: { inviteId: invite.id, registrationId: row.id, invitedUserId: invite.invitedUserId },
+      });
+    });
+    const refreshed = (await repo.inviteById(invite.id))!;
+    await sendInviteEmail(row, row.captainUserId, toInvite(refreshed));
+    return toInvite(refreshed);
+  }
+
+  /** R22 — the captain takes back an invite nobody has answered. */
+  async function revokeInvite(actor: Actor, inviteId: string): Promise<Invite> {
+    const invite = await repo.inviteById(inviteId);
+    if (!invite) throw notFound();
+    const row = await repo.byId(invite.registrationId);
+    if (!row) throw notFound();
+    if (row.captainUserId !== actor.userId) throw forbidden();
+    await db.$transaction(async (tx) => {
+      if (!(await repo.settleInvite(tx, invite.id, 'revoked'))) return;
+      await record(tx, {
+        registrationId: row.id,
+        kind: 'invite_revoked',
+        actorUserId: actor.userId,
+        subjectUserId: invite.invitedUserId,
+        data: { inviteId: invite.id },
+      });
+      // A pre-payment entry stays `awaiting_partner` (the guard has no way
+      // back to draft); the captain invites someone else from there.
+    });
+    return toInvite((await repo.inviteById(invite.id))!);
+  }
+
+  /**
+   * R22 — what the invite link shows before the player decides: the event,
+   * the team and its captain. A token is a bearer credential, so anybody
+   * holding it may read this much; an invite addressed to another account
+   * reads as not found.
+   */
+  async function inviteDetails(actor: Actor, token: string): Promise<InviteDetails | null> {
+    const invite = await repo.inviteByToken(token.trim());
+    if (!invite) return null;
+    // A shared link that someone else already used still reads as used, so the
+    // next person to tap it hears "already used" rather than "not for you".
+    const usedLink = invite.status === 'accepted' && !invite.invitedEmail;
+    if (invite.invitedUserId && invite.invitedUserId !== actor.userId && !usedLink) return null;
+    const row = await repo.byId(invite.registrationId);
+    if (!row) return null;
+    const names = row.teamId ? await repo.teamNames([row.teamId]) : new Map<string, string | null>();
+    const open = invite.status === 'pending' && invite.expiresAt > now();
+    const live = !['withdrawn', 'refunded', 'expired'].includes(row.status);
     return {
-      id: invite.id,
-      registrationId: invite.registrationId,
-      // I1(d) — the real address is stored on the row as always; only the
-      // object handed back to the captain is masked, and only when they did
-      // not type it themselves.
-      invitedEmail: resolvedFromAccountId ? maskEmail(invite.invitedEmail) : invite.invitedEmail,
-      invitedUserId: invite.invitedUserId,
+      inviteId: invite.id,
       token: invite.token,
-      status: invite.status,
+      status: open ? 'pending' : invite.status === 'pending' ? 'expired' : invite.status,
       expiresAt: invite.expiresAt,
+      registrationId: row.id,
+      eventId: row.eventId,
+      eventCategoryId: row.eventCategoryId,
+      captainUserId: row.captainUserId,
+      teamName: row.teamId ? (names.get(row.teamId) ?? null) : null,
+      registrationStatus: row.status as RegistrationStatus,
+      replacesUserId: invite.replacesUserId,
+      canAccept: open && live && row.captainUserId !== actor.userId,
     };
+  }
+
+  /** R22 — the invites waiting for this player's answer, for My PL4Y. */
+  async function myPendingInvites(actor: Actor): Promise<InviteDetails[]> {
+    const invites = await repo.pendingInvitesForUser(actor.userId);
+    const out: InviteDetails[] = [];
+    for (const i of invites) {
+      const d = await inviteDetails(actor, i.token);
+      if (d && d.canAccept) out.push(d);
+    }
+    return out;
+  }
+
+  /** R21 — the captain names (or renames) the team until the roster locks. */
+  async function setTeamName(actor: Actor, registrationId: string, rawName: string | null): Promise<Registration> {
+    const row = await repo.byId(registrationId);
+    if (!row) throw notFound();
+    const staff = row.captainUserId !== actor.userId;
+    if (staff) await events.assertStaff(actor, row.eventId, ['owner', 'manager']);
+    const [category, event] = await Promise.all([events.categoryById(row.eventCategoryId), events.byId(row.eventId)]);
+    if (category.teamSize < 2) throw forbidden();
+    assertTeamChangesOpen(category, event, 'roster', { staff });
+    const name = cleanTeamName(rawName);
+    if (!name && category.teamNameRule === 'required') {
+      throw new UserError(RegistrationCode.TEAM_NAME_REQUIRED, 'This event asks every team for a name.');
+    }
+    await db.$transaction(async (tx) => {
+      // The team may not exist yet (a pre-payment pair with nobody accepted).
+      let teamId = row.teamId;
+      if (!teamId) {
+        await repo.lockCategory(tx, row.eventCategoryId);
+        teamId = newId();
+        await repo.createTeam(tx, {
+          id: teamId,
+          eventCategoryId: row.eventCategoryId,
+          name,
+          members: [{ userId: row.captainUserId, isCaptain: true }],
+        });
+        await repo.attachTeam(tx, row.id, teamId);
+      } else {
+        await repo.setTeamName(tx, teamId, name);
+      }
+      await record(tx, { registrationId: row.id, kind: 'team_renamed', actorUserId: actor.userId, data: { name } });
+    });
+    return byId(row.id);
   }
 
   /**
@@ -1009,7 +1538,8 @@ export function createRegistrationService(deps: RegistrationDeps) {
   async function acceptInvite(actor: Actor, token: string): Promise<Registration> {
     const invite = await repo.inviteByToken(token);
     if (!invite) throw notFound();
-    if (invite.status !== 'pending' || invite.expiresAt <= now()) {
+    if (invite.status !== 'pending') throw inviteSettled(invite.status);
+    if (invite.expiresAt <= now()) {
       throw new UserError(
         RegistrationCode.INVITE_EXPIRED,
         'That invite has expired. Ask your partner to send a new one.',
@@ -1026,11 +1556,28 @@ export function createRegistrationService(deps: RegistrationDeps) {
     }
     // gap #29 — an invite addressed to an account is that account's. A link
     // forwarded to a group chat must not hand the seat to whoever taps first.
-    // An invite to an email with no account yet stays a bearer link.
+    // An invite to an email with no account yet, or a shareable link (R22),
+    // stays a bearer link.
     if (invite.invitedUserId && invite.invitedUserId !== actor.userId) throw forbidden();
 
-    const category = await events.categoryById(row.eventCategoryId);
-    await assertOpen(row.eventCategoryId, { allowFull: true });
+    const [category, event] = await Promise.all([
+      events.categoryById(row.eventCategoryId),
+      events.byId(row.eventId),
+    ]);
+    const status = row.status as RegistrationStatus;
+    // R21 — an entry that already has its seat (the captain paid first) only
+    // gains a player; it is not competing for capacity, so a closed or full
+    // draw does not matter. Its window is the invite deadline (R23).
+    const seated = SEATED_OR_PAYING.includes(status);
+    if (seated) {
+      assertTeamChangesOpen(category, event, 'invite');
+    } else {
+      if (status !== 'draft' && status !== 'awaiting_partner') {
+        throw new UserError(RegistrationCode.INVITE_EXPIRED, 'That entry is no longer open.');
+      }
+      assertTeamChangesOpen(category, event, 'invite');
+      await assertOpen(row.eventCategoryId, { allowFull: category.waitlistEnabled !== false });
+    }
 
     const partner = await profile.findByUserId(actor.userId);
     if (!partner) throw notFound();
@@ -1044,6 +1591,8 @@ export function createRegistrationService(deps: RegistrationDeps) {
       );
     }
 
+    let teamComplete = false;
+    let replaced: string | null = null;
     await db.$transaction(async (tx) => {
       // Ahead of createTeam, which references the category — repo.lockCategory.
       // It also serialises every accept in the draw, so the team read below is
@@ -1056,13 +1605,24 @@ export function createRegistrationService(deps: RegistrationDeps) {
         throw new UserError(RegistrationCode.PARTNER_ALREADY_ENTERED, 'You are already entered in this draw.');
       }
 
-      // Conditional on `pending`, so two taps on the accept button cannot both
-      // create a team.
+      // Conditional on `pending`, so two taps on the accept button — or two
+      // people with the same shareable link (R22) — cannot both join.
       const settled = await repo.settleInvite(tx, invite.id, 'accepted');
       if (!settled) {
-        throw new UserError(RegistrationCode.INVITE_EXPIRED, 'That invite is no longer open.');
+        // Lost a race: somebody else took the link, or the captain cancelled it.
+        const latest = await tx.registrationInvite.findUnique({ where: { id: invite.id }, select: { status: true } });
+        throw inviteSettled(latest?.status ?? 'expired');
       }
-      const current = (await repo.byId(row.id)) ?? row;
+      const current = (await tx.registration.findUnique({ where: { id: row.id } })) ?? row;
+      const from = current.status as RegistrationStatus;
+      if (['withdrawn', 'refunded', 'expired'].includes(from)) {
+        throw new UserError(RegistrationCode.INVITE_EXPIRED, 'That entry is no longer open.');
+      }
+      if (current.captainUserId !== actor.userId && invite.invitedUserId === null) {
+        // Bind a bearer link to whoever took it, for the record.
+        await tx.registrationInvite.update({ where: { id: invite.id }, data: { invitedUserId: actor.userId } });
+      }
+
       let teamId = current.teamId;
       if (!teamId) {
         teamId = newId();
@@ -1076,11 +1636,56 @@ export function createRegistrationService(deps: RegistrationDeps) {
           ],
         });
       } else {
+        // R25 — a replacement takes the other player's place, unless that
+        // player was checked in meanwhile (then the invite fails, untouched).
+        if (invite.replacesUserId) {
+          const inAlready = await tx.registrationCheckin.count({
+            where: { registrationId: row.id, userId: invite.replacesUserId },
+          });
+          if (inAlready > 0) {
+            throw new UserError(RegistrationCode.MEMBER_CHECKED_IN, 'The player you would replace is already checked in.');
+          }
+          if (await repo.removeTeamMember(tx, teamId, invite.replacesUserId)) replaced = invite.replacesUserId;
+        }
+        if ((await repo.countTeamMembers(tx, teamId)) >= maxTeam(category)) {
+          throw new UserError(RegistrationCode.TEAM_COMPLETE, 'This team is already complete.');
+        }
         await repo.addTeamMember(tx, teamId, actor.userId);
       }
-      // R2 — the seat is taken when the team is whole, not before (plan 3b).
-      if ((await repo.countTeamMembers(tx, teamId)) >= category.teamSize) {
-        await seatOrQueue(tx, current, 'awaiting_partner', { queueIfFull: true, teamId });
+
+      const count = await repo.countTeamMembers(tx, teamId);
+      teamComplete = count >= minTeam(category);
+      await record(tx, {
+        registrationId: row.id,
+        kind: replaced ? 'member_replaced' : 'invite_accepted',
+        actorUserId: actor.userId,
+        subjectUserId: actor.userId,
+        data: { inviteId: invite.id, replacedUserId: replaced, teamComplete },
+      });
+      await outboxWrite(tx, {
+        topic: 'invite.accepted',
+        payload: {
+          inviteId: invite.id,
+          registrationId: row.id,
+          captainUserId: row.captainUserId,
+          userId: actor.userId,
+          replacedUserId: replaced,
+          teamComplete,
+          // Before payment the team's confirmation push covers the teammate; after it, this does.
+          seated: SEATED_OR_PAYING.includes(from),
+        },
+      });
+
+      // R2 — before payment, the seat is taken when the team is complete (plan 3b).
+      if (from === 'draft' || from === 'awaiting_partner') {
+        if (teamComplete) {
+          await seatOrQueue(tx, current, from, {
+            queueIfFull: category.waitlistEnabled !== false,
+            teamId,
+          });
+        } else if (!current.teamId) {
+          await repo.attachTeam(tx, row.id, teamId);
+        }
       } else if (!current.teamId) {
         await repo.attachTeam(tx, row.id, teamId);
       }
@@ -1135,7 +1740,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
       new UserError(RegistrationCode.PARTNER_ALREADY_ENTERED, 'That player is already entered in this draw.');
     if (await repo.playerHasLiveEntry(teammateId, row.eventCategoryId, LIVE_STATUSES)) throw alreadyEntered();
 
-    const spots = category.teamSize - 1;
+    const spots = maxTeam(category) - 1;
 
     await db.$transaction(async (tx) => {
       // Ahead of createTeam, which references the category — repo.lockCategory.
@@ -1153,7 +1758,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
       // A pair has one seat for a partner: adding one directly supersedes any
       // open invite, the same as re-inviting does.
       if (spots === 1) {
-        for (const old of pending) await repo.settleInvite(tx, old.id, 'expired');
+        for (const old of pending) await repo.settleInvite(tx, old.id, 'revoked');
       }
       const joined = current.teamId ? (await repo.countTeamMembers(tx, current.teamId)) - 1 : 0;
       const open = spots === 1 ? 0 : pending.length;
@@ -1177,14 +1782,21 @@ export function createRegistrationService(deps: RegistrationDeps) {
         await repo.addTeamMember(tx, teamId, teammateId);
       }
 
+      await record(tx, {
+        registrationId: row.id,
+        kind: 'member_added',
+        actorUserId: actor.userId,
+        subjectUserId: teammateId,
+        data: { direct: true },
+      });
       await outboxWrite(tx, {
         topic: 'teammate.added',
         payload: { registrationId: row.id, teammateUserId: teammateId, captainUserId: row.captainUserId },
       });
 
       // R2 — the seat is taken when the team is whole, not before (plan 3b).
-      if ((await repo.countTeamMembers(tx, teamId)) >= category.teamSize) {
-        await seatOrQueue(tx, current, from, { queueIfFull: true, teamId });
+      if ((await repo.countTeamMembers(tx, teamId)) >= minTeam(category)) {
+        await seatOrQueue(tx, current, from, { queueIfFull: category.waitlistEnabled !== false, teamId });
       } else {
         if (!current.teamId) await repo.attachTeam(tx, row.id, teamId);
         // A draft is not a live entry, so the teammate would not count as
@@ -1203,9 +1815,22 @@ export function createRegistrationService(deps: RegistrationDeps) {
     const invite = await repo.inviteByToken(token);
     if (!invite) throw notFound();
     if (invite.invitedUserId && invite.invitedUserId !== actor.userId) throw forbidden();
+    const row = await repo.byId(invite.registrationId);
+    if (row?.captainUserId === actor.userId) {
+      throw new UserError(RegistrationCode.CANNOT_INVITE_SELF, 'You cannot answer your own invite.');
+    }
 
     await db.$transaction(async (tx) => {
-      await repo.settleInvite(tx, invite.id, 'declined');
+      // R9 (team) — a no changes nothing else: a paid entry stays paid and
+      // its seat stays held; the captain invites somebody else.
+      if (!(await repo.settleInvite(tx, invite.id, 'declined'))) return;
+      await record(tx, {
+        registrationId: invite.registrationId,
+        kind: 'invite_declined',
+        actorUserId: actor.userId,
+        subjectUserId: actor.userId,
+        data: { inviteId: invite.id },
+      });
       await outboxWrite(tx, {
         topic: 'invite.declined',
         payload: { inviteId: invite.id, registrationId: invite.registrationId },
@@ -1213,7 +1838,12 @@ export function createRegistrationService(deps: RegistrationDeps) {
     });
   }
 
-  /** The 48-hour TTL, run by the job. The captain gets a re-invite prompt. */
+  /**
+   * The 48-hour TTL (or the invite deadline), run by the job. Before payment
+   * an entry with nobody left to wait for expires and the captain gets a
+   * re-invite prompt; after payment the entry is untouched and the captain is
+   * told the invite lapsed (R21).
+   */
   async function expireInvite(inviteId: string): Promise<void> {
     const row = await repo.inviteById(inviteId);
     if (!row || row.status !== 'pending') return;
@@ -1223,11 +1853,23 @@ export function createRegistrationService(deps: RegistrationDeps) {
     await db.$transaction(async (tx) => {
       const settled = await repo.settleInvite(tx, inviteId, 'expired');
       if (!settled) return;
+      if (!registration) return;
+      await record(tx, {
+        registrationId: registration.id,
+        kind: 'invite_expired',
+        subjectUserId: row.invitedUserId,
+        data: { inviteId },
+      });
+      if (SEATED_OR_PAYING.includes(registration.status as RegistrationStatus)) {
+        await outboxWrite(tx, {
+          topic: 'invite.expired',
+          payload: { inviteId, registrationId: registration.id, captainUserId: registration.captainUserId },
+        });
+        return;
+      }
       // Plan 3b — a bigger team keeps waiting while another invite is still open.
-      const stillOpen = registration
-        ? (await repo.invitesFor(registration.id)).some((i) => i.id !== inviteId && i.status === 'pending')
-        : false;
-      if (registration && registration.status === 'awaiting_partner' && !stillOpen) {
+      const stillOpen = (await repo.invitesFor(registration.id)).some((i) => i.id !== inviteId && i.status === 'pending');
+      if (registration.status === 'awaiting_partner' && !stillOpen) {
         await repo.transition(tx, registration.id, 'awaiting_partner', 'expired');
         await outboxWrite(tx, {
           topic: 'registration.expired',
@@ -1490,6 +2132,16 @@ export function createRegistrationService(deps: RegistrationDeps) {
 
       const hold = await repo.liveHoldFor(tx, row.id);
       if (hold) await repo.releaseHold(tx, hold.id);
+      // Nobody can join an entry that is gone.
+      for (const invite of await repo.invitesFor(row.id)) {
+        if (invite.status === 'pending') await repo.settleInvite(tx, invite.id, 'revoked');
+      }
+      await record(tx, {
+        registrationId: row.id,
+        kind: 'cancelled',
+        actorUserId: actor.userId,
+        data: { refunded: refundable && !lateHalf, lateHalf, status: next },
+      });
 
       await outboxWrite(tx, {
         topic: 'registration.cancelled',
@@ -1530,20 +2182,32 @@ export function createRegistrationService(deps: RegistrationDeps) {
   }
 
   /**
-   * The one check-in path (R10, R11). Self check-in, a staff tap on the entry
-   * list and a QR scan (R13) all end here, so the window and the transition
-   * guard cannot differ between them.
+   * The one check-in path (R10, R11, R24). Self check-in, a staff tap on the
+   * entry list and a QR scan (R13) all end here, so the window and the
+   * transition guard cannot differ between them.
    *
-   * Idempotent: a re-scan returns the entry unchanged, with the ORIGINAL time.
+   * R24 — players are checked in one by one, because a pair may arrive at
+   * different times. `who` is the players to check in (`all` = everyone on the
+   * entry). The entry moves to `checked_in` with the first of them; a player
+   * already in is left alone, with their ORIGINAL time — so a second scan is
+   * never a second check-in.
    */
   async function performCheckIn(
     byUserId: string,
     row: RegistrationRow,
     method: 'self' | 'staff' | 'qr',
+    who: 'all' | string[] = 'all',
   ): Promise<Registration> {
     const status = row.status as RegistrationStatus;
-    if (status === 'checked_in') return hydrate(row);
-    assertTransition(status, 'checked_in');
+    if (status !== 'checked_in') assertTransition(status, 'checked_in');
+
+    const roster = await rosterOf(row);
+    const targets = who === 'all' ? roster : [...new Set(who)];
+    if (targets.some((id) => !roster.includes(id))) {
+      throw new UserError(RegistrationCode.NOT_ON_TEAM, 'That player is not on this entry.');
+    }
+    const already = new Set((await repo.checkinsFor([row.id])).map((c) => c.userId));
+    if (status === 'checked_in' && targets.every((id) => already.has(id))) return hydrate(row);
 
     const event = await events.byId(row.eventId);
     // F13 — opens two hours before the start and stays open until the end
@@ -1559,11 +2223,29 @@ export function createRegistrationService(deps: RegistrationDeps) {
     }
 
     await db.$transaction(async (tx) => {
-      const moved = await repo.transition(tx, row.id, status, 'checked_in', {
-        checkedInAt: now(),
-        checkedInBy: byUserId,
+      if (status !== 'checked_in') {
+        const moved = await repo.transition(tx, row.id, status, 'checked_in', {
+          checkedInAt: now(),
+          checkedInBy: byUserId,
+        });
+        // Somebody else checked the entry in a moment ago; the players below
+        // are still added, idempotently.
+        if (!moved) {
+          const fresh = await tx.registration.findUnique({ where: { id: row.id }, select: { status: true } });
+          if (fresh?.status !== 'checked_in') return;
+        }
+      }
+      const added = await repo.insertCheckins(tx, {
+        registrationId: row.id,
+        userIds: targets,
+        by: byUserId,
+        method,
+        at: now(),
       });
-      if (!moved) return;
+      if (added.length === 0) return;
+      for (const userId of added) {
+        await record(tx, { registrationId: row.id, kind: 'checked_in', actorUserId: byUserId, subjectUserId: userId, data: { method } });
+      }
       await outboxWrite(tx, {
         topic: 'registration.checked_in',
         payload: {
@@ -1572,6 +2254,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
           eventCategoryId: row.eventCategoryId,
           checkedInBy: byUserId,
           method,
+          userIds: added,
         },
       });
     });
@@ -1580,19 +2263,20 @@ export function createRegistrationService(deps: RegistrationDeps) {
 
   /**
    * R10 — within the configured window either side of the start, confirmed
-   * only. A participant checks themselves in; staff on the event may check in
-   * anybody from the entry list.
+   * only. A participant checks THEMSELVES in; staff on the event may check in
+   * anybody from the entry list (everyone on the entry, or `userIds`).
    */
   async function checkIn(
     actor: Actor,
     registrationId: string,
     at?: { lat: number; lng: number } | null,
+    userIds?: string[] | null,
   ): Promise<Registration> {
     const row = await repo.byId(registrationId);
     if (!row) throw notFound();
     // Staff first: a player who also helps run the event checks people in at the desk.
     const staff = await events.assertStaff(actor, row.eventId, DESK_ROLES).then(() => true, () => false);
-    if (staff) return performCheckIn(actor.userId, row, 'staff');
+    if (staff) return performCheckIn(actor.userId, row, 'staff', userIds && userIds.length > 0 ? userIds : 'all');
     if (!(await isParticipant(actor, row))) throw forbidden();
     // F13 — checking yourself in means being there. When the event has a
     // known place, the phone's location must be within a kilometre of it.
@@ -1611,7 +2295,8 @@ export function createRegistrationService(deps: RegistrationDeps) {
         );
       }
     }
-    return performCheckIn(actor.userId, row, 'self');
+    // R24 — your own arrival, not your partner's.
+    return performCheckIn(actor.userId, row, 'self', [actor.userId]);
   }
 
   /**
@@ -1630,21 +2315,45 @@ export function createRegistrationService(deps: RegistrationDeps) {
     return signCheckinToken(deps.checkinKeys, row.id);
   }
 
-  /**
-   * R13 — a staff scan. Any grant on the event may scan. A token that does not
-   * verify, names no entry, or names an entry that is no longer a ticket reads
-   * the same: CHECKIN_TOKEN_INVALID.
-   */
-  async function checkInByToken(actor: Actor, token: string): Promise<Registration> {
+  /** R13 — the entry a scanned QR names, for staff. Anything else reads as invalid. */
+  async function entryForToken(actor: Actor, token: string): Promise<RegistrationRow> {
     const registrationId = verifyCheckinToken(deps.checkinKeys, token.trim());
     if (!registrationId) throw invalidCheckinToken();
     const row = await repo.byId(registrationId);
     if (!row) throw invalidCheckinToken();
-
     // Staff first: somebody without a grant learns nothing about the entry.
     await events.assertStaff(actor, row.eventId, DESK_ROLES);
     if (row.status !== 'confirmed' && row.status !== 'checked_in') throw invalidCheckinToken();
-    return performCheckIn(actor.userId, row, 'qr');
+    return row;
+  }
+
+  /**
+   * R13 — a staff scan that checks in everyone on the entry. Kept for offline
+   * replay and older staff apps; the desk now looks the entry up first
+   * (`checkInLookup`) and checks players in one by one (R24).
+   */
+  async function checkInByToken(actor: Actor, token: string): Promise<Registration> {
+    const row = await entryForToken(actor, token);
+    return performCheckIn(actor.userId, row, 'qr', 'all');
+  }
+
+  /** R24 — a scan that only reads: the entry, its players and who is already in. */
+  async function checkInLookup(actor: Actor, token: string): Promise<Registration> {
+    return hydrate(await entryForToken(actor, token));
+  }
+
+  /** R24 — staff check in some (or all) of an entry's players. Idempotent. */
+  async function checkInMembers(
+    actor: Actor,
+    registrationId: string,
+    userIds: string[] | null,
+    opts: { method?: 'staff' | 'qr' } = {},
+  ): Promise<Registration> {
+    const row = await repo.byId(registrationId);
+    if (!row) throw notFound();
+    await events.assertStaff(actor, row.eventId, DESK_ROLES);
+    if (row.status !== 'confirmed' && row.status !== 'checked_in') throw invalidCheckinToken();
+    return performCheckIn(actor.userId, row, opts.method ?? 'staff', userIds && userIds.length > 0 ? userIds : 'all');
   }
 
   /**
@@ -1656,28 +2365,301 @@ export function createRegistrationService(deps: RegistrationDeps) {
     await events.assertStaff(actor, eventId, DESK_ROLES);
     const rows = await repo.rosterFor(eventId);
 
-    const members = await repo.membersOfTeams(
-      rows.flatMap((r) => (r.teamId ? [r.teamId] : [])),
-    );
+    const [members, checkins] = await Promise.all([
+      repo.membersOfTeams(rows.flatMap((r) => (r.teamId ? [r.teamId] : []))),
+      repo.checkinsFor(rows.map((r) => r.id)),
+    ]);
     const userIds = new Set(rows.map((r) => r.captainUserId));
     for (const m of members) userIds.add(m.userId);
     const names = new Map(
       (await users.byIds([...userIds])).map((u) => [u.id, u.displayName] as const),
     );
+    const arrived = new Map(checkins.map((c) => [`${c.registrationId}:${c.userId}`, c.checkedInAt] as const));
 
     return rows.map((r) => {
-      const playerIds = r.teamId
-        ? members.filter((m) => m.teamId === r.teamId).map((m) => m.userId)
-        : [r.captainUserId];
+      const teamIds = r.teamId ? members.filter((m) => m.teamId === r.teamId).map((m) => m.userId) : [];
+      const playerIds = teamIds.length > 0 ? teamIds : [r.captainUserId];
       return {
         registrationId: r.id,
         eventCategoryId: r.eventCategoryId,
         status: r.status as RegistrationStatus,
         tokenHash: checkinTokenHash(signCheckinToken(deps.checkinKeys, r.id)),
-        players: playerIds.map((userId) => ({ userId, displayName: names.get(userId) ?? '' })),
+        players: playerIds.map((userId) => ({
+          userId,
+          displayName: names.get(userId) ?? '',
+          checkedInAt: arrived.get(`${r.id}:${userId}`) ?? null,
+        })),
         checkedInAt: r.checkedInAt,
       };
     });
+  }
+
+  // --- R24, R26, R27: what the team card shows ----------------------------------
+
+  /** Everyone on each entry with their check-in, in one read per table. */
+  async function membersFor(rows: Registration[]): Promise<Map<string, RegistrationMember[]>> {
+    const teamIds = [...new Set(rows.flatMap((r) => (r.teamId ? [r.teamId] : [])))];
+    const [members, checkins] = await Promise.all([
+      repo.membersOfTeams(teamIds),
+      repo.checkinsFor(rows.map((r) => r.id)),
+    ]);
+    const arrived = new Map(checkins.map((c) => [`${c.registrationId}:${c.userId}`, c.checkedInAt] as const));
+    const out = new Map<string, RegistrationMember[]>();
+    for (const r of rows) {
+      const team = r.teamId ? members.filter((m) => m.teamId === r.teamId) : [];
+      const list = team.length > 0 ? team : [{ userId: r.captainUserId, isCaptain: true }];
+      out.set(
+        r.id,
+        list.map((m) => ({
+          userId: m.userId,
+          isCaptain: m.isCaptain,
+          checkedInAt: arrived.get(`${r.id}:${m.userId}`) ?? null,
+        })),
+      );
+    }
+    return out;
+  }
+
+  /** R24 — nobody, some, or everyone on the entry has arrived. */
+  function checkInStateOf(r: Registration, members: RegistrationMember[]): CheckInState {
+    const inCount = members.filter((m) => m.checkedInAt).length;
+    if (inCount === 0) return r.status === 'checked_in' ? 'all' : 'none';
+    return inCount >= members.length ? 'all' : 'partial';
+  }
+
+  /**
+   * R27 — the money's state, apart from the entry's: an entry paid for can
+   * still be waiting for its teammate. `refundState` is the latest refund's
+   * status from payments, when there is one.
+   */
+  function paymentStatusOf(r: Registration, refundState: string | null): PaymentStatus {
+    if (r.paymentMode === 'comp' || (r.amountPaise === 0n && r.paymentMode === 'online')) return 'free';
+    switch (r.status) {
+      case 'draft':
+      case 'awaiting_partner':
+      case 'waitlisted':
+        return 'not_due';
+      case 'payment_pending':
+        return 'pending';
+      case 'payment_failed':
+        return 'failed';
+      case 'expired':
+        return 'not_due';
+      case 'confirmed':
+      case 'checked_in':
+        return r.paymentMode === 'offline' ? 'offline' : 'paid';
+      case 'refunded':
+      case 'withdrawn':
+        if (r.paymentMode !== 'online') return r.paymentMode === 'offline' ? 'offline' : 'free';
+        if (refundState === 'processed') return 'refunded';
+        if (refundState === 'pending' || refundState === 'failed') return 'refund_pending';
+        return r.status === 'refunded' ? 'refund_pending' : 'paid';
+      default:
+        return 'not_due';
+    }
+  }
+
+  async function refundStatesFor(ids: string[]): Promise<Map<string, string>> {
+    if (ids.length === 0 || !payments.refundStates) return new Map();
+    return payments.refundStates(ids);
+  }
+
+  /** R26 — the entry's history. The captain, the team and the event's staff may read it. */
+  async function historyOf(actor: Actor, registrationId: string, opts: { platformStaff?: boolean } = {}): Promise<HistoryEntry[]> {
+    const row = await repo.byId(registrationId);
+    if (!row) throw notFound();
+    if (!opts.platformStaff && !(await isParticipant(actor, row))) {
+      await events.assertStaff(actor, row.eventId, DESK_ROLES);
+    }
+    return (await repo.historyFor(registrationId)).map((h) => ({ ...h, data: h.data ?? null }));
+  }
+
+  /** R11 — the dashboard numbers for an event's team draws. */
+  async function teamStats(actor: Actor, eventId: string, opts: { platformStaff?: boolean } = {}): Promise<TeamStats> {
+    if (!opts.platformStaff) await events.assertStaff(actor, eventId, DESK_ROLES);
+    const rows = await repo.teamStatsRows(eventId);
+    const refunds = await refundStatesFor(rows.filter((r) => r.status === 'refunded' || r.status === 'withdrawn').map((r) => r.id));
+    const categoryIds = [...new Set(rows.map((r) => r.eventCategoryId))];
+    const categories = await Promise.all(categoryIds.map((id) => events.categoryById(id)));
+    const minById = new Map(categories.map((c) => [c.id, minTeam(c)] as const));
+    const seated = rows.filter((r) => r.status === 'confirmed' || r.status === 'checked_in');
+    const size = (r: (typeof rows)[number]) => (r.teamId ? Math.max(r.members, 1) : 1);
+    const stats: TeamStats = {
+      teamSlots: 0,
+      paidEntries: seated.filter((r) => r.paymentMode === 'online' && r.amountPaise > 0n).length,
+      completeTeams: seated.filter((r) => size(r) >= (minById.get(r.eventCategoryId) ?? 1)).length,
+      awaitingTeammates: seated.filter((r) => size(r) < (minById.get(r.eventCategoryId) ?? 1)).length,
+      declinedInvites: rows.filter((r) => r.declined > 0 && r.status !== 'withdrawn' && r.status !== 'refunded').length,
+      cancelled: rows.filter((r) => r.status === 'withdrawn' || r.status === 'refunded').length,
+      refundPending: 0,
+      refunded: 0,
+      participants: seated.reduce((n, r) => n + size(r), 0),
+      checkedInTeams: 0,
+      partiallyCheckedInTeams: 0,
+      checkedInParticipants: seated.reduce((n, r) => n + r.checkins, 0),
+    };
+    for (const c of categories) stats.teamSlots += c.capacity ?? 0;
+    for (const r of seated) {
+      if (r.checkins === 0) continue;
+      if (r.checkins >= size(r)) stats.checkedInTeams += 1;
+      else stats.partiallyCheckedInTeams += 1;
+    }
+    for (const r of rows) {
+      if (r.status !== 'refunded' && r.status !== 'withdrawn') continue;
+      const s = refunds.get(r.id);
+      if (s === 'processed') stats.refunded += 1;
+      else if (s === 'pending' || s === 'failed' || (r.status === 'refunded' && r.paymentMode === 'online')) stats.refundPending += 1;
+    }
+    return stats;
+  }
+
+  // --- R25, R26: staff fix a team -------------------------------------------------
+
+  /**
+   * An owner or manager (or PL4Y staff) puts a player on a team directly, with
+   * no invite — a teammate who has no phone with them, a mix-up at the desk.
+   * With `replacesUserId` the player takes that teammate's place. The reason
+   * is kept in the history with who made the change.
+   */
+  async function staffAddMember(
+    actor: Actor,
+    input: {
+      registrationId: string;
+      playerId?: string | null;
+      email?: string | null;
+      replacesUserId?: string | null;
+      reason: string;
+    },
+    opts: { platformStaff?: boolean } = {},
+  ): Promise<Registration> {
+    const reason = needReason(input.reason);
+    const row = await repo.byId(input.registrationId);
+    if (!row) throw notFound();
+    if (!opts.platformStaff) await events.assertStaff(actor, row.eventId, ['owner', 'manager']);
+    if (!SEATED_OR_PAYING.includes(row.status as RegistrationStatus) && row.status !== 'awaiting_partner' && row.status !== 'draft') {
+      throw new UserError(RegistrationCode.TEAM_CHANGES_CLOSED, 'This entry is no longer live.');
+    }
+    const [category, event] = await Promise.all([events.categoryById(row.eventCategoryId), events.byId(row.eventId)]);
+    if (category.teamSize < 2) throw forbidden();
+    assertTeamChangesOpen(category, event, 'roster', { staff: true });
+
+    let userId: string | null = null;
+    if (input.playerId) {
+      if (!UUID_RE.test(input.playerId)) throw notFound();
+      userId = await profile.userIdForPlayer(input.playerId);
+    } else if (input.email?.trim()) {
+      userId = (await users.findByEmail(input.email.trim().toLowerCase()))?.id ?? null;
+    }
+    if (!userId) {
+      throw new UserError(RegistrationCode.REGISTRATION_NOT_FOUND, 'Nobody on PL4Y matches that player.');
+    }
+    if (await repo.playerHasLiveEntry(userId, row.eventCategoryId, LIVE_STATUSES)) {
+      throw new UserError(RegistrationCode.PARTNER_ALREADY_ENTERED, 'That player is already entered in this draw.');
+    }
+    const members = row.teamId ? await repo.teamMembers(row.teamId) : [];
+    if (input.replacesUserId) await assertReplaceable(row, category, members, input.replacesUserId, { staff: true });
+
+    const newUser = userId;
+    await db.$transaction(async (tx) => {
+      await repo.lockCategory(tx, row.eventCategoryId);
+      if (await repo.playerHasLiveEntry(newUser, row.eventCategoryId, LIVE_STATUSES, tx)) {
+        throw new UserError(RegistrationCode.PARTNER_ALREADY_ENTERED, 'That player is already entered in this draw.');
+      }
+      const current = (await tx.registration.findUnique({ where: { id: row.id } })) ?? row;
+      let teamId = current.teamId;
+      if (!teamId) {
+        teamId = newId();
+        await repo.createTeam(tx, {
+          id: teamId,
+          eventCategoryId: row.eventCategoryId,
+          name: null,
+          members: [{ userId: row.captainUserId, isCaptain: true }],
+        });
+        await repo.attachTeam(tx, row.id, teamId);
+      }
+      if (input.replacesUserId) await repo.removeTeamMember(tx, teamId, input.replacesUserId);
+      if ((await repo.countTeamMembers(tx, teamId)) >= maxTeam(category)) {
+        throw new UserError(RegistrationCode.TEAM_COMPLETE, 'This team is already complete.');
+      }
+      await repo.addTeamMember(tx, teamId, newUser);
+      // An open invite for the same spot is no longer needed.
+      for (const i of await repo.invitesFor(row.id)) {
+        if (i.status === 'pending' && (maxTeam(category) === 2 || (input.replacesUserId && i.replacesUserId === input.replacesUserId))) {
+          await repo.settleInvite(tx, i.id, 'revoked');
+        }
+      }
+      const count = await repo.countTeamMembers(tx, teamId);
+      await record(tx, {
+        registrationId: row.id,
+        kind: input.replacesUserId ? 'member_replaced' : 'member_added',
+        actorUserId: actor.userId,
+        subjectUserId: newUser,
+        reason,
+        data: { replacedUserId: input.replacesUserId ?? null, byStaff: true },
+      });
+      await outboxWrite(tx, {
+        topic: 'teammate.added',
+        payload: { registrationId: row.id, teammateUserId: newUser, captainUserId: row.captainUserId, byStaff: true },
+      });
+      const from = current.status as RegistrationStatus;
+      if ((from === 'draft' || from === 'awaiting_partner') && count >= minTeam(category)) {
+        await seatOrQueue(tx, current, from, { queueIfFull: category.waitlistEnabled !== false, teamId });
+      }
+    });
+    return byId(row.id);
+  }
+
+  /** Staff take a player off a team (never the captain). The entry and its payment stay. */
+  async function staffRemoveMember(
+    actor: Actor,
+    input: { registrationId: string; userId: string; reason: string },
+    opts: { platformStaff?: boolean } = {},
+  ): Promise<Registration> {
+    const reason = needReason(input.reason);
+    const row = await repo.byId(input.registrationId);
+    if (!row) throw notFound();
+    if (!opts.platformStaff) await events.assertStaff(actor, row.eventId, ['owner', 'manager']);
+    const [category, event] = await Promise.all([events.categoryById(row.eventCategoryId), events.byId(row.eventId)]);
+    assertTeamChangesOpen(category, event, 'roster', { staff: true });
+    const members = row.teamId ? await repo.teamMembers(row.teamId) : [];
+    await assertReplaceable(row, category, members, input.userId, { staff: true });
+    await db.$transaction(async (tx) => {
+      if (!row.teamId || !(await repo.removeTeamMember(tx, row.teamId, input.userId))) return;
+      await record(tx, {
+        registrationId: row.id,
+        kind: 'member_removed',
+        actorUserId: actor.userId,
+        subjectUserId: input.userId,
+        reason,
+        data: { byStaff: true },
+      });
+    });
+    return byId(row.id);
+  }
+
+  /**
+   * R25 — the captain takes a teammate who can no longer play off the team,
+   * so the spot opens for somebody else. Same window and limits as a
+   * replacement; the entry, its payment and its QR stay.
+   */
+  async function removeTeammate(actor: Actor, input: { registrationId: string; userId: string }): Promise<Registration> {
+    const row = await repo.byId(input.registrationId);
+    if (!row) throw notFound();
+    if (row.captainUserId !== actor.userId) throw forbidden();
+    const [category, event] = await Promise.all([events.categoryById(row.eventCategoryId), events.byId(row.eventId)]);
+    assertTeamChangesOpen(category, event, 'roster');
+    // Only after payment: before it, the team is still forming and the seat
+    // was taken because it was whole (R2).
+    if (!SEATED_OR_PAYING.includes(row.status as RegistrationStatus) || !paysFirst(category)) {
+      throw new UserError(RegistrationCode.REPLACEMENTS_OFF, 'Use "Replace" to swap this teammate for someone else.');
+    }
+    const members = row.teamId ? await repo.teamMembers(row.teamId) : [];
+    await assertReplaceable(row, category, members, input.userId);
+    await db.$transaction(async (tx) => {
+      if (!row.teamId || !(await repo.removeTeamMember(tx, row.teamId, input.userId))) return;
+      await record(tx, { registrationId: row.id, kind: 'member_removed', actorUserId: actor.userId, subjectUserId: input.userId });
+    });
+    return byId(row.id);
   }
 
   /**
@@ -1784,15 +2766,12 @@ export function createRegistrationService(deps: RegistrationDeps) {
     const row = await repo.byId(registrationId);
     if (!row) throw notFound();
     await assertParticipant(actor, row);
-    return (await repo.invitesFor(registrationId)).map((i) => ({
-      id: i.id,
-      registrationId: i.registrationId,
-      invitedEmail: i.invitedEmail,
-      invitedUserId: i.invitedUserId,
-      token: i.token,
-      status: i.status,
-      expiresAt: i.expiresAt,
-    }));
+    return (await repo.invitesFor(registrationId)).map(toInvite);
+  }
+
+  /** R11 — the invites on an entry, for the event's staff (the caller checked the grant). */
+  async function invitesForStaff(registrationId: string): Promise<Invite[]> {
+    return (await repo.invitesFor(registrationId)).map(toInvite);
   }
 
   // --- gap #22: the seat stays held while the player pays --------------------
@@ -2180,6 +3159,25 @@ export function createRegistrationService(deps: RegistrationDeps) {
     entries,
     partnerFunnel,
     hasUpcomingConfirmedEntry,
+    createInviteLink,
+    invitesForStaff,
+    resendInvite,
+    revokeInvite,
+    inviteDetails,
+    myPendingInvites,
+    setTeamName,
+    checkInLookup,
+    checkInMembers,
+    membersFor,
+    checkInStateOf,
+    paymentStatusOf,
+    refundStatesFor,
+    historyOf,
+    teamStats,
+    staffAddMember,
+    staffRemoveMember,
+    removeTeammate,
+    teamSizesFor: (c: Category) => ({ min: minTeam(c), max: maxTeam(c), paysFirst: paysFirst(c) }),
   };
 }
 

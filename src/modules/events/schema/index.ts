@@ -40,7 +40,7 @@ import type {
   EventStatus,
   PriceQuote,
 } from '../index.js';
-import type { ClosePreviewRow, EventCourt, EventReport, RefundPolicy, ReportReason } from '../service/index.js';
+import type { ClosePreviewRow, EventCourt, EventReport, RefundPolicy, ReportReason, TeamSettingsInput } from '../service/index.js';
 
 // --- enums -------------------------------------------------------------------
 
@@ -216,6 +216,37 @@ const EventCategoryRef = builder
       }),
       prizes: t.string({ nullable: true, description: 'F24', resolve: (c) => c.prizes }),
       rulesNote: t.string({ nullable: true, description: 'F24 — the host’s format notes.', resolve: (c) => c.rulesNote }),
+      teammatesAfterPayment: t.boolean({
+        description:
+          'registration R21 — true: the captain pays for the whole team first, then invites teammates. ' +
+          'false: every teammate accepts before the captain pays.',
+        resolve: (c) => c.teammatesAfterPayment,
+      }),
+      teamNameRule: t.string({ description: 'R21 — OPTIONAL | REQUIRED.', resolve: (c) => c.teamNameRule.toUpperCase() }),
+      feeBasis: t.string({
+        description: 'R21 — TEAM | PLAYER: how the fee reads. `priceQuote` is always the whole entry’s price.',
+        resolve: (c) => c.feeBasis.toUpperCase(),
+      }),
+      perPlayerFeePaise: t.int({
+        description: 'R21 — the entry fee shared across a full team, rounded down. Equal to the fee for singles.',
+        resolve: (c) => Number(c.entryFeePaise / BigInt(Math.max(c.teamSize, 1))),
+      }),
+      minTeamSize: t.int({ description: 'R21 — a team is complete at this many players.', resolve: (c) => c.minTeamSize }),
+      maxTeamSize: t.int({ description: 'R21 — a team never has more than this many players.', resolve: (c) => c.maxTeamSize }),
+      inviteDeadlineAt: t.field({
+        type: 'DateTime',
+        nullable: true,
+        description: 'R21 — last moment to accept a teammate invite. Null: until the event starts.',
+        resolve: (c) => c.inviteDeadlineAt,
+      }),
+      rosterLockAt: t.field({
+        type: 'DateTime',
+        nullable: true,
+        description: 'R21 — last moment to change a team’s players. Null: until the event starts.',
+        resolve: (c) => c.rosterLockAt,
+      }),
+      allowReplacements: t.boolean({ description: 'R25', resolve: (c) => c.allowReplacements }),
+      waitlistEnabled: t.boolean({ description: 'R17, R21', resolve: (c) => c.waitlistEnabled }),
       formatSummary: t.string({
         nullable: true,
         description:
@@ -521,6 +552,59 @@ const RuleTweaksInput = builder.inputType('RuleTweaksInput', {
   }),
 });
 
+const TeamNameRuleEnum = builder.enumType('TeamNameRule', {
+  values: { OPTIONAL: { value: 'optional' as const }, REQUIRED: { value: 'required' as const } },
+});
+const FeeBasisEnum = builder.enumType('FeeBasis', {
+  values: { TEAM: { value: 'team' as const }, PLAYER: { value: 'player' as const } },
+});
+
+const TeamSettingsInputRef = builder.inputType('TeamSettingsInput', {
+  description: 'registration R21 — how a team draw takes entries. Ignored for singles.',
+  fields: (t) => ({
+    teammatesAfterPayment: t.boolean({ description: 'The captain pays first and invites teammates after.' }),
+    teamNameRule: t.field({ type: TeamNameRuleEnum }),
+    feeBasis: t.field({
+      type: FeeBasisEnum,
+      description: 'A label only: `entryFeePaise` is always the whole team’s price.',
+    }),
+    minTeamSize: t.int({ description: 'Teams bigger than a pair only.' }),
+    maxTeamSize: t.int({ description: 'Teams bigger than a pair only.' }),
+    inviteDeadlineAt: t.field({ type: 'DateTime' }),
+    rosterLockAt: t.field({ type: 'DateTime' }),
+    allowReplacements: t.boolean(),
+    waitlistEnabled: t.boolean(),
+  }),
+});
+
+type TeamSettingsArg = {
+  teammatesAfterPayment?: boolean | null;
+  teamNameRule?: 'optional' | 'required' | null;
+  feeBasis?: 'team' | 'player' | null;
+  minTeamSize?: number | null;
+  maxTeamSize?: number | null;
+  inviteDeadlineAt?: Date | null;
+  rosterLockAt?: Date | null;
+  allowReplacements?: boolean | null;
+  waitlistEnabled?: boolean | null;
+} | null | undefined;
+
+/** GraphQL nulls for "leave it" on booleans; a null date or size means "clear it". */
+const teamSettingsArg = (t: TeamSettingsArg): TeamSettingsInput | null =>
+  t
+    ? {
+        ...(t.teammatesAfterPayment != null ? { teammatesAfterPayment: t.teammatesAfterPayment } : {}),
+        ...(t.teamNameRule != null ? { teamNameRule: t.teamNameRule } : {}),
+        ...(t.feeBasis != null ? { feeBasis: t.feeBasis } : {}),
+        ...(t.minTeamSize !== undefined ? { minTeamSize: t.minTeamSize } : {}),
+        ...(t.maxTeamSize !== undefined ? { maxTeamSize: t.maxTeamSize } : {}),
+        ...(t.inviteDeadlineAt !== undefined ? { inviteDeadlineAt: t.inviteDeadlineAt } : {}),
+        ...(t.rosterLockAt !== undefined ? { rosterLockAt: t.rosterLockAt } : {}),
+        ...(t.allowReplacements != null ? { allowReplacements: t.allowReplacements } : {}),
+        ...(t.waitlistEnabled != null ? { waitlistEnabled: t.waitlistEnabled } : {}),
+      }
+    : null;
+
 const EventCategoryInput = builder.inputType('EventCategoryInput', {
   fields: (t) => ({
     name: t.string({ required: true }),
@@ -540,6 +624,7 @@ const EventCategoryInput = builder.inputType('EventCategoryInput', {
     prizes: t.string(),
     rulesNote: t.string(),
     tweaks: t.field({ type: RuleTweaksInput }),
+    team: t.field({ type: TeamSettingsInputRef }),
   }),
 });
 
@@ -646,6 +731,7 @@ const UpdateEventCategoryInput = builder.inputType('UpdateEventCategoryInput', {
     prizes: t.string(),
     rulesNote: t.string(),
     tweaks: t.field({ type: RuleTweaksInput }),
+    team: t.field({ type: TeamSettingsInputRef }),
   }),
 });
 
@@ -995,6 +1081,7 @@ builder.mutationFields((t) => ({
           prizes: i.prizes ?? null,
           rulesNote: i.rulesNote ?? null,
           tweaks: i.tweaks ?? null,
+          team: teamSettingsArg(i.team),
         }),
       );
       return { category: data, userError };
@@ -1031,6 +1118,7 @@ builder.mutationFields((t) => ({
           prizes: i.prizes === undefined ? undefined : i.prizes,
           rulesNote: i.rulesNote === undefined ? undefined : i.rulesNote,
           tweaks: i.tweaks ?? undefined,
+          team: teamSettingsArg(i.team),
         }));
       });
       return { category: data, userError };

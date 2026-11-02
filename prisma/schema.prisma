@@ -125,6 +125,11 @@ model User {
   registrations           Registration[]            @relation("registrationCaptain")
   checkIns                Registration[]            @relation("registrationCheckedInBy")
   invitesReceived         RegistrationInvite[]
+  invitesReplacing        RegistrationInvite[]    @relation("inviteReplaces")
+  checkins                RegistrationCheckin[]   @relation("checkinPlayer")
+  checkinsMade            RegistrationCheckin[]   @relation("checkinBy")
+  historyActed            RegistrationHistory[]   @relation("historyActor")
+  historySubject          RegistrationHistory[]   @relation("historySubject")
   platformStaff           PlatformStaff?            @relation("platformStaffUser")
   platformGrants          PlatformStaff[]           @relation("platformStaffGrantor")
   scoreEvents             MatchScoreEvent[]
@@ -772,6 +777,20 @@ model EventCategory {
   scoringRule      Json?     @map("scoring_rule")
   /// F12 — the host was told this draw is short of its minimum.
   shortWarnedAt    DateTime? @map("short_warned_at") @db.Timestamptz(6)
+  /// R21 — true: the captain pays for the team first and invites teammates after.
+  teammatesAfterPayment Boolean @default(false) @map("teammates_after_payment")
+  /// R21 — optional | required. CHECK in the migration.
+  teamNameRule     String    @default("optional") @map("team_name_rule")
+  /// R21 — team | player: how the fee is labelled. The stored fee is always the whole entry's.
+  feeBasis         String    @default("team") @map("fee_basis")
+  /// R21 — null = the format's team size.
+  minTeamSize      Int?      @map("min_team_size") @db.SmallInt
+  maxTeamSize      Int?      @map("max_team_size") @db.SmallInt
+  /// R21 — null = until the event starts.
+  inviteDeadlineAt DateTime? @map("invite_deadline_at") @db.Timestamptz(6)
+  rosterLockAt     DateTime? @map("roster_lock_at") @db.Timestamptz(6)
+  allowReplacements Boolean  @default(true) @map("allow_replacements")
+  waitlistEnabled  Boolean   @default(true) @map("waitlist_enabled")
 
   event           Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
   sport           Sport           @relation(fields: [sportId], references: [id])
@@ -903,6 +922,8 @@ model Registration {
   team            Team?                @relation(fields: [teamId], references: [id])
   waitlistEntry   WaitlistEntry?
   invites         RegistrationInvite[]
+  checkins        RegistrationCheckin[]
+  history         RegistrationHistory[]
   seatHolds       SeatHold[]
   paymentOrders   PaymentOrder[]
   ledgerEntries   LedgerEntry[]
@@ -923,10 +944,15 @@ model RegistrationInvite {
   id             String   @id @db.Uuid
   registrationId String   @map("registration_id") @db.Uuid
   /// registration R12 — the partner may have no account yet (ADR 0002).
-  invitedEmail   String   @map("invited_email") @db.Citext
+  /// R22 — null for a shareable link, which is addressed to nobody.
+  invitedEmail   String?  @map("invited_email") @db.Citext
   invitedUserId  String?  @map("invited_user_id") @db.Uuid
+  /// R25 — accepting takes this member's place on the team.
+  replacesUserId String?  @map("replaces_user_id") @db.Uuid
+  lastSentAt     DateTime? @map("last_sent_at") @db.Timestamptz(6)
+  sentCount      Int      @default(1) @map("sent_count")
   token          String   @unique
-  /// pending | accepted | declined | expired. CHECK in the migration.
+  /// pending | accepted | declined | expired | revoked. CHECK in the migration.
   status         String   @default("pending")
   /// +48 h (registration R3).
   expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
@@ -934,12 +960,50 @@ model RegistrationInvite {
 
   registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   invitedUser  User?        @relation(fields: [invitedUserId], references: [id])
+  replacesUser User?        @relation("inviteReplaces", fields: [replacesUserId], references: [id], onDelete: SetNull)
 
   /// The migration makes this partial on `status = 'pending'`: an accepted
   /// invite is never looked up by email again.
   @@index([invitedEmail])
   @@index([registrationId], map: "registration_invites_registration_id_idx")
   @@map("registration_invites")
+}
+
+/// R24 — one row per player checked in on an entry. The primary key is what
+/// makes a second scan of the same player a no-op.
+model RegistrationCheckin {
+  registrationId String   @map("registration_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  checkedInAt    DateTime @default(now()) @map("checked_in_at") @db.Timestamptz(6)
+  checkedInBy    String?  @map("checked_in_by") @db.Uuid
+  /// self | staff | qr
+  method         String
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  user         User         @relation("checkinPlayer", fields: [userId], references: [id])
+  by           User?        @relation("checkinBy", fields: [checkedInBy], references: [id])
+
+  @@id([registrationId, userId])
+  @@map("registration_checkins")
+}
+
+/// R26 — every change to an entry's team and every manual change by staff.
+model RegistrationHistory {
+  id             String   @id @db.Uuid
+  registrationId String   @map("registration_id") @db.Uuid
+  kind           String
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  subjectUserId  String?  @map("subject_user_id") @db.Uuid
+  reason         String?
+  data           Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation("historyActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  subject      User?        @relation("historySubject", fields: [subjectUserId], references: [id], onDelete: SetNull)
+
+  @@index([registrationId, createdAt], map: "registration_history_registration_idx")
+  @@map("registration_history")
 }
 
 /// registration R4, R5 — capacity is decided here, under FOR UPDATE, counting

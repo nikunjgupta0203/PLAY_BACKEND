@@ -1683,6 +1683,24 @@ export function createPaymentsService(deps: PaymentsDeps) {
   }
 
   /**
+   * registration R27 — the latest refund's status for each entry that has
+   * one (pending | processed | failed), so an entry can say "refund on its
+   * way" apart from "refunded".
+   */
+  async function refundStatesForRegistrations(registrationIds: string[]): Promise<Map<string, string>> {
+    if (registrationIds.length === 0) return new Map();
+    const rows = await deps.db.$queryRaw<{ registrationId: string; status: string }[]>`
+      SELECT DISTINCT ON (o.registration_id) o.registration_id::text AS "registrationId", f.status
+        FROM refunds f
+        JOIN payments p ON p.id = f.payment_id
+        JOIN payment_orders o ON o.id = p.payment_order_id
+       WHERE o.registration_id = ANY(${registrationIds}::uuid[])
+       ORDER BY o.registration_id, f.created_at DESC
+    `;
+    return new Map(rows.map((r) => [r.registrationId, r.status]));
+  }
+
+  /**
    * events R7 — an organizer cancellation gives back everything.
    *
    * gap #2, #21, #34 — driven by the captured PAYMENTS on the event, not by
@@ -2062,6 +2080,7 @@ export function createPaymentsService(deps: PaymentsDeps) {
 
   return {
     ledgerSummary: (eventIds: string[]) => repo.ledgerSummary(eventIds),
+    refundStatesForRegistrations,
     createOrder,
     refreshPayment,
     createBookingOrder,

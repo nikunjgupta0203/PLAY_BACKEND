@@ -237,7 +237,39 @@ export interface EventCategory {
   rulesNote: string | null;
   /** F21, F22 — the rule this draw is played under, frozen. Null = the sport's current one. */
   scoringRule: unknown;
+  /** registration R21 — the captain pays first and invites teammates after. */
+  teammatesAfterPayment: boolean;
+  teamNameRule: TeamNameRule;
+  /** How the fee reads. `entryFeePaise` is always the whole entry's price. */
+  feeBasis: FeeBasis;
+  /** Resolved: never null. 1 for singles. A team is complete at min and never exceeds max. */
+  minTeamSize: number;
+  maxTeamSize: number;
+  /** Null = until the event starts. */
+  inviteDeadlineAt: Date | null;
+  rosterLockAt: Date | null;
+  allowReplacements: boolean;
+  waitlistEnabled: boolean;
 }
+
+export type TeamNameRule = 'optional' | 'required';
+export type FeeBasis = 'team' | 'player';
+
+/** registration R21 — the team settings a host may set on a team draw. */
+export interface TeamSettingsInput {
+  teammatesAfterPayment?: boolean;
+  teamNameRule?: TeamNameRule;
+  feeBasis?: FeeBasis;
+  minTeamSize?: number | null;
+  maxTeamSize?: number | null;
+  inviteDeadlineAt?: Date | null;
+  rosterLockAt?: Date | null;
+  allowReplacements?: boolean;
+  waitlistEnabled?: boolean;
+}
+
+/** The most players a team draw may have on one entry. */
+export const MAX_TEAM_SIZE = 30;
 
 /** F3 — a player's report about an event. */
 export interface EventReport {
@@ -519,6 +551,8 @@ export interface CategoryInput {
   rulesNote?: string | null;
   /** F21 — the host's adjustment of the sport's match format. */
   tweaks?: RuleTweaks | null;
+  /** registration R21 — ignored for a singles draw. */
+  team?: TeamSettingsInput | null;
 }
 
 // --- helpers -----------------------------------------------------------------
@@ -564,7 +598,63 @@ const toCategory = (r: CategoryRow): EventCategory => ({
   prizes: r.prizes ?? null,
   rulesNote: r.rulesNote ?? null,
   scoringRule: r.scoringRule ?? null,
+  teammatesAfterPayment: r.teamSize > 1 && (r.teammatesAfterPayment ?? false),
+  teamNameRule: r.teamNameRule === 'required' ? 'required' : 'optional',
+  feeBasis: r.teamSize > 1 && r.feeBasis === 'player' ? 'player' : 'team',
+  minTeamSize: r.teamSize > 1 ? (r.minTeamSize ?? r.teamSize) : 1,
+  maxTeamSize: r.teamSize > 1 ? (r.maxTeamSize ?? Math.max(r.teamSize, r.minTeamSize ?? 0)) : 1,
+  inviteDeadlineAt: r.inviteDeadlineAt ?? null,
+  rosterLockAt: r.rosterLockAt ?? null,
+  allowReplacements: r.allowReplacements ?? true,
+  waitlistEnabled: r.waitlistEnabled ?? true,
 });
+
+/**
+ * registration R21 — a team draw's settings, checked and turned into columns.
+ * A singles draw has no team, so it keeps every default. A pair is always two
+ * players; a bigger team may let a few players be optional (min) or allow
+ * substitutes (max).
+ */
+export function teamSettingsData(
+  teamSize: number,
+  input: TeamSettingsInput | null | undefined,
+  existing?: { minTeamSize: number | null; maxTeamSize: number | null },
+): Prisma.EventCategoryUpdateInput {
+  if (!input || teamSize <= 1) return {};
+  const data: Prisma.EventCategoryUpdateInput = {};
+  if (input.teammatesAfterPayment !== undefined) data.teammatesAfterPayment = input.teammatesAfterPayment;
+  if (input.teamNameRule !== undefined) {
+    if (input.teamNameRule !== 'optional' && input.teamNameRule !== 'required') {
+      throw new UserError(EventCode.INVALID_CATEGORY, 'A team name is optional or required.');
+    }
+    data.teamNameRule = input.teamNameRule;
+  }
+  if (input.feeBasis !== undefined) {
+    if (input.feeBasis !== 'team' && input.feeBasis !== 'player') {
+      throw new UserError(EventCode.INVALID_CATEGORY, 'The fee is per team or per player.');
+    }
+    data.feeBasis = input.feeBasis;
+  }
+  if (input.allowReplacements !== undefined) data.allowReplacements = input.allowReplacements;
+  if (input.waitlistEnabled !== undefined) data.waitlistEnabled = input.waitlistEnabled;
+  if (input.inviteDeadlineAt !== undefined) data.inviteDeadlineAt = input.inviteDeadlineAt;
+  if (input.rosterLockAt !== undefined) data.rosterLockAt = input.rosterLockAt;
+  if (teamSize > 2 && (input.minTeamSize !== undefined || input.maxTeamSize !== undefined)) {
+    const min = input.minTeamSize === undefined ? (existing?.minTeamSize ?? null) : input.minTeamSize;
+    const max = input.maxTeamSize === undefined ? (existing?.maxTeamSize ?? null) : input.maxTeamSize;
+    const lo = min ?? teamSize;
+    const hi = max ?? Math.max(teamSize, lo);
+    if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < 2 || hi > MAX_TEAM_SIZE || lo > hi) {
+      throw new UserError(
+        EventCode.INVALID_CATEGORY,
+        `A team has between 2 and ${MAX_TEAM_SIZE} players, and its minimum cannot be above its maximum.`,
+      );
+    }
+    data.minTeamSize = min;
+    data.maxTeamSize = max;
+  }
+  return data;
+}
 
 const toReport = (r: {
   id: string;
@@ -1584,6 +1674,10 @@ export function createEventService(deps: EventDeps) {
       rulesNote: trimmedOrNull(input.rulesNote),
       scoringRule: scoringRule == null ? undefined : (scoringRule as Prisma.InputJsonValue),
     });
+    // R21 — checked before anything is written would be nicer, but the columns
+    // all have defaults, so a refused setting leaves an ordinary category behind.
+    const team = teamSettingsData(format.teamSize, input.team ?? null);
+    if (Object.keys(team).length > 0) return toCategory(await repo.updateCategory(created.id, team));
     return toCategory(created);
   }
 
@@ -1683,6 +1777,15 @@ export function createEventService(deps: EventDeps) {
     if (hasTweaks) {
       data.scoringRule = (await tweakedRule(existing.sportId, existing.format, patch.tweaks!)) as Prisma.InputJsonValue;
     }
+    // R21 — team settings never change what anybody paid, so they stay editable.
+    const raw = await repo.categoryById(categoryId);
+    Object.assign(
+      data,
+      teamSettingsData(existing.teamSize, patch.team ?? null, {
+        minTeamSize: raw?.minTeamSize ?? null,
+        maxTeamSize: raw?.maxTeamSize ?? null,
+      }),
+    );
 
     return toCategory(await repo.updateCategory(categoryId, data));
   }
