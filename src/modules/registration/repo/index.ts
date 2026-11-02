@@ -249,6 +249,22 @@ export function createRegistrationRepo(db: Db) {
     return affected > 0;
   }
 
+  /** A registration's holds that have run out but that the release job has not reached yet. */
+  async function lapsedHoldsFor(registrationId: string): Promise<SeatHoldRow[]> {
+    return db.$queryRaw<SeatHoldRow[]>`
+      SELECT id,
+             event_category_id AS "eventCategoryId",
+             registration_id AS "registrationId",
+             seats,
+             expires_at AS "expiresAt",
+             released_at AS "releasedAt"
+        FROM seat_holds
+       WHERE registration_id = ${registrationId}::uuid
+         AND released_at IS NULL
+         AND expires_at <= now()
+    `;
+  }
+
   /** registration R5 — the safety net behind the delayed release job. */
   async function staleHolds(limit = 200): Promise<SeatHoldRow[]> {
     return db.$queryRaw<SeatHoldRow[]>`
@@ -799,6 +815,7 @@ export function createRegistrationRepo(db: Db) {
     holdById,
     releaseHold,
     staleHolds,
+    lapsedHoldsFor,
     insert,
     byId,
     transition,

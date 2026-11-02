@@ -831,7 +831,16 @@ export function createRegistrationService(deps: RegistrationDeps) {
     // their own hold is part of the number that says the draw is full. Asking
     // first is how a payment retry gets told the draw is full by its own seat
     // (R8), and how a flaky network turns an idempotent re-tap into an error.
-    const existing = await repo.forCaptainInCategory(actor.userId, input.eventCategoryId);
+    let existing = await repo.forCaptainInCategory(actor.userId, input.eventCategoryId);
+    // R5 — an entry whose hold ran out, before the release job reached it, is
+    // dead. Release it now so "Start over" begins a new entry rather than
+    // handing back the lapsed one. A failed payment keeps its R8 retry instead.
+    const pending = existing.find((r) => r.status === 'payment_pending');
+    if (pending && !(await repo.liveHoldFor(db, pending.id))) {
+      const lapsed = await repo.lapsedHoldsFor(pending.id);
+      for (const hold of lapsed) await expireHold(hold.id);
+      if (lapsed.length) existing = await repo.forCaptainInCategory(actor.userId, input.eventCategoryId);
+    }
     const live = existing.find((r) => IN_PROGRESS.includes(r.status as RegistrationStatus));
     const settled = existing.find((r) =>
       (['confirmed', 'checked_in'] as string[]).includes(r.status),
