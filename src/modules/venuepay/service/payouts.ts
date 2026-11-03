@@ -8,6 +8,13 @@
  * per payment), GST on that commission and TDS at the host-payout rates. Each
  * payment is counted in exactly one payout (`payout_id`).
  *
+ * 058 — table bookings settle in the same payout: for a booking paid through
+ * PL4Y the venue is owed its price after its own discount (PL4Y's offers and
+ * rewards are PL4Y's) less the commission frozen on it; for one paid at the
+ * desk the venue already has the money, so PL4Y owes only its own offer's
+ * discount, less the commission. Anything unsettled from earlier months is
+ * carried into the next payout; a month that nets to nothing or less waits.
+ *
  * The venue owner's payout account decides whether it is ready: verified,
  * and not replaced in the last 48 hours. Until then it is held and the daily
  * sweep looks again. PL4Y staff send it and mark it paid with the UTR.
@@ -33,6 +40,8 @@ export interface VenuePayout {
   payoutAccountId: string | null;
   period: string;
   paymentCount: number;
+  /** 058 — table bookings in this payout. */
+  bookingCount: number;
   grossPaise: bigint;
   commissionPaise: bigint;
   commissionTaxPaise: bigint;
@@ -55,6 +64,8 @@ export interface VenuePayoutsDeps {
   db: Db;
   accountOf(userId: string): Promise<PayoutAccountLite | null>;
   rates: { commissionGstBps: number; tdsBps: number };
+  /** 058 — bookings made before this are never settled (they predate booking payouts). Absent: all. */
+  launchedAt?(): Promise<Date>;
   notify?(userId: string, payload: Record<string, unknown>, venueId: string): Promise<void>;
   alert?(subject: string, text: string): Promise<void>;
   now?: () => Date;
@@ -117,6 +128,7 @@ export function createVenuePayouts(deps: VenuePayoutsDeps) {
       payoutAccountId: r.payoutAccountId,
       period: r.period,
       paymentCount: r.paymentCount,
+      bookingCount: r.bookingCount,
       grossPaise: r.grossPaise,
       commissionPaise: r.commissionPaise,
       commissionTaxPaise: r.commissionTaxPaise,
@@ -130,13 +142,37 @@ export function createVenuePayouts(deps: VenuePayoutsDeps) {
     }));
   }
 
-  /** Settles one month (default: the one just ended). Idempotent per venue and month. */
+  /** 058 — the bookings a payout for the period ending `end` settles. */
+  function bookingsDue(end: Date, launchedAt: Date, venueId?: string) {
+    return {
+      ...(venueId ? { venueId } : {}),
+      payoutId: null,
+      userId: { not: null },
+      createdAt: { gte: launchedAt },
+      startsAt: { lt: end },
+      OR: [
+        { collectedBy: 'pl4y', paymentStatus: { in: ['paid', 'partially_refunded', 'refunded'] }, status: { in: ['confirmed', 'checked_in', 'completed', 'no_show', 'cancelled'] } },
+        { collectedBy: 'venue', paymentStatus: 'paid', status: { in: ['confirmed', 'checked_in', 'completed', 'no_show'] } },
+      ],
+    };
+  }
+
+  /** What one booking adds to a payout: owed to the venue, and PL4Y's commission out of it. */
+  const bookingLine = (b: { collectedBy: string | null; venueGrossPaise: bigint; platformDiscountPaise: bigint; commissionPaise: bigint }) => ({
+    amountPaise: b.collectedBy === 'venue' ? b.platformDiscountPaise : b.venueGrossPaise,
+    commissionPaise: b.commissionPaise,
+  });
+  const BOOKING_LINE = { id: true, collectedBy: true, venueGrossPaise: true, platformDiscountPaise: true, commissionPaise: true } as const;
+
+  /** Settles one month (default: the one just ended), with anything earlier still unsettled. Idempotent per venue and month. */
   async function settleMonth(period: string = previousPeriod(now())): Promise<{ created: number; ready: number }> {
-    const { start, end } = periodBounds(period);
-    const due = await db.venuePayment.groupBy({
-      by: ['venueId'],
-      where: { status: 'paid', payoutId: null, paidAt: { gte: start, lt: end } },
-    });
+    const { end } = periodBounds(period);
+    const launchedAt = (await deps.launchedAt?.()) ?? new Date(0);
+    const [duePayments, dueBookings] = await Promise.all([
+      db.venuePayment.groupBy({ by: ['venueId'], where: { status: 'paid', payoutId: null, paidAt: { lt: end } } }),
+      db.courtBooking.groupBy({ by: ['venueId'], where: bookingsDue(end, launchedAt) }),
+    ]);
+    const due = [...new Set([...duePayments, ...dueBookings].map((r) => r.venueId))].map((venueId) => ({ venueId }));
     let created = 0;
     let ready = 0;
     for (const { venueId } of due) {
@@ -147,10 +183,14 @@ export function createVenuePayouts(deps: VenuePayoutsDeps) {
       const made = await db.$transaction(async (tx) => {
         if (await tx.venuePayout.findUnique({ where: { venueId_period: { venueId, period } } })) return null;
         const payments = await tx.venuePayment.findMany({
-          where: { venueId, status: 'paid', payoutId: null, paidAt: { gte: start, lt: end } },
+          where: { venueId, status: 'paid', payoutId: null, paidAt: { lt: end } },
           select: { id: true, amountPaise: true, commissionPaise: true },
         });
-        if (payments.length === 0) return null;
+        const booked = await tx.courtBooking.findMany({ where: bookingsDue(end, launchedAt, venueId), select: BOOKING_LINE });
+        if (payments.length === 0 && booked.length === 0) return null;
+        const quote = venuePayoutQuote([...payments, ...booked.map(bookingLine)], deps.rates);
+        // Nothing (or less) to pay: wait for next month rather than send a negative payout.
+        if (quote.amountPaise <= 0n) return null;
         const id = newId();
         await tx.venuePayout.create({
           data: {
@@ -160,12 +200,14 @@ export function createVenuePayouts(deps: VenuePayoutsDeps) {
             payoutAccountId: account?.id ?? null,
             period,
             paymentCount: payments.length,
-            ...venuePayoutQuote(payments, deps.rates),
+            bookingCount: booked.length,
+            ...quote,
             status: hold ? 'held' : 'ready',
             holdReason: hold,
           },
         });
         await tx.venuePayment.updateMany({ where: { id: { in: payments.map((p) => p.id) } }, data: { payoutId: id } });
+        await tx.courtBooking.updateMany({ where: { id: { in: booked.map((b) => b.id) } }, data: { payoutId: id } });
         return { status: hold ? 'held' : 'ready' };
       });
       if (!made) continue;
@@ -238,11 +280,15 @@ export function createVenuePayouts(deps: VenuePayoutsDeps) {
       if (payout.status === 'paid') return 'paid_out' as const;
       await tx.venuePayment.update({ where: { id: venuePaymentId }, data: { payoutId: null } });
       const left = await tx.venuePayment.findMany({ where: { payoutId, status: 'paid' }, select: { amountPaise: true, commissionPaise: true } });
-      if (left.length === 0) {
+      const booked = await tx.courtBooking.findMany({ where: { payoutId }, select: BOOKING_LINE });
+      if (left.length === 0 && booked.length === 0) {
         await tx.venuePayout.delete({ where: { id: payoutId } });
         return 'removed' as const;
       }
-      await tx.venuePayout.update({ where: { id: payoutId }, data: { paymentCount: left.length, ...venuePayoutQuote(left, deps.rates), updatedAt: now() } });
+      await tx.venuePayout.update({
+        where: { id: payoutId },
+        data: { paymentCount: left.length, bookingCount: booked.length, ...venuePayoutQuote([...left, ...booked.map(bookingLine)], deps.rates), updatedAt: now() },
+      });
       return 'recounted' as const;
     });
     if (outcome === 'paid_out') {

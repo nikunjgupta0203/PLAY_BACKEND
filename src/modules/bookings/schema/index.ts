@@ -16,9 +16,9 @@ import { db } from '../../../platform/db.js';
 import { forbidden } from '../../../platform/errors/index.js';
 import { CourtRef, VenueRef } from '../../venues/schema/index.js';
 import { venues } from '../../venues/index.js';
-import { bookings } from '../index.js';
-import type { Booking, Policy, Rule, Slot, VenueRole } from '../index.js';
-import { localDate } from '../service/slots.js';
+import { bookings, earnedPaise } from '../index.js';
+import type { Booking, Policy, Rule, Slot, Transaction, VenueRole } from '../index.js';
+import { allowedDurations, localDate } from '../service/slots.js';
 
 const paise = (v: bigint): number => Number(v);
 
@@ -60,6 +60,55 @@ const WalkInPaymentEnum = builder.enumType('WalkInPayment', {
   values: { OFFLINE: { value: 'offline' }, COMP: { value: 'comp' } } as const,
 });
 
+const PaymentStatusEnum = builder.enumType('BookingPaymentStatus', {
+  description:
+    '058 — PENDING: online, not paid yet (held). PAID. DUE: pay at the venue. FAILED: the last attempt failed. ' +
+    'VOID: nothing owed (lapsed or cancelled unpaid). WAIVED: free. REFUNDED / PARTIALLY_REFUNDED.',
+  values: {
+    PENDING: { value: 'pending' },
+    PAID: { value: 'paid' },
+    DUE: { value: 'due' },
+    FAILED: { value: 'failed' },
+    VOID: { value: 'void' },
+    WAIVED: { value: 'waived' },
+    REFUNDED: { value: 'refunded' },
+    PARTIALLY_REFUNDED: { value: 'partially_refunded' },
+  } as const,
+});
+
+const PaymentChoiceEnum = builder.enumType('BookingPaymentChoice', {
+  description: '058 — how the player pays for a booking: ONLINE now, or AT_VENUE (at the desk, or in the app later).',
+  values: { ONLINE: { value: 'online' }, AT_VENUE: { value: 'at_venue' } } as const,
+});
+
+const PaymentOptionsEnum = builder.enumType('VenuePaymentOptions', {
+  description: '058 — the venue owner’s choice: online bookings and payments, pay at venue, or both.',
+  values: { ONLINE: { value: 'online' }, AT_VENUE: { value: 'at_venue' }, BOTH: { value: 'both' } } as const,
+});
+
+const DeskMethodEnum = builder.enumType('DeskPaymentMethod', {
+  values: { CASH: { value: 'cash' }, UPI: { value: 'upi' }, CARD: { value: 'card' }, OTHER: { value: 'other' } } as const,
+});
+
+const BookingListEnum = builder.enumType('BookingListFilter', {
+  values: { UPCOMING: { value: 'upcoming' }, PAST: { value: 'past' }, CANCELLED: { value: 'cancelled' } } as const,
+});
+
+const VenueBookingFilterEnum = builder.enumType('VenueBookingFilter', {
+  values: { UPCOMING: { value: 'upcoming' }, UNPAID: { value: 'unpaid' }, CANCELLED: { value: 'cancelled' } } as const,
+});
+
+/** 058 — the title of an offer on a booking's discount line. */
+async function offerTitle(id: string | null): Promise<string | null> {
+  if (!id) return null;
+  return (await db.offer.findUnique({ where: { id }, select: { title: true } }))?.title ?? null;
+}
+
+/** 058 — the player's checkout: PL4Y's reward and the gateway's reference. */
+async function paidFacts(bookingId: string) {
+  return (await bookings.paymentFacts([bookingId])).get(bookingId) ?? { rewardDiscountPaise: 0n, reference: null, method: null };
+}
+
 // --- types --------------------------------------------------------------------------------
 
 const CourtSlotRef = builder.objectRef<Slot>('CourtSlot').implement({
@@ -91,6 +140,45 @@ const CourtBookingRef = builder.objectRef<Booking & { bookedBy?: string }>('Cour
     cancelledAt: t.field({ type: 'DateTime', nullable: true, resolve: (b) => b.cancelledAt }),
     checkedInAt: t.field({ type: 'DateTime', nullable: true, resolve: (b) => b.checkedInAt }),
     walkIn: t.boolean({ resolve: (b) => b.userId === null }),
+    bookingCode: t.exposeString('bookingCode', { description: '058 — "BK-7K3Q9XA2": what the player quotes at the desk.' }),
+    durationMinutes: t.int({ resolve: (b) => Math.round((b.endsAt.getTime() - b.startsAt.getTime()) / 60_000) }),
+    basePaise: t.int({ description: '058 — the price before any discount.', resolve: (b) => paise(b.basePaise) }),
+    venueDiscountPaise: t.int({ description: '058 — the venue’s own offer (the venue pays for it).', resolve: (b) => paise(b.venueDiscountPaise) }),
+    venueOfferTitle: t.string({ nullable: true, resolve: (b) => offerTitle(b.venueOfferId) }),
+    platformDiscountPaise: t.int({ description: '058 — PL4Y’s offer (PL4Y pays for it).', resolve: (b) => paise(b.platformDiscountPaise) }),
+    platformOfferTitle: t.string({ nullable: true, resolve: (b) => offerTitle(b.platformOfferId) }),
+    rewardDiscountPaise: t.int({
+      description: '058 — PL4Y’s welcome or referral reward taken at checkout (PL4Y pays for it).',
+      resolve: async (b) => paise((await paidFacts(b.id)).rewardDiscountPaise),
+    }),
+    payablePaise: t.int({
+      description: '058 — what the player pays or paid: the total less any reward taken at checkout.',
+      resolve: async (b) => paise(b.amountPaise - (await paidFacts(b.id)).rewardDiscountPaise),
+    }),
+    paymentStatus: t.field({ type: PaymentStatusEnum, resolve: (b) => b.paymentStatus as never }),
+    paymentMethod: t.string({ nullable: true, resolve: async (b) => b.paymentMethod ?? (await paidFacts(b.id)).method }),
+    paymentReference: t.string({ nullable: true, description: 'The gateway’s reference, for support.', resolve: async (b) => (await paidFacts(b.id)).reference }),
+    collectedBy: t.string({ nullable: true, description: 'pl4y | venue', resolve: (b) => b.collectedBy }),
+    paidAt: t.field({ type: 'DateTime', nullable: true, resolve: (b) => b.paidAt }),
+    refundedPaise: t.int({ resolve: (b) => paise(b.refundedPaise) }),
+    canPayInApp: t.boolean({
+      description: '058 — a pay-at-venue booking that is still due: the player may pay it in the app.',
+      resolve: (b) => b.paymentMode === 'at_venue' && ['due', 'failed'].includes(b.paymentStatus) && ['confirmed', 'checked_in'].includes(b.status),
+    }),
+    commissionPaise: t.int({
+      nullable: true,
+      description: 'Desk only: PL4Y’s commission on this booking (0 in the venue’s first 30 days).',
+      resolve: (b) => (b.bookedBy !== undefined ? paise(b.commissionPaise) : null),
+    }),
+    venueEarningsPaise: t.int({
+      nullable: true,
+      description: 'Desk only: what the venue keeps from this booking after commission.',
+      resolve: (b) => {
+        if (b.bookedBy === undefined) return null;
+        const earned = earnedPaise(b);
+        return paise(earned > b.commissionPaise ? earned - b.commissionPaise : 0n);
+      },
+    }),
     bookedBy: t.string({ nullable: true, description: 'Desk only: who the court is booked under.', resolve: (b) => b.bookedBy ?? null }),
     walkInPhone: t.string({ nullable: true, resolve: (b) => (b.bookedBy !== undefined ? b.walkInPhone : null) }),
     qrPayload: t.string({
@@ -110,6 +198,73 @@ const PolicyRef = builder.objectRef<Policy>('VenueBookingPolicy').implement({
     partialRefundBps: t.exposeInt('partialRefundBps'),
     platformFeePaise: t.int({ resolve: (p) => paise(p.platformFeePaise) }),
     taxBps: t.exposeInt('taxBps'),
+    slotStepMinutes: t.exposeInt('slotStepMinutes', { description: '058 — start times every this many minutes.' }),
+    durationOptions: t.intList({ description: '058 — the durations the owner offers. Empty: any multiple of the step.', resolve: (p) => p.durationOptions }),
+    durations: t.intList({ description: '058 — what players can actually pick.', resolve: (p) => allowedDurations(p) }),
+    paymentOptions: t.field({ type: PaymentOptionsEnum, resolve: (p) => p.paymentOptions }),
+  }),
+});
+
+type Options = Awaited<ReturnType<typeof bookings.bookingOptions>>;
+
+const BookingOptionsRef = builder.objectRef<Options>('VenueBookingOptions').implement({
+  description: '058 — what the booking screen needs before the grid.',
+  fields: (t) => ({
+    bookable: t.exposeBoolean('bookable'),
+    durations: t.intList({ resolve: (o) => o.durations }),
+    slotStepMinutes: t.exposeInt('slotStepMinutes'),
+    paymentChoices: t.field({ type: [PaymentChoiceEnum], resolve: (o) => o.paymentChoices }),
+    advanceDays: t.exposeInt('advanceDays'),
+    fullRefundHours: t.exposeInt('fullRefundHours'),
+    partialRefundHours: t.exposeInt('partialRefundHours'),
+    partialRefundBps: t.exposeInt('partialRefundBps'),
+  }),
+});
+
+type QuoteShape = Awaited<ReturnType<typeof bookings.quoteForPlayer>>;
+
+const QuoteRef = builder.objectRef<QuoteShape>('CourtBookingQuote').implement({
+  description:
+    '058 — the price before booking, from the server: the original price, the venue’s discount, PL4Y’s discount, the fee, tax and total. ' +
+    'Signed in, the player’s own eligibility applies (first-time offers, limits). A reward at checkout may take more off.',
+  fields: (t) => ({
+    courtId: t.exposeID('courtId'),
+    startsAt: t.field({ type: 'DateTime', resolve: (q) => q.startsAt }),
+    endsAt: t.field({ type: 'DateTime', resolve: (q) => q.endsAt }),
+    minutes: t.exposeInt('minutes'),
+    basePaise: t.int({ resolve: (q) => paise(q.basePaise) }),
+    venueDiscountPaise: t.int({ resolve: (q) => paise(q.venueDiscountPaise) }),
+    venueOfferTitle: t.string({ nullable: true, resolve: (q) => q.venueOfferTitle }),
+    platformDiscountPaise: t.int({ resolve: (q) => paise(q.platformDiscountPaise) }),
+    platformOfferTitle: t.string({ nullable: true, resolve: (q) => q.platformOfferTitle }),
+    courtPaise: t.int({ resolve: (q) => paise(q.courtPaise) }),
+    platformFeePaise: t.int({ resolve: (q) => paise(q.platformFeePaise) }),
+    taxPaise: t.int({ resolve: (q) => paise(q.taxPaise) }),
+    totalPaise: t.int({ resolve: (q) => paise(q.totalPaise) }),
+    paymentChoices: t.field({ type: [PaymentChoiceEnum], resolve: (q) => q.paymentChoices }),
+  }),
+});
+
+const TransactionRef = builder.objectRef<Transaction>('VenueTransaction').implement({
+  description: '058 — one money line at a venue: a booking or a pay-at-venue payment, with each discount and who paid for it.',
+  fields: (t) => ({
+    kind: t.exposeString('kind', { description: 'booking | venue_payment' }),
+    id: t.exposeID('id'),
+    reference: t.exposeString('reference'),
+    at: t.field({ type: 'DateTime', resolve: (x) => x.at }),
+    playerName: t.exposeString('playerName'),
+    description: t.exposeString('description'),
+    grossPaise: t.int({ resolve: (x) => paise(x.grossPaise) }),
+    venueDiscountPaise: t.int({ resolve: (x) => paise(x.venueDiscountPaise) }),
+    platformDiscountPaise: t.int({ resolve: (x) => paise(x.platformDiscountPaise) }),
+    playerPaise: t.int({ resolve: (x) => paise(x.playerPaise) }),
+    commissionPaise: t.int({ resolve: (x) => paise(x.commissionPaise) }),
+    venueEarningsPaise: t.int({ resolve: (x) => paise(x.venueEarningsPaise) }),
+    refundedPaise: t.int({ resolve: (x) => paise(x.refundedPaise) }),
+    paymentStatus: t.exposeString('paymentStatus'),
+    paymentMode: t.exposeString('paymentMode'),
+    collectedBy: t.string({ nullable: true, resolve: (x) => x.collectedBy }),
+    method: t.string({ nullable: true, resolve: (x) => x.method }),
   }),
 });
 
@@ -169,6 +324,26 @@ const ScheduleRef = builder.objectRef<Schedule>('VenueSchedule').implement({
 
 type Dashboard = Awaited<ReturnType<typeof bookings.dashboard>>;
 
+const DailyRef = builder.objectRef<Dashboard['daily'][number]>('VenueDailyRevenue').implement({
+  fields: (t) => ({
+    date: t.exposeString('date'),
+    bookings: t.exposeInt('bookings'),
+    revenuePaise: t.int({ resolve: (d) => paise(d.revenuePaise) }),
+  }),
+});
+const HourRef = builder.objectRef<Dashboard['byHour'][number]>('VenueHourStat').implement({
+  fields: (t) => ({ hour: t.exposeInt('hour'), bookings: t.exposeInt('bookings') }),
+});
+const TableStatRef = builder.objectRef<Dashboard['byTable'][number]>('VenueTableStat').implement({
+  fields: (t) => ({
+    courtId: t.exposeID('courtId'),
+    name: t.exposeString('name'),
+    bookings: t.exposeInt('bookings'),
+    hours: t.exposeFloat('hours'),
+    revenuePaise: t.int({ resolve: (d) => paise(d.revenuePaise) }),
+  }),
+});
+
 const DashboardRef = builder.objectRef<Dashboard>('VenueDashboard').implement({
   description: 'bookings R7, R8 — occupancy and money. Offline money never enters the ledger and is shown apart.',
   fields: (t) => ({
@@ -182,6 +357,23 @@ const DashboardRef = builder.objectRef<Dashboard>('VenueDashboard').implement({
     occupancy: t.exposeFloat('occupancy', { description: '0 to 1.' }),
     onlinePaise: t.int({ resolve: (d) => paise(d.onlinePaise) }),
     offlinePaise: t.int({ resolve: (d) => paise(d.offlinePaise) }),
+    revenuePaise: t.int({ description: '058 — what the venue earned in the range, before commission.', resolve: (d) => paise(d.revenuePaise) }),
+    duePaise: t.int({ description: '058 — pay-at-venue money still to collect.', resolve: (d) => paise(d.duePaise) }),
+    venueDiscountPaise: t.int({ resolve: (d) => paise(d.venueDiscountPaise) }),
+    platformDiscountPaise: t.int({ description: 'PL4Y’s offers — paid for by PL4Y, not taken from the venue.', resolve: (d) => paise(d.platformDiscountPaise) }),
+    commissionPaise: t.int({ resolve: (d) => paise(d.commissionPaise) }),
+    refundedPaise: t.int({ resolve: (d) => paise(d.refundedPaise) }),
+    customers: t.exposeInt('customers'),
+    repeatCustomers: t.exposeInt('repeatCustomers'),
+    todayPaise: t.int({ resolve: (d) => paise(d.todayPaise) }),
+    weekPaise: t.int({ description: 'This week, Monday to today.', resolve: (d) => paise(d.weekPaise) }),
+    monthPaise: t.int({ description: 'This calendar month to today.', resolve: (d) => paise(d.monthPaise) }),
+    onlineBookings: t.exposeInt('onlineBookings'),
+    atVenueBookings: t.exposeInt('atVenueBookings'),
+    walkIns: t.exposeInt('walkIns'),
+    daily: t.field({ type: [DailyRef], resolve: (d) => d.daily }),
+    byHour: t.field({ type: [HourRef], resolve: (d) => d.byHour }),
+    byTable: t.field({ type: [TableStatRef], resolve: (d) => d.byTable }),
   }),
 });
 
@@ -200,6 +392,11 @@ const SetupRef = builder.objectRef<Setup>('VenueBookingSetup').implement({
     policy: t.field({ type: PolicyRef, resolve: (s) => s.policy }),
     rules: t.field({ type: [RuleRef], resolve: (s) => s.rules }),
     upcomingBlackouts: t.field({ type: [BlackoutRef], resolve: (s) => s.blackouts }),
+    tables: t.field({
+      type: [CourtRef],
+      description: '058 — every table, in service or not.',
+      resolve: async (s) => (await venues.courtsFor(s.venueId)).filter((c) => c.venueId === s.venueId),
+    }),
   }),
 });
 
@@ -277,6 +474,16 @@ const HoldInput = builder.inputType('HoldCourtBookingInput', {
     courtId: t.id({ required: true }),
     startsAt: t.field({ type: 'DateTime', required: true }),
     endsAt: t.field({ type: 'DateTime', required: true }),
+    payment: t.field({ type: PaymentChoiceEnum, description: '058 — absent: the venue’s first option (online when it takes both).' }),
+  }),
+});
+
+const TableInput = builder.inputType('VenueTableInput', {
+  fields: (t) => ({
+    id: t.id({ description: 'Absent: a new table.' }),
+    name: t.string(),
+    sportIds: t.idList(),
+    active: t.boolean({ description: 'false: out of service (bookings on it must be moved first).' }),
   }),
 });
 
@@ -299,6 +506,9 @@ const PolicyInput = builder.inputType('VenueBookingPolicyInput', {
     partialRefundBps: t.int(),
     platformFeePaise: t.int(),
     taxBps: t.int(),
+    slotStepMinutes: t.int(),
+    durationOptions: t.intList(),
+    paymentOptions: t.field({ type: PaymentOptionsEnum }),
   }),
 });
 
@@ -365,9 +575,54 @@ builder.queryFields((t) => ({
 
   myCourtBookings: t.field({
     type: [CourtBookingRef],
-    args: { first: t.arg.int(), offset: t.arg.int() },
+    args: { first: t.arg.int(), offset: t.arg.int(), filter: t.arg({ type: BookingListEnum, description: '058 — UPCOMING, PAST or CANCELLED. Absent: all.' }) },
     resolve: (_root, args, ctx) =>
-      bookings.listForUser(requireActor(ctx).userId, { first: clampFirst(args.first, 20), offset: Math.max(args.offset ?? 0, 0) }),
+      bookings.listForUser(
+        requireActor(ctx).userId,
+        { first: clampFirst(args.first, 20), offset: Math.max(args.offset ?? 0, 0) },
+        args.filter ?? null,
+      ),
+  }),
+
+  venueBookingOptions: t.field({
+    type: BookingOptionsRef,
+    description: '058 — durations, start interval and payment choices for a venue’s booking screen.',
+    args: { venueId: t.arg.id({ required: true }) },
+    resolve: (_root, args) => bookings.bookingOptions(String(args.venueId)),
+  }),
+
+  courtBookingQuote: t.field({
+    type: QuoteRef,
+    description: '058 — the price breakdown for a slot before booking it, with the venue’s and PL4Y’s offers.',
+    args: {
+      courtId: t.arg.id({ required: true }),
+      startsAt: t.arg({ type: 'DateTime', required: true }),
+      endsAt: t.arg({ type: 'DateTime', required: true }),
+    },
+    resolve: (_root, args, ctx) =>
+      bookings.quoteForPlayer(ctx.actor ? { userId: ctx.actor.userId } : null, { courtId: String(args.courtId), startsAt: args.startsAt, endsAt: args.endsAt }),
+  }),
+
+  venueBookings: t.field({
+    type: [CourtBookingRef],
+    description: '058 — the venue’s bookings over a date range, for booking management. Desk and up.',
+    args: {
+      venueId: t.arg.id({ required: true }),
+      from: t.arg.string({ required: true }),
+      to: t.arg.string({ required: true }),
+      filter: t.arg({ type: VenueBookingFilterEnum }),
+      first: t.arg.int(),
+    },
+    resolve: async (_root, args, ctx) =>
+      bookings.venueBookings(await actorOf(ctx), String(args.venueId), { from: args.from, to: args.to, status: args.filter ?? null, first: args.first ?? undefined }),
+  }),
+
+  venueTransactions: t.field({
+    type: [TransactionRef],
+    description: '058 — payment and transaction history at a venue. Managers and owners.',
+    args: { venueId: t.arg.id({ required: true }), from: t.arg.string({ required: true }), to: t.arg.string({ required: true }), first: t.arg.int() },
+    resolve: async (_root, args, ctx) =>
+      bookings.transactions(await actorOf(ctx), String(args.venueId), { from: args.from, to: args.to, first: args.first ?? undefined }),
   }),
 
   courtBooking: t.field({
@@ -432,7 +687,12 @@ builder.mutationFields((t) => ({
     resolve: async (_root, args, ctx) => {
       const actor = requireActor(ctx);
       const { data, userError } = await attempt(() =>
-        bookings.hold(actor, { courtId: String(args.input.courtId), startsAt: args.input.startsAt, endsAt: args.input.endsAt }),
+        bookings.hold(actor, {
+          courtId: String(args.input.courtId),
+          startsAt: args.input.startsAt,
+          endsAt: args.input.endsAt,
+          payment: args.input.payment ?? null,
+        }),
       );
       return { booking: data, userError };
     },
@@ -540,6 +800,9 @@ builder.mutationFields((t) => ({
           partialRefundBps: i.partialRefundBps ?? undefined,
           platformFeePaise: i.platformFeePaise == null ? undefined : BigInt(i.platformFeePaise),
           taxBps: i.taxBps ?? undefined,
+          slotStepMinutes: i.slotStepMinutes ?? undefined,
+          durationOptions: i.durationOptions ?? undefined,
+          paymentOptions: i.paymentOptions ?? undefined,
         });
         return setupFor(actor, venueId);
       });
@@ -617,6 +880,41 @@ builder.mutationFields((t) => ({
       } as const;
       await auditedWhenStaff(actor, what, args.reason, () => bookings.removeBlackout(actor, blackoutId));
       return true;
+    },
+  }),
+
+  markCourtBookingPaid: t.field({
+    type: BookingPayload,
+    description: '058 — the desk took the money for a pay-at-venue booking. The player gets a receipt.',
+    args: { bookingId: t.arg.id({ required: true }), method: t.arg({ type: DeskMethodEnum, required: true }), reason: t.arg.string({ description: STAFF_REASON }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = await actorOf(ctx);
+      const bookingId = String(args.bookingId);
+      const { data, userError } = await attempt(() =>
+        auditedWhenStaff(actor, bookingTarget(bookingId, 'court_booking.mark_paid'), args.reason, () => bookings.markPaidAtDesk(actor, bookingId, args.method)),
+      );
+      return { booking: data, userError };
+    },
+  }),
+
+  saveVenueTable: t.field({
+    type: SetupPayload,
+    description: '058 — add a table, rename it, set its sport, or take it out of service. Managers and owners.',
+    args: { venueId: t.arg.id({ required: true }), input: t.arg({ type: TableInput, required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = await actorOf(ctx);
+      const venueId = String(args.venueId);
+      const i = args.input;
+      const { data, userError } = await attempt(async () => {
+        await bookings.saveTable(actor, venueId, {
+          id: i.id ? String(i.id) : null,
+          name: i.name ?? null,
+          sportIds: i.sportIds ? i.sportIds.map(String) : null,
+          active: i.active ?? null,
+        });
+        return setupFor(actor, venueId);
+      });
+      return { setup: data, userError };
     },
   }),
 

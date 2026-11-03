@@ -13,8 +13,9 @@
  *   · Like a court, only a verified capture marks it paid (payments R5). The
  *     player and the venue's owner and managers are emailed, and it shows in
  *     the venue desk with its status, reference, player, duration and amount.
- *   · PL4Y keeps 10%, frozen per payment; the rest goes out once a month
- *     (payouts.ts).
+ *   · PL4Y keeps its commission, frozen per payment; the rest goes out once
+ *     a month (payouts.ts). 058: the rate comes from `pricing` (0% in a
+ *     venue's first 30 days, then the portal's setting), not a constant.
  */
 import type { Db } from '../../../platform/db.js';
 import { SystemError, UserError, forbidden } from '../../../platform/errors/index.js';
@@ -35,7 +36,7 @@ export const MINUTES_MAX = 600;
 export const MINUTES_STEP = 5;
 export const RATE_MIN_PAISE = 1_000n;
 export const RATE_MAX_PAISE = 10_000_000n;
-/** PL4Y's commission on pay-at-venue money, as on event entry fees. */
+/** PL4Y's default commission on pay-at-venue money, used when `pricing` is not wired (tests). */
 export const COMMISSION_BPS = 1_000;
 /** How long a started payment waits for its checkout. Nothing scarce is held. */
 const HOLD_MS = 30 * 60_000;
@@ -96,6 +97,8 @@ export interface VenuePayDeps {
   payoutStatusOf(userId: string): Promise<string | null>;
   users: { contactsByIds(ids: string[]): Promise<{ id: string; displayName: string; email: string }[]> };
   email: { send(msg: { to: string; subject: string; text: string; html?: string }): Promise<unknown> };
+  /** 058 — PL4Y's rate at this venue now (starts its introductory period). Absent: COMMISSION_BPS. */
+  commissionBps?(venueId: string): Promise<number>;
   notify?(
     userId: string,
     template: 'payment.confirmed' | 'venue.payment_received',
@@ -113,7 +116,7 @@ export function priceFor(ratePerHourPaise: bigint, minutes: number): bigint {
 }
 
 /** Half-up, as host payouts round. */
-export const commissionOf = (amountPaise: bigint): bigint => (amountPaise * BigInt(COMMISSION_BPS) + 5_000n) / 10_000n;
+export const commissionOf = (amountPaise: bigint, bps: number = COMMISSION_BPS): bigint => (amountPaise * BigInt(bps) + 5_000n) / 10_000n;
 
 export function checkMinutes(minutes: number): void {
   if (!Number.isInteger(minutes) || minutes < MINUTES_MIN || minutes > MINUTES_MAX || minutes % MINUTES_STEP !== 0) {
@@ -245,6 +248,8 @@ export function createVenuePayService(deps: VenuePayDeps) {
   async function setEnabled(venueId: string, enabled: boolean): Promise<Offer> {
     await venueOf(venueId);
     await db.venue.update({ where: { id: venueId }, data: { payAtVenueEnabled: enabled } });
+    // 058 — switching it on starts the venue's introductory period, if bookings have not already.
+    if (enabled) await deps.commissionBps?.(venueId);
     return offer(venueId);
   }
 
@@ -263,6 +268,7 @@ export function createVenuePayService(deps: VenuePayDeps) {
     const o = await offer(input.venueId);
     if (!o.available) throw new UserError(VenuePayCode.NOT_AVAILABLE, 'This venue isn’t taking payments through PL4Y right now.');
     const q = await quote(input.venueId, input.rateId, input.minutes);
+    const bps = deps.commissionBps ? await deps.commissionBps(input.venueId) : COMMISSION_BPS;
     const row = await db.venuePayment.create({
       data: {
         id: newId(),
@@ -273,7 +279,7 @@ export function createVenuePayService(deps: VenuePayDeps) {
         minutes: q.minutes,
         ratePerHourPaise: q.ratePerHourPaise,
         amountPaise: q.amountPaise,
-        commissionPaise: commissionOf(q.amountPaise),
+        commissionPaise: commissionOf(q.amountPaise, bps),
         holdExpiresAt: new Date(now().getTime() + HOLD_MS),
       },
     });
@@ -380,6 +386,7 @@ export function createVenuePayService(deps: VenuePayDeps) {
       playerName: player?.displayName ?? 'A player',
       reference,
       paidAt: row.paidAt ?? now(),
+      commissionPaise: row.commissionPaise,
     };
     const target = { venueId: row.venueId, venuePaymentId };
     const sends: Promise<unknown>[] = [];

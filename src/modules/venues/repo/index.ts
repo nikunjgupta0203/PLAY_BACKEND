@@ -188,6 +188,8 @@ export function createVenueRepo(db: Db) {
     radiusKm?: number | null;
     city?: string | null;
     sportId?: string | null;
+    /** Cue-sports launch — only venues with an active court or table for one of these sports. */
+    anyOfSportIds?: string[] | null;
     /** discovery R1 — an ILIKE pattern, already escaped (platform/search.ts). */
     textPattern?: string | null;
     /** Distance in metres, or the name, plus the id that broke the tie. */
@@ -215,6 +217,15 @@ export function createVenueRepo(db: Db) {
           SELECT 1 FROM venue_courts c
            WHERE c.venue_id = v.id AND c.active
              AND ${opts.sportId}::uuid = ANY(c.sport_ids)
+        )
+      `);
+    }
+    if (opts.anyOfSportIds) {
+      where.push(Prisma.sql`
+        EXISTS (
+          SELECT 1 FROM venue_courts c
+           WHERE c.venue_id = v.id AND c.active
+             AND c.sport_ids && ${opts.anyOfSportIds}::uuid[]
         )
       `);
     }

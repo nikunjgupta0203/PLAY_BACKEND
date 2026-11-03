@@ -621,8 +621,11 @@ const SCHEDULES: [string, string, string][] = [
   [QUEUES.events, 'warn-short-categories', '10 * * * *'],
   // registration R5 — the safety net behind every delayed release job.
   [QUEUES.registration, 'sweep-stale-holds', '*/5 * * * *'],
-  // bookings R3 — lapsed court holds and finished bookings, every minute.
+  // bookings R3 — lapsed court holds and finished bookings, every minute. 058: and the
+  // two-hour reminders, and offer uses released from bookings that lapsed or were cancelled.
   [QUEUES.registration, 'sweep-bookings', '* * * * *'],
+  // 058 — new venue and PL4Y offers announced once; offers ending within a day, once.
+  [QUEUES.registration, 'sweep-offers', '7 * * * *'],
   // games R6, R10 — games past their end complete; the one-hour reminder goes out.
   [QUEUES.registration, 'sweep-games', '* * * * *'],
   // communities R4, R8 — requests waiting 30 days and approvals unpaid after 7 lapse; paid periods
@@ -768,11 +771,18 @@ export async function startWorkers(): Promise<() => void> {
       case 'sweep-bookings': {
         const { bookings } = await import('./modules/bookings/index.js');
         const result = await bookings.sweep();
-        if (result.expired + result.completed > 0) logger.info(result, 'swept court bookings');
+        if (result.expired + result.completed + result.reminded + result.released > 0) logger.info(result, 'swept court bookings');
         // pay at venue — started payments nobody paid stop counting.
         const { venuePay } = await import('./modules/venuepay/index.js');
         const lapsed = await venuePay.sweep();
         if (lapsed > 0) logger.info({ lapsed }, 'swept venue payments');
+        return;
+      }
+      case 'sweep-offers': {
+        const { pricing } = await import('./modules/pricing/index.js');
+        const announced = await pricing.announceNew();
+        const expiring = await pricing.announceExpiring();
+        if (announced + expiring > 0) logger.info({ announced, expiring }, 'offer notifications sent');
         return;
       }
       case 'sweep-games': {

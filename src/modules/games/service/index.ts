@@ -95,6 +95,8 @@ export interface GamesDeps {
   repo: GamesRepo;
   sport: {
     findById(sportId: string): Promise<{ id: string; name: string; active: boolean } | null>;
+    /** Cue-sports launch — the sports on offer, or null for all. */
+    offeredIds?(): Promise<string[] | null>;
     hasSkillBand(sportId: string, key: string): Promise<boolean>;
     /** R18 — the format held to this sport's rule, or a UserError saying why not. Null when the sport has no format to choose. */
     checkFormat?(sportId: string, format: MatchFormat): Promise<MatchFormat | null>;
@@ -272,6 +274,7 @@ export function createGamesService(deps: GamesDeps) {
     const from = filter.from && filter.from > at ? filter.from : at;
     const rows = await repo.search({
       sportId: filter.sportId ?? null,
+      anyOfSportIds: filter.sportId ? null : ((await deps.sport.offeredIds?.()) ?? null),
       from,
       to: filter.to ?? null,
       near,

@@ -86,6 +86,8 @@ export interface CategoryRow {
 
 export interface SearchFilter {
   sportId?: string | null;
+  /** Cue-sports launch — any of these sports (the ones on offer); null: no limit. */
+  anyOfSportIds?: string[] | null;
   city?: string | null;
   near?: GeoPoint | null;
   radiusKm?: number | null;
@@ -118,6 +120,8 @@ export function createEventRepo(db: Db) {
     ];
 
     if (filter.sportId) where.push(Prisma.sql`e.sport_id = ${filter.sportId}::uuid`);
+    // Cue-sports launch — only the sports PL4Y offers now (sport/offered.ts).
+    if (filter.anyOfSportIds) where.push(Prisma.sql`e.sport_id = ANY(${filter.anyOfSportIds}::uuid[])`);
     // One city under any of its spellings (platform/city.ts).
     if (filter.city) where.push(Prisma.sql`lower(btrim(e.city)) IN (${Prisma.join(cityVariants(filter.city))})`);
     if (filter.from) where.push(Prisma.sql`e.starts_at >= ${filter.from}`);

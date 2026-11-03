@@ -8,6 +8,10 @@ export { heatCountFor, heatSizeFor } from './service/heatSize.js';
 
 export {
   SportCode,
+  OFFERED_SPORT_SLUGS,
+  isOfferedSlug,
+  setSportFocusForTests,
+  sportFocusOn,
   parseScoringRule,
   RuleTweakError,
   scoringRuleSchema,

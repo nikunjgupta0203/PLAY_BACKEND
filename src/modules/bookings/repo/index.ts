@@ -27,6 +27,23 @@ export interface BookingRow {
   platformFeePaise: bigint;
   taxPaise: bigint;
   amountPaise: bigint;
+  /** 058 — see migration 058 for each of these. */
+  bookingCode: string;
+  basePaise: bigint;
+  venueOfferId: string | null;
+  venueDiscountPaise: bigint;
+  platformOfferId: string | null;
+  platformDiscountPaise: bigint;
+  paymentStatus: string;
+  paymentMethod: string | null;
+  collectedBy: string | null;
+  paidAt: Date | null;
+  refundedPaise: bigint;
+  venueGrossPaise: bigint;
+  commissionBps: number;
+  commissionPaise: bigint;
+  payoutId: string | null;
+  reminderSentAt: Date | null;
   cancelledBy: string | null;
   cancelReason: string | null;
   cancelledAt: Date | null;
@@ -78,6 +95,9 @@ export function createBookingsRepo(db: Db) {
       partialRefundBps: row.partialRefundBps,
       platformFeePaise: row.platformFeePaise,
       taxBps: row.taxBps,
+      slotStepMinutes: row.slotStepMinutes,
+      durationOptions: row.durationOptions,
+      paymentOptions: row.paymentOptions as Policy['paymentOptions'],
     };
   }
 
@@ -165,7 +185,13 @@ export function createBookingsRepo(db: Db) {
    * With it they line up, and every loser gets a clean overlap at once.
    * Throws on overlap (`isOverlap`).
    */
-  async function insertLive(row: Omit<BookingRow, 'createdAt' | 'updatedAt' | 'cancelledBy' | 'cancelReason' | 'cancelledAt' | 'checkedInAt'>, at: Date): Promise<BookingRow> {
+  async function insertLive(
+    row: Omit<
+      BookingRow,
+      'createdAt' | 'updatedAt' | 'cancelledBy' | 'cancelReason' | 'cancelledAt' | 'checkedInAt' | 'paidAt' | 'refundedPaise' | 'payoutId' | 'reminderSentAt'
+    > & { paidAt?: Date | null },
+    at: Date,
+  ): Promise<BookingRow> {
     await db.$executeRaw`
       UPDATE court_bookings SET status = 'expired', hold_expires_at = NULL, updated_at = ${at}
        WHERE court_id = ${row.courtId}::uuid AND status = 'held' AND hold_expires_at <= ${at}
@@ -174,12 +200,17 @@ export function createBookingsRepo(db: Db) {
       WITH court_lock AS (SELECT pg_advisory_xact_lock(hashtext(${row.courtId})) AS locked)
       INSERT INTO court_bookings (
         id, venue_id, court_id, user_id, walk_in_name, walk_in_phone, starts_at, ends_at, status,
-        payment_mode, hold_expires_at, court_paise, platform_fee_paise, tax_paise, amount_paise, created_by
+        payment_mode, hold_expires_at, court_paise, platform_fee_paise, tax_paise, amount_paise, created_by,
+        booking_code, base_paise, venue_offer_id, venue_discount_paise, platform_offer_id, platform_discount_paise,
+        payment_status, payment_method, collected_by, paid_at, venue_gross_paise, commission_bps, commission_paise
       )
       SELECT ${row.id}::uuid, ${row.venueId}::uuid, ${row.courtId}::uuid, ${row.userId}::uuid, ${row.walkInName},
              ${row.walkInPhone}, ${row.startsAt}::timestamptz, ${row.endsAt}::timestamptz, ${row.status},
              ${row.paymentMode}, ${row.holdExpiresAt}::timestamptz, ${row.courtPaise}, ${row.platformFeePaise},
-             ${row.taxPaise}, ${row.amountPaise}, ${row.createdBy}::uuid
+             ${row.taxPaise}, ${row.amountPaise}, ${row.createdBy}::uuid,
+             ${row.bookingCode}, ${row.basePaise}, ${row.venueOfferId}::uuid, ${row.venueDiscountPaise},
+             ${row.platformOfferId}::uuid, ${row.platformDiscountPaise}, ${row.paymentStatus}, ${row.paymentMethod},
+             ${row.collectedBy}, ${row.paidAt ?? null}::timestamptz, ${row.venueGrossPaise}, ${row.commissionBps}, ${row.commissionPaise}
         FROM court_lock
       RETURNING id::text AS id`;
     try {
@@ -251,13 +282,58 @@ export function createBookingsRepo(db: Db) {
     });
   }
 
-  async function forUser(userId: string, page: { first: number; offset: number }): Promise<BookingRow[]> {
+  /**
+   * The player's bookings. 058 — `upcoming`: live and not yet over, soonest
+   * first; `past`: played or over; `cancelled`: cancelled, or a payment
+   * that never went through. No filter: everything but lapsed holds.
+   */
+  async function forUser(
+    userId: string,
+    page: { first: number; offset: number },
+    filter: 'upcoming' | 'past' | 'cancelled' | null = null,
+    at: Date = new Date(),
+  ): Promise<BookingRow[]> {
+    const live = { OR: [{ status: { in: ['confirmed', 'checked_in'] } }, { status: 'held', holdExpiresAt: { gt: at } }] };
+    const where =
+      filter === 'upcoming'
+        ? { userId, endsAt: { gt: at }, ...live }
+        : filter === 'past'
+          ? { userId, OR: [{ status: { in: ['completed', 'no_show'] } }, { status: { in: ['confirmed', 'checked_in'] }, endsAt: { lte: at } }] }
+          : filter === 'cancelled'
+            ? { userId, status: { in: ['cancelled', 'payment_failed'] } }
+            : { userId, status: { notIn: ['expired'] } };
     return db.courtBooking.findMany({
-      where: { userId, status: { notIn: ['expired'] } },
-      orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+      where,
+      orderBy: filter === 'upcoming' ? [{ startsAt: 'asc' }, { id: 'asc' }] : [{ startsAt: 'desc' }, { id: 'desc' }],
       skip: page.offset,
       take: page.first,
     });
+  }
+
+  /** 058 — unpaid pay-at-venue bookings a player holds that have not started: the anti-hoarding count. */
+  async function unpaidAtVenue(userId: string, at: Date): Promise<number> {
+    return db.courtBooking.count({
+      where: { userId, paymentMode: 'at_venue', paymentStatus: { in: ['due', 'failed'] }, status: 'confirmed', startsAt: { gt: at } },
+    });
+  }
+
+  /** 058 — no-shows in a window: a player with too many pays online. */
+  async function noShowsSince(userId: string, since: Date): Promise<number> {
+    return db.courtBooking.count({ where: { userId, status: 'no_show', startsAt: { gte: since } } });
+  }
+
+  /** 058 — confirmed bookings starting within the window that have not been reminded. Claimed one by one. */
+  async function dueReminders(from: Date, to: Date): Promise<BookingRow[]> {
+    return db.courtBooking.findMany({
+      where: { status: 'confirmed', reminderSentAt: null, userId: { not: null }, startsAt: { gt: from, lte: to } },
+      orderBy: { startsAt: 'asc' },
+      take: 200,
+    });
+  }
+
+  async function claimReminder(id: string, at: Date): Promise<boolean> {
+    const { count } = await db.courtBooking.updateMany({ where: { id, reminderSentAt: null }, data: { reminderSentAt: at } });
+    return count === 1;
   }
 
   return {
@@ -276,6 +352,10 @@ export function createBookingsRepo(db: Db) {
     completeFinished,
     forVenueBetween,
     forUser,
+    unpaidAtVenue,
+    noShowsSince,
+    dueReminders,
+    claimReminder,
   };
 }
 

@@ -125,11 +125,11 @@ model User {
   registrations           Registration[]            @relation("registrationCaptain")
   checkIns                Registration[]            @relation("registrationCheckedInBy")
   invitesReceived         RegistrationInvite[]
-  invitesReplacing        RegistrationInvite[]    @relation("inviteReplaces")
-  checkins                RegistrationCheckin[]   @relation("checkinPlayer")
-  checkinsMade            RegistrationCheckin[]   @relation("checkinBy")
-  historyActed            RegistrationHistory[]   @relation("historyActor")
-  historySubject          RegistrationHistory[]   @relation("historySubject")
+  invitesReplacing        RegistrationInvite[]      @relation("inviteReplaces")
+  checkins                RegistrationCheckin[]     @relation("checkinPlayer")
+  checkinsMade            RegistrationCheckin[]     @relation("checkinBy")
+  historyActed            RegistrationHistory[]     @relation("historyActor")
+  historySubject          RegistrationHistory[]     @relation("historySubject")
   platformStaff           PlatformStaff?            @relation("platformStaffUser")
   platformGrants          PlatformStaff[]           @relation("platformStaffGrantor")
   scoreEvents             MatchScoreEvent[]
@@ -741,56 +741,56 @@ model Event {
 }
 
 model EventCategory {
-  id               String    @id @db.Uuid
-  eventId          String    @map("event_id") @db.Uuid
-  sportId          String    @map("sport_id") @db.Uuid
+  id                    String    @id @db.Uuid
+  eventId               String    @map("event_id") @db.Uuid
+  sportId               String    @map("sport_id") @db.Uuid
   /// "Men's Doubles 3.5"
-  name             String
-  format           String
-  teamSize         Int       @default(1) @map("team_size") @db.SmallInt
-  drawType         String    @default("single_elim_with_plate") @map("draw_type")
-  skillMin         Decimal?  @map("skill_min") @db.Decimal(4, 2)
-  skillMax         Decimal?  @map("skill_max") @db.Decimal(4, 2)
-  ageMin           Int?      @map("age_min") @db.SmallInt
-  ageMax           Int?      @map("age_max") @db.SmallInt
-  capacity         Int
+  name                  String
+  format                String
+  teamSize              Int       @default(1) @map("team_size") @db.SmallInt
+  drawType              String    @default("single_elim_with_plate") @map("draw_type")
+  skillMin              Decimal?  @map("skill_min") @db.Decimal(4, 2)
+  skillMax              Decimal?  @map("skill_max") @db.Decimal(4, 2)
+  ageMin                Int?      @map("age_min") @db.SmallInt
+  ageMax                Int?      @map("age_max") @db.SmallInt
+  capacity              Int
   /// events R9 — below this at registration close, the category is cancelled
   /// and fully refunded.
-  minEntries       Int       @default(4) @map("min_entries") @db.SmallInt
+  minEntries            Int       @default(4) @map("min_entries") @db.SmallInt
   /// Money is bigint paise. No float touches it, here or in GraphQL.
-  entryFeePaise    BigInt    @map("entry_fee_paise")
-  platformFeePaise BigInt    @default(0) @map("platform_fee_paise")
+  entryFeePaise         BigInt    @map("entry_fee_paise")
+  platformFeePaise      BigInt    @default(0) @map("platform_fee_paise")
   /// 18% GST in basis points. Integer arithmetic all the way down (events R3).
-  taxBps           Int       @default(0) @map("tax_bps")
+  taxBps                Int       @default(0) @map("tax_bps")
   /// The platform's share of the entry fee, server-set. 1000 = 10%.
-  commissionBps    Int       @default(0) @map("commission_bps")
+  commissionBps         Int       @default(0) @map("commission_bps")
   /// open | full | closed | drawn | completed | cancelled. CHECK in the migration.
-  status           String    @default("open")
+  status                String    @default("open")
   /// F14 — the scheduler's slot for one match. Null = 45 minutes.
-  matchMinutes     Int?      @map("match_minutes") @db.SmallInt
+  matchMinutes          Int?      @map("match_minutes") @db.SmallInt
   /// F23 — a knockout without a Plate plays a match for third place.
-  thirdPlace       Boolean   @default(false) @map("third_place")
+  thirdPlace            Boolean   @default(false) @map("third_place")
   /// F24 — what the draw is played for, and the host's format notes.
-  prizes           String?
-  rulesNote        String?   @map("rules_note")
+  prizes                String?
+  rulesNote             String?   @map("rules_note")
   /// F21, F22 — the rule this draw is played under, frozen. Null = the sport's current default.
-  scoringRule      Json?     @map("scoring_rule")
+  scoringRule           Json?     @map("scoring_rule")
   /// F12 — the host was told this draw is short of its minimum.
-  shortWarnedAt    DateTime? @map("short_warned_at") @db.Timestamptz(6)
+  shortWarnedAt         DateTime? @map("short_warned_at") @db.Timestamptz(6)
   /// R21 — true: the captain pays for the team first and invites teammates after.
-  teammatesAfterPayment Boolean @default(false) @map("teammates_after_payment")
+  teammatesAfterPayment Boolean   @default(false) @map("teammates_after_payment")
   /// R21 — optional | required. CHECK in the migration.
-  teamNameRule     String    @default("optional") @map("team_name_rule")
+  teamNameRule          String    @default("optional") @map("team_name_rule")
   /// R21 — team | player: how the fee is labelled. The stored fee is always the whole entry's.
-  feeBasis         String    @default("team") @map("fee_basis")
+  feeBasis              String    @default("team") @map("fee_basis")
   /// R21 — null = the format's team size.
-  minTeamSize      Int?      @map("min_team_size") @db.SmallInt
-  maxTeamSize      Int?      @map("max_team_size") @db.SmallInt
+  minTeamSize           Int?      @map("min_team_size") @db.SmallInt
+  maxTeamSize           Int?      @map("max_team_size") @db.SmallInt
   /// R21 — null = until the event starts.
-  inviteDeadlineAt DateTime? @map("invite_deadline_at") @db.Timestamptz(6)
-  rosterLockAt     DateTime? @map("roster_lock_at") @db.Timestamptz(6)
-  allowReplacements Boolean  @default(true) @map("allow_replacements")
-  waitlistEnabled  Boolean   @default(true) @map("waitlist_enabled")
+  inviteDeadlineAt      DateTime? @map("invite_deadline_at") @db.Timestamptz(6)
+  rosterLockAt          DateTime? @map("roster_lock_at") @db.Timestamptz(6)
+  allowReplacements     Boolean   @default(true) @map("allow_replacements")
+  waitlistEnabled       Boolean   @default(true) @map("waitlist_enabled")
 
   event           Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
   sport           Sport           @relation(fields: [sportId], references: [id])
@@ -914,12 +914,12 @@ model Registration {
   /// R16 — why staff withdrew the entry.
   withdrawnReason String?   @map("withdrawn_reason")
 
-  event           Event                @relation(fields: [eventId], references: [id])
-  eventCategory   EventCategory        @relation(fields: [eventCategoryId], references: [id])
-  sport           Sport                @relation(fields: [sportId], references: [id])
-  captain         User                 @relation("registrationCaptain", fields: [captainUserId], references: [id])
-  checkedInByUser User?                @relation("registrationCheckedInBy", fields: [checkedInBy], references: [id], onDelete: SetNull)
-  team            Team?                @relation(fields: [teamId], references: [id])
+  event           Event                 @relation(fields: [eventId], references: [id])
+  eventCategory   EventCategory         @relation(fields: [eventCategoryId], references: [id])
+  sport           Sport                 @relation(fields: [sportId], references: [id])
+  captain         User                  @relation("registrationCaptain", fields: [captainUserId], references: [id])
+  checkedInByUser User?                 @relation("registrationCheckedInBy", fields: [checkedInBy], references: [id], onDelete: SetNull)
+  team            Team?                 @relation(fields: [teamId], references: [id])
   waitlistEntry   WaitlistEntry?
   invites         RegistrationInvite[]
   checkins        RegistrationCheckin[]
@@ -927,11 +927,11 @@ model Registration {
   seatHolds       SeatHold[]
   paymentOrders   PaymentOrder[]
   ledgerEntries   LedgerEntry[]
-  matchesSideA    Match[]              @relation("matchSideA")
-  matchesSideB    Match[]              @relation("matchSideB")
-  matchesWon      Match[]              @relation("matchWinner")
-  resultsWon      MatchResult[]        @relation("resultWinner")
-  resultsLost     MatchResult[]        @relation("resultLoser")
+  matchesSideA    Match[]               @relation("matchSideA")
+  matchesSideB    Match[]               @relation("matchSideB")
+  matchesWon      Match[]               @relation("matchWinner")
+  resultsWon      MatchResult[]         @relation("resultWinner")
+  resultsLost     MatchResult[]         @relation("resultLoser")
 
   @@index([eventCategoryId, status])
   @@index([captainUserId])
@@ -941,22 +941,22 @@ model Registration {
 }
 
 model RegistrationInvite {
-  id             String   @id @db.Uuid
-  registrationId String   @map("registration_id") @db.Uuid
+  id             String    @id @db.Uuid
+  registrationId String    @map("registration_id") @db.Uuid
   /// registration R12 — the partner may have no account yet (ADR 0002).
   /// R22 — null for a shareable link, which is addressed to nobody.
-  invitedEmail   String?  @map("invited_email") @db.Citext
-  invitedUserId  String?  @map("invited_user_id") @db.Uuid
+  invitedEmail   String?   @map("invited_email") @db.Citext
+  invitedUserId  String?   @map("invited_user_id") @db.Uuid
   /// R25 — accepting takes this member's place on the team.
-  replacesUserId String?  @map("replaces_user_id") @db.Uuid
+  replacesUserId String?   @map("replaces_user_id") @db.Uuid
   lastSentAt     DateTime? @map("last_sent_at") @db.Timestamptz(6)
-  sentCount      Int      @default(1) @map("sent_count")
-  token          String   @unique
+  sentCount      Int       @default(1) @map("sent_count")
+  token          String    @unique
   /// pending | accepted | declined | expired | revoked. CHECK in the migration.
-  status         String   @default("pending")
+  status         String    @default("pending")
   /// +48 h (registration R3).
-  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   invitedUser  User?        @relation(fields: [invitedUserId], references: [id])
@@ -1858,6 +1858,12 @@ model VenueBookingPolicy {
   platformFeePaise   BigInt   @default(0) @map("platform_fee_paise")
   taxBps             Int      @default(0) @map("tax_bps")
   timezone           String   @default("Asia/Kolkata")
+  /// 058 — start times every this many minutes: 5 | 10 | 15 | 20 | 30 | 60.
+  slotStepMinutes    Int      @default(30) @map("slot_step_minutes") @db.SmallInt
+  /// 058 — the durations a player picks from, e.g. {30,40,60,90}. Empty: any multiple of the step.
+  durationOptions    Int[]    @default([60, 90, 120]) @map("duration_options") @db.SmallInt
+  /// 058 — online | at_venue | both.
+  paymentOptions     String   @default("online") @map("payment_options")
   updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@map("venue_booking_policies")
@@ -1893,30 +1899,51 @@ model CourtBlackout {
 }
 
 model CourtBooking {
-  id               String    @id @db.Uuid
-  venueId          String    @map("venue_id") @db.Uuid
-  courtId          String    @map("court_id") @db.Uuid
-  userId           String?   @map("user_id") @db.Uuid
-  walkInName       String?   @map("walk_in_name")
-  walkInPhone      String?   @map("walk_in_phone")
-  startsAt         DateTime  @map("starts_at") @db.Timestamptz(6)
-  endsAt           DateTime  @map("ends_at") @db.Timestamptz(6)
+  id                    String    @id @db.Uuid
+  venueId               String    @map("venue_id") @db.Uuid
+  courtId               String    @map("court_id") @db.Uuid
+  userId                String?   @map("user_id") @db.Uuid
+  walkInName            String?   @map("walk_in_name")
+  walkInPhone           String?   @map("walk_in_phone")
+  startsAt              DateTime  @map("starts_at") @db.Timestamptz(6)
+  endsAt                DateTime  @map("ends_at") @db.Timestamptz(6)
   /// held | confirmed | checked_in | completed | cancelled | expired | no_show | payment_failed
-  status           String    @default("held")
-  /// online | offline | comp
-  paymentMode      String    @default("online") @map("payment_mode")
-  holdExpiresAt    DateTime? @map("hold_expires_at") @db.Timestamptz(6)
-  courtPaise       BigInt    @map("court_paise")
-  platformFeePaise BigInt    @default(0) @map("platform_fee_paise")
-  taxPaise         BigInt    @default(0) @map("tax_paise")
-  amountPaise      BigInt    @map("amount_paise")
-  cancelledBy      String?   @map("cancelled_by") @db.Uuid
-  cancelReason     String?   @map("cancel_reason")
-  cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz(6)
-  checkedInAt      DateTime? @map("checked_in_at") @db.Timestamptz(6)
-  createdBy        String    @map("created_by") @db.Uuid
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  status                String    @default("held")
+  /// online | at_venue | offline | comp
+  paymentMode           String    @default("online") @map("payment_mode")
+  holdExpiresAt         DateTime? @map("hold_expires_at") @db.Timestamptz(6)
+  /// 058 — "BK-7K3Q9XA2".
+  bookingCode           String    @unique @map("booking_code")
+  /// 058 — the price before any discount; court = base − venue discount − PL4Y discount (CHECK).
+  basePaise             BigInt    @map("base_paise")
+  venueOfferId          String?   @map("venue_offer_id") @db.Uuid
+  venueDiscountPaise    BigInt    @default(0) @map("venue_discount_paise")
+  platformOfferId       String?   @map("platform_offer_id") @db.Uuid
+  platformDiscountPaise BigInt    @default(0) @map("platform_discount_paise")
+  /// 058 — pending | paid | due | failed | void | waived | refunded | partially_refunded
+  paymentStatus         String    @default("pending") @map("payment_status")
+  paymentMethod         String?   @map("payment_method")
+  /// 058 — pl4y | venue
+  collectedBy           String?   @map("collected_by")
+  paidAt                DateTime? @map("paid_at") @db.Timestamptz(6)
+  refundedPaise         BigInt    @default(0) @map("refunded_paise")
+  /// 058 — what the venue earns before commission (base − the venue's own discount).
+  venueGrossPaise       BigInt    @default(0) @map("venue_gross_paise")
+  commissionBps         Int       @default(0) @map("commission_bps")
+  commissionPaise       BigInt    @default(0) @map("commission_paise")
+  payoutId              String?   @map("payout_id") @db.Uuid
+  reminderSentAt        DateTime? @map("reminder_sent_at") @db.Timestamptz(6)
+  courtPaise            BigInt    @map("court_paise")
+  platformFeePaise      BigInt    @default(0) @map("platform_fee_paise")
+  taxPaise              BigInt    @default(0) @map("tax_paise")
+  amountPaise           BigInt    @map("amount_paise")
+  cancelledBy           String?   @map("cancelled_by") @db.Uuid
+  cancelReason          String?   @map("cancel_reason")
+  cancelledAt           DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  checkedInAt           DateTime? @map("checked_in_at") @db.Timestamptz(6)
+  createdBy             String    @map("created_by") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
   @@index([userId, startsAt(sort: Desc)], map: "court_bookings_user_idx")
   @@index([venueId, startsAt], map: "court_bookings_venue_idx")
@@ -2559,6 +2586,8 @@ model VenuePayout {
   payoutAccountId    String?   @map("payout_account_id") @db.Uuid
   period             String
   paymentCount       Int       @map("payment_count")
+  /// 058 — table bookings settled in this payout, besides pay-at-venue payments.
+  bookingCount       Int       @default(0) @map("booking_count")
   grossPaise         BigInt    @map("gross_paise")
   commissionPaise    BigInt    @map("commission_paise")
   commissionTaxPaise BigInt    @map("commission_tax_paise")
@@ -2575,4 +2604,96 @@ model VenuePayout {
   @@unique([venueId, period], map: "venue_payouts_period_key")
   @@index([status, createdAt], map: "venue_payouts_status_idx")
   @@map("venue_payouts")
+}
+
+/// 058 — PL4Y's pricing knobs, edited in the portal. One row.
+model PricingSettings {
+  id                    Int      @id @default(1) @db.SmallInt
+  bookingCommissionBps  Int      @default(1000) @map("booking_commission_bps")
+  venuePayCommissionBps Int      @default(1000) @map("venue_pay_commission_bps")
+  introEnabled          Boolean  @default(true) @map("intro_enabled")
+  introDays             Int      @default(30) @map("intro_days")
+  introCommissionBps    Int      @default(0) @map("intro_commission_bps")
+  launchedAt            DateTime @default(now()) @map("launched_at") @db.Timestamptz(6)
+  allowStacking         Boolean  @default(true) @map("allow_stacking")
+  /// after_venue | original
+  platformDiscountBase  String   @default("after_venue") @map("platform_discount_base")
+  maxDiscountBps        Int      @default(10000) @map("max_discount_bps")
+  rewardsWithPromos     Boolean  @default(true) @map("rewards_with_promos")
+  updatedBy             String?  @map("updated_by") @db.Uuid
+  updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("pricing_settings")
+}
+
+/// 058 — a venue's introductory period and optional commission override.
+model VenueCommercialTerms {
+  venueId               String   @id @map("venue_id") @db.Uuid
+  introStartsAt         DateTime @map("intro_starts_at") @db.Timestamptz(6)
+  introEndsAt           DateTime @map("intro_ends_at") @db.Timestamptz(6)
+  commissionBpsOverride Int?     @map("commission_bps_override")
+  note                  String?
+  updatedBy             String?  @map("updated_by") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("venue_commercial_terms")
+}
+
+/// 058 — a discount: venue-funded (the owner's) or platform-funded (PL4Y's).
+model Offer {
+  id               String    @id @db.Uuid
+  /// venue | platform
+  fundedBy         String    @map("funded_by")
+  venueId          String?   @map("venue_id") @db.Uuid
+  title            String
+  description      String?
+  /// percent | flat
+  kind             String
+  percentBps       Int       @default(0) @map("percent_bps")
+  flatPaise        BigInt    @default(0) @map("flat_paise")
+  maxDiscountPaise BigInt?   @map("max_discount_paise")
+  minAmountPaise   BigInt    @default(0) @map("min_amount_paise")
+  minMinutes       Int       @default(0) @map("min_minutes")
+  weekdays         Int[]     @default([]) @db.SmallInt
+  timeFromMin      Int?      @map("time_from_min") @db.SmallInt
+  timeToMin        Int?      @map("time_to_min") @db.SmallInt
+  firstBookingOnly Boolean   @default(false) @map("first_booking_only")
+  startsAt         DateTime  @map("starts_at") @db.Timestamptz(6)
+  endsAt           DateTime? @map("ends_at") @db.Timestamptz(6)
+  usageLimit       Int?      @map("usage_limit")
+  perUserLimit     Int?      @map("per_user_limit")
+  active           Boolean   @default(true)
+  announcedAt      DateTime? @map("announced_at") @db.Timestamptz(6)
+  expiryNotifiedAt DateTime? @map("expiry_notified_at") @db.Timestamptz(6)
+  createdBy        String    @map("created_by") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  redemptions OfferRedemption[]
+
+  @@index([venueId, active], map: "offers_venue_idx")
+  @@index([fundedBy, active], map: "offers_platform_idx")
+  @@map("offers")
+}
+
+/// 058 — reserved while a booking is held or payable, redeemed once paid, released otherwise.
+model OfferRedemption {
+  id            String   @id @db.Uuid
+  offerId       String   @map("offer_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  bookingId     String   @map("booking_id") @db.Uuid
+  fundedBy      String   @map("funded_by")
+  discountPaise BigInt   @map("discount_paise")
+  /// reserved | redeemed | released
+  status        String   @default("reserved")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  offer Offer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@unique([offerId, bookingId], map: "offer_redemptions_booking_key")
+  @@index([offerId, status], map: "offer_redemptions_offer_idx")
+  @@index([userId, offerId], map: "offer_redemptions_user_idx")
+  @@map("offer_redemptions")
 }

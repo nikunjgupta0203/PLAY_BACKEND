@@ -17,6 +17,8 @@ export interface VenuePaymentFacts {
   /** The gateway's id for the payment — what support asks for. */
   reference: string | null;
   paidAt: Date;
+  /** 058 — PL4Y's commission frozen on this payment (0 in the venue's first 30 days). */
+  commissionPaise?: bigint;
 }
 
 export const durationText = (minutes: number): string => {
@@ -82,7 +84,11 @@ export function operatorNoticeEmail(to: string, f: VenuePaymentFacts): RenderedE
     rows(lines, ['Amount', rupees(f.amountPaise)]) +
     button('Open the venue desk', link('/app/venue-desk')) +
     divider() +
-    para('PL4Y pays the month’s payments to your bank account early next month, less the 10% commission.');
+    para(
+      f.commissionPaise === 0n
+        ? 'PL4Y pays the month’s payments to your bank account early next month. No commission on this one.'
+        : `PL4Y pays the month’s payments to your bank account early next month, less PL4Y’s commission${f.commissionPaise !== undefined ? ` (${rupees(f.commissionPaise)} on this payment)` : ''}.`,
+    );
 
   const text = plain([
     `${f.playerName} paid ${rupees(f.amountPaise)} at ${f.venueName}.`,

@@ -11,10 +11,12 @@
 import type { Db } from '../../../platform/db.js';
 import { SystemError, UserError } from '../../../platform/errors/index.js';
 import { parseScoringRule, type ScoringRule } from './scoringRule.js';
+import { isOfferedSlug } from './offered.js';
 
 export { parseScoringRule, RuleTweakError, scoringRuleSchema, TWEAK_LIMITS, tweakRule } from './scoringRule.js';
 export type { RuleTweaks, ScoringRule } from './scoringRule.js';
 export { FALLBACK_MATCH_MINUTES, typicalMatchMinutes } from './matchLength.js';
+export { isOfferedSlug, OFFERED_SPORT_SLUGS, setSportFocusForTests, sportFocusOn } from './offered.js';
 
 export const SportCode = {
   SPORT_NOT_FOUND: 'SPORT_NOT_FOUND',
@@ -141,10 +143,36 @@ export function createSportService(deps: SportDeps) {
     loading = null;
   }
 
-  /** sport R3 — soft-disabled sports are hidden here, not deleted. */
+  /**
+   * sport R3 — soft-disabled sports are hidden here, not deleted. So are the
+   * sports paused for the cue-sports launch (offered.ts): every picker, filter
+   * and discovery surface reads this list.
+   */
   async function list(): Promise<Sport[]> {
     const reg = await registry();
-    return reg.sports.filter((s) => s.active);
+    return reg.sports.filter((s) => s.active && isOfferedSlug(s.slug));
+  }
+
+  /** True when PL4Y offers this sport now: active, and not paused for the launch. */
+  function isOffered(s: Pick<Sport, 'slug' | 'active'>): boolean {
+    return s.active && isOfferedSlug(s.slug);
+  }
+
+  /** The ids of the sports on offer, or null when every active sport is (no focus): a filter to apply or skip. */
+  async function offeredIdsOrNull(): Promise<string[] | null> {
+    const reg = await registry();
+    const active = reg.sports.filter((s) => s.active);
+    const offered = active.filter((s) => isOfferedSlug(s.slug));
+    return offered.length === active.length ? null : offered.map((s) => s.id);
+  }
+
+  /** Creating something new for a sport: it must be on offer. Reading old things never checks this. */
+  async function requireOffered(sportId: string): Promise<Sport> {
+    const found = await byId(sportId);
+    if (!isOffered(found)) {
+      throw new UserError(SportCode.SPORT_NOT_FOUND, 'That sport is not available on PL4Y right now.');
+    }
+    return found;
   }
 
   /** Null rather than a throw: `Query.sport(slug:)` is a nullable field. */
@@ -221,6 +249,9 @@ export function createSportService(deps: SportDeps) {
 
   return {
     list,
+    isOffered,
+    offeredIdsOrNull,
+    requireOffered,
     bySlug,
     findBySlug,
     byId,

@@ -37,6 +37,9 @@ export interface Slot {
   available: boolean;
 }
 
+export type PaymentOptions = 'online' | 'at_venue' | 'both';
+export type PaymentChoice = 'online' | 'at_venue';
+
 export interface Policy {
   bookable: boolean;
   advanceDays: number;
@@ -46,6 +49,12 @@ export interface Policy {
   partialRefundBps: number;
   platformFeePaise: bigint;
   taxBps: number;
+  /** 058 — start times every this many minutes after local midnight. */
+  slotStepMinutes: number;
+  /** 058 — the durations offered, e.g. [30, 40, 60, 90]. Empty: any multiple of the step from the minimum. */
+  durationOptions: number[];
+  /** 058 — how a player may pay: online now, at the venue, or either. */
+  paymentOptions: PaymentOptions;
 }
 
 export const DEFAULT_POLICY: Policy = {
@@ -57,7 +66,29 @@ export const DEFAULT_POLICY: Policy = {
   partialRefundBps: 5000,
   platformFeePaise: 0n,
   taxBps: 0,
+  slotStepMinutes: 60,
+  durationOptions: [60, 90, 120],
+  paymentOptions: 'online',
 };
+
+export const SLOT_STEPS = [5, 10, 15, 20, 30, 60] as const;
+export const MAX_DURATION_MINUTES = 360;
+
+/** The durations a player can pick here, shortest first. */
+export function allowedDurations(policy: Pick<Policy, 'minSlotMinutes' | 'slotStepMinutes' | 'durationOptions'>): number[] {
+  if (policy.durationOptions.length > 0) {
+    return [...new Set(policy.durationOptions)].filter((d) => d >= policy.minSlotMinutes && d <= MAX_DURATION_MINUTES).sort((a, b) => a - b);
+  }
+  const out: number[] = [];
+  const step = Math.max(policy.slotStepMinutes, 5);
+  for (let d = policy.minSlotMinutes; d <= 240; d += step) out.push(d);
+  return out;
+}
+
+/** Which ways of paying the player may choose. */
+export function paymentChoices(options: PaymentOptions): PaymentChoice[] {
+  return options === 'both' ? ['online', 'at_venue'] : [options];
+}
 
 /** "2026-10-12" → the UTC instant of local midnight that day. Null for a malformed date. */
 export function localMidnight(date: string): Date | null {
@@ -105,6 +136,41 @@ export function courtPrice(rule: Rule, minutes: number): bigint {
 }
 
 /**
+ * 058 — the price of a span that may run across price bands (off-peak into
+ * peak): each minute at the rate of the rule it falls in. Null when any part
+ * of the span is outside the opening hours, or it crosses midnight. The
+ * paise are summed before dividing, so splitting a span never loses a paisa.
+ */
+export function priceAcross(rules: Rule[], courtId: string, startsAt: Date, endsAt: Date): bigint | null {
+  if (endsAt <= startsAt || localDate(startsAt) !== localDate(new Date(endsAt.getTime() - 1))) return null;
+  const weekday = localWeekday(startsAt);
+  const day = rules.filter((r) => r.courtId === courtId && r.weekday === weekday).sort((a, b) => a.opensMin - b.opensMin);
+  let at = localMinutes(startsAt);
+  const to = at + Math.round((endsAt.getTime() - startsAt.getTime()) / MIN);
+  let numerator = 0n;
+  while (at < to) {
+    const rule = day.find((r) => r.opensMin <= at && at < r.closesMin);
+    if (!rule) return null;
+    const until = Math.min(rule.closesMin, to);
+    numerator += rule.pricePerHourPaise * BigInt(until - at);
+    at = until;
+  }
+  return numerator / 60n;
+}
+
+/** A court's opening on one weekday as continuous spans: back-to-back price bands join up. */
+function openSpans(rules: Rule[]): { opensMin: number; closesMin: number }[] {
+  const sorted = [...rules].sort((a, b) => a.opensMin - b.opensMin);
+  const spans: { opensMin: number; closesMin: number }[] = [];
+  for (const r of sorted) {
+    const last = spans.at(-1);
+    if (last && r.opensMin <= last.closesMin) last.closesMin = Math.max(last.closesMin, r.closesMin);
+    else spans.push({ opensMin: r.opensMin, closesMin: r.closesMin });
+  }
+  return spans;
+}
+
+/**
  * R5 — the only place booking money is computed. Tax is on the court and
  * the platform fee together, like events R3.
  */
@@ -130,16 +196,20 @@ export function slotsFor(input: {
 }): Slot[] {
   const midnight = localMidnight(input.date);
   if (!midnight) return [];
-  const step = input.policy.minSlotMinutes;
+  const step = Math.max(input.policy.slotStepMinutes, 5);
   const duration = input.durationMinutes;
   const horizon = new Date(input.now.getTime() + input.policy.advanceDays * DAY);
   const weekday = localWeekday(new Date(midnight.getTime() + 12 * 60 * MIN));
   const out: Slot[] = [];
   for (const courtId of input.courtIds) {
-    for (const rule of input.rules.filter((r) => r.courtId === courtId && r.weekday === weekday)) {
-      for (let m = rule.opensMin; m + duration <= rule.closesMin; m += step) {
+    const own = input.rules.filter((r) => r.courtId === courtId && r.weekday === weekday);
+    for (const span of openSpans(own)) {
+      // Start times line up on the step from midnight, so a booking's start is always on the grid.
+      for (let m = Math.ceil(span.opensMin / step) * step; m + duration <= span.closesMin; m += step) {
         const startsAt = new Date(midnight.getTime() + m * MIN);
         const endsAt = new Date(startsAt.getTime() + duration * MIN);
+        const price = priceAcross(own, courtId, startsAt, endsAt);
+        if (price === null) continue;
         const blocked = input.busy.some(
           (b) => (b.courtId === null || b.courtId === courtId) && overlaps(startsAt, endsAt, b.startsAt, b.endsAt),
         );
@@ -147,7 +217,7 @@ export function slotsFor(input: {
           courtId,
           startsAt,
           endsAt,
-          pricePaise: courtPrice(rule, duration),
+          pricePaise: price,
           available: input.policy.bookable && !blocked && startsAt > input.now && startsAt <= horizon,
         });
       }

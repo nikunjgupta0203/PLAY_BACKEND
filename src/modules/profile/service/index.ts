@@ -181,6 +181,8 @@ export interface MatchHistoryRow {
 
 export interface SportPort {
   byId(sportId: string): Promise<{ id: string }>;
+  /** Cue-sports launch — throws for a sport PL4Y does not offer now. Absent: byId. */
+  requireOffered?(sportId: string): Promise<{ id: string }>;
   hasSkillBand(sportId: string, key: string): Promise<boolean>;
   /** The sport's levels, lowest first. Optional: without it a played sport is not added to a profile. */
   skillBandsFor?(sportId: string): Promise<{ key: string; sortOrder: number }[]>;
@@ -619,7 +621,7 @@ export function createProfileService(deps: ProfileDeps) {
       throw new UserError(ProfileCode.NO_SPORT_SELECTED, 'Choose at least one sport.');
     }
     for (const id of unique) {
-      await sport.byId(id); // throws SPORT_NOT_FOUND for an unknown sport
+      await (sport.requireOffered ?? sport.byId)(id); // throws SPORT_NOT_FOUND for an unknown or paused sport
     }
     await db.playerProfile.update({
       where: { id: me.id },

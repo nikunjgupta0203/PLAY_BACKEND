@@ -41,6 +41,8 @@ export interface CommunityRow {
 
 export interface SearchFilter {
   sportId: string | null;
+  /** Cue-sports launch — any of these sports (the ones on offer); null: no limit. */
+  anyOfSportIds?: string[] | null;
   /** Every stored spelling of the city (platform/city.ts). */
   cityKeys: string[] | null;
   access: Access | null;
@@ -72,6 +74,8 @@ export function createCommunitiesRepo(db: Db) {
         Prisma.sql`(c.visibility = 'public' OR c.discoverable)`,
       ];
       if (f.sportId) where.push(Prisma.sql`c.sport_id = ${f.sportId}::uuid`);
+      // Cue-sports launch — only the sports PL4Y offers now (sport/offered.ts).
+      if (f.anyOfSportIds) where.push(Prisma.sql`c.sport_id = ANY(${f.anyOfSportIds}::uuid[])`);
       if (f.cityKeys && f.cityKeys.length > 0) {
         where.push(Prisma.sql`lower(regexp_replace(trim(c.city), '\\s+', ' ', 'g')) IN (${Prisma.join(f.cityKeys)})`);
       }

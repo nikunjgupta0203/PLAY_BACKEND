@@ -38,6 +38,8 @@ export const DEEP_LINK_ROUTES = [
   'venue_payment',
   /** pay at venue — `id` is the venue; its desk, where payments are listed. */
   'venue_desk',
+  /** cue launch — the player's bookings list (upcoming, past, cancelled). */
+  'my_bookings',
 ] as const;
 export type DeepLinkRoute = (typeof DEEP_LINK_ROUTES)[number];
 
@@ -135,7 +137,29 @@ export interface TemplatePayloads {
   /** admin R7 — PL4Y support answered a ticket. */
   'support.reply': { subject: string };
   /** bookings R2 — a court is booked and paid. */
-  'booking.confirmed': { venueName: string; courtName: string; startsAt: string };
+  /** 058 — `bookingCode` and `dueAtVenuePaise` (pay at venue) are absent on older rows. */
+  'booking.confirmed': { venueName: string; courtName: string; startsAt: string; bookingCode?: string; dueAtVenuePaise?: string | null };
+  /** 058 — the player's receipt: the booking is paid (online, in the app later, or at the desk). */
+  'booking.paid': { venueName: string; bookingCode: string; amountPaise: string; collectedBy: 'pl4y' | 'venue' };
+  /** 058 — a payment attempt failed; the table stays held until the hold runs out. */
+  'booking.payment_failed': { venueName: string; courtName: string; startsAt: string };
+  /** 058 — two hours before the start. */
+  'booking.reminder': { venueName: string; courtName: string; startsAt: string; bookingCode: string; dueAtVenuePaise?: string | null };
+  /** 058 — to the venue's owner and managers: a player booked a table. */
+  'venue.booking_received': {
+    venueName: string;
+    playerName: string;
+    courtName: string;
+    startsAt: string;
+    amountPaise: string;
+    payment: 'online' | 'at_venue';
+  };
+  /** 058 — to the venue's owner and managers: a player cancelled. */
+  'venue.booking_cancelled': { venueName: string; playerName: string; courtName: string; startsAt: string };
+  /** 058 — a new offer at a venue the player has been to (venueName null: a PL4Y offer anywhere). */
+  'offer.new': { venueName: string | null; title: string; summary: string };
+  /** 058 — an offer the player has not used ends within a day. */
+  'offer.expiring': { venueName: string | null; title: string; endsAt: string };
   /** bookings R6 — a booking was cancelled; `by: 'venue'` refunds everything. */
   'booking.cancelled': { venueName: string; courtName: string; startsAt: string; by: 'player' | 'venue'; refundPaise: string | null };
   /** org — someone was added to an organisation, made its owner, or removed from it. */
@@ -213,6 +237,7 @@ const ESSENTIAL = new Set<TemplateKey>([
   'waitlist.offer',
   'booking.confirmed',
   'booking.cancelled',
+  'booking.paid',
   'payout.status',
   'payout_account.status',
   'community.payout_paid',
@@ -490,8 +515,54 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
   },
   'booking.confirmed': {
     render: (p) => ({
-      title: `Court booked at ${p.venueName}`,
-      body: `${p.courtName} · ${istWhen(p.startsAt)}. Show your booking QR at the desk.`,
+      title: `Booked at ${p.venueName}`,
+      body:
+        `${p.courtName} · ${istWhen(p.startsAt)}${p.bookingCode ? ` · ${p.bookingCode}` : ''}.` +
+        (p.dueAtVenuePaise ? ` Pay${rupees(p.dueAtVenuePaise)} at the venue, or in the app.` : ' Show your booking QR at the desk.'),
+    }),
+  },
+  'booking.paid': {
+    render: (p) => ({
+      title: 'Payment received',
+      body: `${rupees(p.amountPaise).trim()} for booking ${p.bookingCode} at ${p.venueName}${p.collectedBy === 'venue' ? ', paid at the venue' : ''}. Your receipt is in My bookings.`,
+    }),
+  },
+  'booking.payment_failed': {
+    render: (p) => ({
+      title: 'Payment didn’t go through',
+      body: `Your table at ${p.venueName} (${p.courtName}, ${istWhen(p.startsAt)}) is still held for a few minutes. Try again to keep it.`,
+    }),
+  },
+  'booking.reminder': {
+    render: (p) => ({
+      title: `Coming up at ${p.venueName}`,
+      body:
+        `${p.courtName} · ${istWhen(p.startsAt)} · ${p.bookingCode}.` +
+        (p.dueAtVenuePaise ? ` Pay${rupees(p.dueAtVenuePaise)} at the desk or in the app.` : ' Show your booking QR at the desk.'),
+    }),
+  },
+  'venue.booking_received': {
+    render: (p) => ({
+      title: `New booking at ${p.venueName}`,
+      body: `${p.playerName} · ${p.courtName} · ${istWhen(p.startsAt)} ·${rupees(p.amountPaise)} ${p.payment === 'online' ? 'paid online' : 'to pay at the venue'}.`,
+    }),
+  },
+  'venue.booking_cancelled': {
+    render: (p) => ({
+      title: `Booking cancelled at ${p.venueName}`,
+      body: `${p.playerName} cancelled ${p.courtName} · ${istWhen(p.startsAt)}. The slot is free again.`,
+    }),
+  },
+  'offer.new': {
+    render: (p) => ({
+      title: p.venueName ? `New offer at ${p.venueName}` : 'New PL4Y offer',
+      body: `${p.title} — ${p.summary}`,
+    }),
+  },
+  'offer.expiring': {
+    render: (p) => ({
+      title: 'Offer ending soon',
+      body: `${p.title}${p.venueName ? ` at ${p.venueName}` : ''} ends ${istWhen(p.endsAt)}. Book before it goes.`,
     }),
   },
   'booking.cancelled': {

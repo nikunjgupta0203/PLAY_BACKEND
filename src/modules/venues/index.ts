@@ -68,6 +68,10 @@ export const venues = createVenueService({
   repo,
   schedule,
   visits,
+  async offeredSportIds() {
+    const { sport } = await import('../sport/index.js');
+    return sport.offeredIdsOrNull();
+  },
   async announce(venueId) {
     const [{ db }, { write }] = await Promise.all([import('../../platform/db.js'), import('../../platform/outbox.js')]);
     await db.$transaction((tx) => write(tx, { topic: 'venue.listed', payload: { venueId } }));
@@ -106,7 +110,8 @@ export const venueHosts = createHostApplicationService({
   },
   async sportExists(sportId) {
     const { sport } = await import('../sport/index.js');
-    return sport.byId(sportId).then(
+    // A new application names sports PL4Y offers now (cue-sports launch).
+    return sport.requireOffered(sportId).then(
       () => true,
       () => false,
     );

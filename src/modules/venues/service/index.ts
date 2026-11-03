@@ -167,6 +167,11 @@ export interface VenueDeps {
   visits?: VisitsPort;
   /** Feature brief §3 — a venue PL4Y staff listed is announced to the players near it. */
   announce?(venueId: string): Promise<void>;
+  /**
+   * Cue-sports launch — the sports PL4Y offers now, or null for all of them.
+   * Discovery then lists only venues with a court or table for one of them.
+   */
+  offeredSportIds?(): Promise<string[] | null>;
   now?: () => Date;
 }
 
@@ -339,6 +344,7 @@ export function createVenueService(deps: VenueDeps) {
       radiusKm,
       city: filter.city ?? null,
       sportId: filter.sportId ?? null,
+      anyOfSportIds: filter.sportId ? null : ((await deps.offeredSportIds?.()) ?? null),
       textPattern: containsPattern(filter.query),
       after: page.after ? decodeCursor(page.after) : null,
       // One extra row answers hasNextPage without a second count query.

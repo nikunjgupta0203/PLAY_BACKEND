@@ -683,6 +683,34 @@ type BlockPayload {
   userError: UserError
 }
 
+enum BookingListFilter {
+  CANCELLED
+  PAST
+  UPCOMING
+}
+
+"""
+058 — how the player pays for a booking: ONLINE now, or AT_VENUE (at the desk, or in the app later).
+"""
+enum BookingPaymentChoice {
+  AT_VENUE
+  ONLINE
+}
+
+"""
+058 — PENDING: online, not paid yet (held). PAID. DUE: pay at the venue. FAILED: the last attempt failed. VOID: nothing owed (lapsed or cancelled unpaid). WAIVED: free. REFUNDED / PARTIALLY_REFUNDED.
+"""
+enum BookingPaymentStatus {
+  DUE
+  FAILED
+  PAID
+  PARTIALLY_REFUNDED
+  PENDING
+  REFUNDED
+  VOID
+  WAIVED
+}
+
 """BOUTS only."""
 type Bout {
   """Judged bouts: every round’s cards."""
@@ -1379,26 +1407,74 @@ type CourtBooking {
   """R5 — the frozen total."""
   amountPaise: Int!
 
+  """058 — the price before any discount."""
+  basePaise: Int!
+
   """Desk only: who the court is booked under."""
   bookedBy: String
+
+  """058 — "BK-7K3Q9XA2": what the player quotes at the desk."""
+  bookingCode: String!
+
+  """
+  058 — a pay-at-venue booking that is still due: the player may pay it in the app.
+  """
+  canPayInApp: Boolean!
   cancelledAt: DateTime
   checkedInAt: DateTime
+
+  """pl4y | venue"""
+  collectedBy: String
+
+  """
+  Desk only: PL4Y’s commission on this booking (0 in the venue’s first 30 days).
+  """
+  commissionPaise: Int
   court: Court!
   courtPaise: Int!
+  durationMinutes: Int!
   endsAt: DateTime!
   holdExpiresAt: DateTime
   id: ID!
+  paidAt: DateTime
+
+  """
+  058 — what the player pays or paid: the total less any reward taken at checkout.
+  """
+  payablePaise: Int!
+  paymentMethod: String
 
   """online | offline | comp"""
   paymentMode: String!
+
+  """The gateway’s reference, for support."""
+  paymentReference: String
+  paymentStatus: BookingPaymentStatus!
+
+  """058 — PL4Y’s offer (PL4Y pays for it)."""
+  platformDiscountPaise: Int!
   platformFeePaise: Int!
+  platformOfferTitle: String
 
   """app R11 — what the desk scans: the booking id, prefixed."""
   qrPayload: String!
+  refundedPaise: Int!
+
+  """
+  058 — PL4Y’s welcome or referral reward taken at checkout (PL4Y pays for it).
+  """
+  rewardDiscountPaise: Int!
   startsAt: DateTime!
   status: CourtBookingStatus!
   taxPaise: Int!
   venue: Venue!
+
+  """058 — the venue’s own offer (the venue pays for it)."""
+  venueDiscountPaise: Int!
+
+  """Desk only: what the venue keeps from this booking after commission."""
+  venueEarningsPaise: Int
+  venueOfferTitle: String
   walkIn: Boolean!
   walkInPhone: String
 }
@@ -1414,6 +1490,26 @@ type CourtBookingCancelPreview {
 type CourtBookingPayload {
   booking: CourtBooking
   userError: UserError
+}
+
+"""
+058 — the price before booking, from the server: the original price, the venue’s discount, PL4Y’s discount, the fee, tax and total. Signed in, the player’s own eligibility applies (first-time offers, limits). A reward at checkout may take more off.
+"""
+type CourtBookingQuote {
+  basePaise: Int!
+  courtId: ID!
+  courtPaise: Int!
+  endsAt: DateTime!
+  minutes: Int!
+  paymentChoices: [BookingPaymentChoice!]!
+  platformDiscountPaise: Int!
+  platformFeePaise: Int!
+  platformOfferTitle: String
+  startsAt: DateTime!
+  taxPaise: Int!
+  totalPaise: Int!
+  venueDiscountPaise: Int!
+  venueOfferTitle: String
 }
 
 enum CourtBookingStatus {
@@ -1605,6 +1701,13 @@ enum DeepLinkRoute {
   VENUE_DESK
   VENUE_HOST
   VENUE_PAYMENT
+}
+
+enum DeskPaymentMethod {
+  CARD
+  CASH
+  OTHER
+  UPI
 }
 
 enum DevicePlatform {
@@ -2435,6 +2538,9 @@ type HeatsPayload {
 input HoldCourtBookingInput {
   courtId: ID!
   endsAt: DateTime!
+
+  """058 — absent: the venue’s first option (online when it takes both)."""
+  payment: BookingPaymentChoice
   startsAt: DateTime!
 }
 
@@ -3490,6 +3596,19 @@ type Mutation {
     reason: String
   ): CourtBookingPayload!
 
+  """
+  058 — the desk took the money for a pay-at-venue booking. The player gets a receipt.
+  """
+  markCourtBookingPaid(
+    bookingId: ID!
+    method: DeskPaymentMethod!
+
+    """
+    PL4Y staff in the portal must give one (5 characters or more); it goes in the audit log. Ignored for anyone else.
+    """
+    reason: String
+  ): CourtBookingPayload!
+
   """At most 100 ids. Ids that are not the viewer’s are ignored (R8)."""
   markNotificationsRead(ids: [ID!]!): MarkReadPayload!
 
@@ -3741,9 +3860,24 @@ type Mutation {
   ): PayoutAccountPayload!
 
   """
+  Portal — create (no id) or change a PL4Y-funded offer; venueId null applies at every venue. Admin and finance.
+  """
+  savePlatformOffer(id: ID, input: OfferInput!, reason: String!, venueId: ID): OfferPayload!
+
+  """
+  The venue dashboard: create (no id) or change an offer the venue pays for. Managers and owners.
+  """
+  saveVenueOffer(id: ID, input: OfferInput!, venueId: ID!): OfferPayload!
+
+  """
   Owners and managers add or change an hourly rate. Switch a rate off with active: false.
   """
   saveVenuePayRate(input: VenuePayRateInput!, venueId: ID!): SaveVenuePayRatePayload!
+
+  """
+  058 — add a table, rename it, set its sport, or take it out of service. Managers and owners.
+  """
+  saveVenueTable(input: VenueTableInput!, venueId: ID!): VenueBookingSetupPayload!
 
   """
   Runs the greedy scheduler over everything that is ready and unplaced (R11, R12). Also runs from a job whenever a match becomes ready.
@@ -3799,6 +3933,14 @@ type Mutation {
   """
   setVendorStatus(id: ID!, status: VendorStatus!): VendorApplicationPayload!
   setVenueBookingPolicy(input: VenueBookingPolicyInput!, venueId: ID!): VenueBookingSetupPayload!
+
+  """
+  Portal — move a venue’s introductory period or give it its own commission. Admin and finance.
+  """
+  setVenueCommercialTerms(input: VenueCommercialTermsInput!, reason: String!, venueId: ID!): VenueCommercialTermsPayload!
+
+  """The venue dashboard: switch an offer on or off."""
+  setVenueOfferActive(active: Boolean!, offerId: ID!): OfferPayload!
 
   """
   bookings R7 — owners add desk or manager staff by email, or (role null) remove them.
@@ -3914,6 +4056,11 @@ type Mutation {
   """
   updateOrganisation(input: OrganisationDetailsInput!, organisationId: ID!): OrganisationPayload!
   updatePartnershipApplication(id: ID!, input: UpdatePartnershipApplicationInput!): PartnershipApplicationPayload!
+
+  """
+  Portal — change commission, the introductory period or stacking. Admin and finance. Applies to bookings made from now on.
+  """
+  updatePricingSettings(input: PricingSettingsInput!, reason: String!): PricingSettingsPayload!
   updateProfileDetails(input: UpdateProfileDetailsInput!): ProfilePayload!
   updateProfileLocation(input: UpdateProfileLocationInput!): ProfilePayload!
   updateProfileSports(input: UpdateProfileSportsInput!): ProfilePayload!
@@ -4023,6 +4170,9 @@ enum NotificationKind {
   ACHIEVEMENT_EARNED
   BOOKING_CANCELLED
   BOOKING_CONFIRMED
+  BOOKING_PAID
+  BOOKING_PAYMENT_FAILED
+  BOOKING_REMINDER
   CATEGORY_CANCELLED
   CHAT_MESSAGE
   CHAT_REQUEST
@@ -4061,6 +4211,8 @@ enum NotificationKind {
   MATCH_RESULT_PENDING
   MATCH_RESULT_REMINDER
   MATCH_STARTING_SOON
+  OFFER_EXPIRING
+  OFFER_NEW
   ORGANISATION_MEMBERSHIP
   ORGANIZER_MESSAGE
   PARTNER_ACCEPTED
@@ -4080,6 +4232,8 @@ enum NotificationKind {
   REGISTRATION_EXPIRED
   REWARD_AVAILABLE
   SUPPORT_REPLY
+  VENUE_BOOKING_CANCELLED
+  VENUE_BOOKING_RECEIVED
   VENUE_HOST_STATUS
   VENUE_NEW_NEARBY
   VENUE_PAYMENT_RECEIVED
@@ -4123,6 +4277,117 @@ enum NotificationTargetKind {
   PLAYER
   ROUTE
   VENUE
+}
+
+type Offer {
+  active: Boolean!
+  description: String
+  endsAt: DateTime
+  firstBookingOnly: Boolean!
+  flatPaise: Int!
+  fundedBy: OfferFundedBy!
+  id: ID!
+  kind: OfferKind!
+  maxDiscountPaise: Int
+  minAmountPaise: Int!
+  minMinutes: Int!
+  perUserLimit: Int
+  percentBps: Int!
+  startsAt: DateTime!
+
+  """The venue’s people and PL4Y staff only."""
+  stats: OfferStats
+
+  """
+  "20% off up to ₹100 for 60 minutes or longer"
+  """
+  summary: String!
+  timeFromMinute: Int
+  timeToMinute: Int
+  title: String!
+  usageLimit: Int
+  venue: Venue
+
+  """0 = Monday … 6 = Sunday. Empty: every day."""
+  weekdays: [Int!]!
+}
+
+"""
+VENUE — the venue gives it and it comes out of the venue’s share. PLATFORM — PL4Y gives it; the venue is paid in full.
+"""
+enum OfferFundedBy {
+  PLATFORM
+  VENUE
+}
+
+input OfferInput {
+  active: Boolean
+  description: String
+
+  """Limited-period offers end here. Absent: until switched off."""
+  endsAt: DateTime
+
+  """First-time customers only."""
+  firstBookingOnly: Boolean
+
+  """FLAT only."""
+  flatPaise: Int
+  kind: OfferKind!
+
+  """PERCENT only: the most one booking gets off."""
+  maxDiscountPaise: Int
+
+  """Minimum booking value (the original price)."""
+  minAmountPaise: Int
+
+  """Minimum booking duration."""
+  minMinutes: Int
+
+  """Uses per player. Absent: unlimited."""
+  perUserLimit: Int
+
+  """100 = 1%. PERCENT only."""
+  percentBps: Int
+  startsAt: DateTime
+
+  """
+  Time-slot offers: the booking must start at or after this (minutes after midnight)…
+  """
+  timeFromMinute: Int
+
+  """…and end by this."""
+  timeToMinute: Int
+  title: String!
+
+  """Uses in all. Absent: unlimited."""
+  usageLimit: Int
+
+  """0 = Monday … 6 = Sunday. Empty: every day (weekends: [5, 6])."""
+  weekdays: [Int!]
+}
+
+enum OfferKind {
+  FLAT
+  PERCENT
+}
+
+type OfferPayload {
+  offer: Offer
+  userError: UserError
+}
+
+type OfferStats {
+  """What it has taken off paid bookings."""
+  discountPaise: Int!
+
+  """Different players who redeemed it."""
+  players: Int!
+
+  """Paid bookings that used it."""
+  redeemed: Int!
+
+  """Bookings holding it now: held, or to pay at the venue."""
+  reserved: Int!
 }
 
 type OkPayload {
@@ -4746,6 +5011,14 @@ enum PayoutStatus {
   SENDING
 }
 
+"""
+What PL4Y’s percentage is taken of: the price AFTER_VENUE discount, or the ORIGINAL price.
+"""
+enum PlatformDiscountBase {
+  AFTER_VENUE
+  ORIGINAL
+}
+
 type PlatformStaffMember {
   createdAt: DateTime!
   grantedByName: String
@@ -4965,6 +5238,37 @@ type PriceQuote {
   totalPaise: Int!
 }
 
+type PricingSettings {
+  allowStacking: Boolean!
+  bookingCommissionBps: Int!
+  introCommissionBps: Int!
+  introDays: Int!
+  introEnabled: Boolean!
+  launchedAt: DateTime!
+  maxDiscountBps: Int!
+  platformDiscountBase: PlatformDiscountBase!
+  rewardsWithPromos: Boolean!
+  updatedAt: DateTime!
+  venuePayCommissionBps: Int!
+}
+
+input PricingSettingsInput {
+  allowStacking: Boolean
+  bookingCommissionBps: Int
+  introCommissionBps: Int
+  introDays: Int
+  introEnabled: Boolean
+  maxDiscountBps: Int
+  platformDiscountBase: PlatformDiscountBase
+  rewardsWithPromos: Boolean
+  venuePayCommissionBps: Int
+}
+
+type PricingSettingsPayload {
+  settings: PricingSettings
+  userError: UserError
+}
+
 type ProfilePayload {
   profile: PlayerProfile
   userError: UserError
@@ -5103,6 +5407,11 @@ type Query {
   courtBookingCancelPreview(bookingId: ID!): CourtBookingCancelPreview!
 
   """
+  058 — the price breakdown for a slot before booking it, with the venue’s and PL4Y’s offers.
+  """
+  courtBookingQuote(courtId: ID!, endsAt: DateTime!, startsAt: DateTime!): CourtBookingQuote!
+
+  """
   F1 — event staff: the draw as it would be made now, with an optional seeding. Nothing is written.
   """
   drawPreview(input: GenerateDrawInput!): DrawPreview!
@@ -5176,7 +5485,12 @@ type Query {
   The viewer’s open requests: waiting for an admin, or approved and waiting for payment.
   """
   myCommunityRequests: [CommunityJoinRequest!]!
-  myCourtBookings(first: Int, offset: Int): [CourtBooking!]!
+  myCourtBookings(
+    """058 — UPCOMING, PAST or CANCELLED. Absent: all."""
+    filter: BookingListFilter
+    first: Int
+    offset: Int
+  ): [CourtBooking!]!
   myEventGrants: [EventGrant!]!
 
   """
@@ -5229,6 +5543,9 @@ type Query {
   nodes(ids: [ID!]!): [Node]!
   notificationPreferences: NotificationPreferences!
   notifications(after: String, before: String, first: Int, last: Int): NotificationConnection!
+
+  """Offers a player can get at this venue now: the venue’s own and PL4Y’s."""
+  offersAtVenue(venueId: ID!): [Offer!]!
   openReceivables: [OpenReceivable!]!
 
   """org R8 — an organisation’s page, by slug."""
@@ -5265,6 +5582,9 @@ type Query {
   """
   payoutsToPay: [Payout!]!
 
+  """Portal — PL4Y’s own offers, with how often each was used."""
+  platformOffers: [Offer!]!
+
   """
   The invite screen’s "is this number on PL4Y?". Matches the contact number a player gave. Rate limited (LOOKUP_LIMIT).
   """
@@ -5278,6 +5598,9 @@ type Query {
   Player search by display name. Every active player is listed, A–Z; a blank query lists them all. Visibility only withholds details.
   """
   players(after: String, before: String, first: Int, last: Int, query: String!, sportId: ID): PlayerConnection!
+
+  """Portal — commission, the introductory period and discount stacking."""
+  pricingSettings: PricingSettings!
 
   """
   A leaderboard. Only settled ratings with five or more matches appear (rating R9), and the first page of every board is served from cache.
@@ -5337,15 +5660,40 @@ type Query {
   venue(id: ID!): Venue
 
   """
+  058 — durations, start interval and payment choices for a venue’s booking screen.
+  """
+  venueBookingOptions(venueId: ID!): VenueBookingOptions!
+
+  """
   bookings R7 — the policy, opening rules and blackouts. Managers and owners.
   """
   venueBookingSetup(venueId: ID!): VenueBookingSetup!
+
+  """
+  058 — the venue’s bookings over a date range, for booking management. Desk and up.
+  """
+  venueBookings(filter: VenueBookingFilter, first: Int, from: String!, to: String!, venueId: ID!): [CourtBooking!]!
+
+  """
+  Portal — a venue’s introductory period and rate. Null until the venue first takes money through PL4Y.
+  """
+  venueCommercialTerms(venueId: ID!): VenueCommercialTerms
+
+  """
+  The venue dashboard’s commission line and introductory banner. Managers and owners.
+  """
+  venueCommission(venueId: ID!): VenueCommission!
   venueDashboard(from: String!, to: String!, venueId: ID!): VenueDashboard!
 
   """
   portal — applications to list a venue. PENDING is oldest first (first come, first reviewed); the others, and no status, newest first. At most 200.
   """
   venueHostApplications(status: VenueHostApplicationStatus): [VenueHostApplication!]!
+
+  """
+  The venue dashboard: every offer the venue has made, with how often each was used. Managers and owners.
+  """
+  venueOffers(venueId: ID!): [Offer!]!
   venuePayQuote(minutes: Int!, rateId: ID!, venueId: ID!): VenuePayQuote!
 
   """
@@ -5365,6 +5713,9 @@ type Query {
   venuePayoutsOpen: [VenuePayout!]!
   venueSchedule(date: String!, venueId: ID!): VenueSchedule!
   venueStaff(venueId: ID!): [VenueStaffMember!]!
+
+  """058 — payment and transaction history at a venue. Managers and owners."""
+  venueTransactions(first: Int, from: String!, to: String!, venueId: ID!): [VenueTransaction!]!
 
   """
   Venues near a point, in a city, or hosting a sport. Radius is capped at 50 km (venues R1).
@@ -6866,6 +7217,12 @@ type Venue {
   viewerReview: VenueReview
 }
 
+enum VenueBookingFilter {
+  CANCELLED
+  UNPAID
+  UPCOMING
+}
+
 """venue hosts R7 — how the venue takes bookings today."""
 enum VenueBookingMethod {
   """Another booking app."""
@@ -6878,25 +7235,50 @@ enum VenueBookingMethod {
   WHATSAPP
 }
 
+"""058 — what the booking screen needs before the grid."""
+type VenueBookingOptions {
+  advanceDays: Int!
+  bookable: Boolean!
+  durations: [Int!]!
+  fullRefundHours: Int!
+  partialRefundBps: Int!
+  partialRefundHours: Int!
+  paymentChoices: [BookingPaymentChoice!]!
+  slotStepMinutes: Int!
+}
+
 type VenueBookingPolicy {
   advanceDays: Int!
   bookable: Boolean!
+
+  """058 — the durations the owner offers. Empty: any multiple of the step."""
+  durationOptions: [Int!]!
+
+  """058 — what players can actually pick."""
+  durations: [Int!]!
   fullRefundHours: Int!
   minSlotMinutes: Int!
   partialRefundBps: Int!
   partialRefundHours: Int!
+  paymentOptions: VenuePaymentOptions!
   platformFeePaise: Int!
+
+  """058 — start times every this many minutes."""
+  slotStepMinutes: Int!
   taxBps: Int!
 }
 
 input VenueBookingPolicyInput {
   advanceDays: Int
   bookable: Boolean
+  durationOptions: [Int!]
   fullRefundHours: Int
   minSlotMinutes: Int
   partialRefundBps: Int
   partialRefundHours: Int
+  paymentOptions: VenuePaymentOptions
   platformFeePaise: Int
+  slotStepMinutes: Int
   taxBps: Int
 }
 
@@ -6904,6 +7286,9 @@ type VenueBookingSetup {
   myRole: VenueRole!
   policy: VenueBookingPolicy!
   rules: [CourtAvailabilityRule!]!
+
+  """058 — every table, in service or not."""
+  tables: [Court!]!
   upcomingBlackouts: [CourtBlackout!]!
   venue: Venue!
 }
@@ -6913,27 +7298,97 @@ type VenueBookingSetupPayload {
   userError: UserError
 }
 
+type VenueCommercialTerms {
+  commissionBpsOverride: Int
+  introEndsAt: DateTime!
+  introStartsAt: DateTime!
+  note: String
+  venue: Venue!
+}
+
+input VenueCommercialTermsInput {
+  clearOverride: Boolean
+
+  """This venue’s own rate. Use clearOverride to go back to the default."""
+  commissionBpsOverride: Int
+  introEndsAt: DateTime
+  introStartsAt: DateTime
+  note: String
+}
+
+type VenueCommercialTermsPayload {
+  terms: VenueCommercialTerms
+  userError: UserError
+}
+
+"""
+The venue’s commission and its introductory period (0% for the first 30 days at launch).
+"""
+type VenueCommission {
+  active: Boolean!
+  commissionBpsAfter: Int!
+  currentCommissionBps: Int!
+  daysLeft: Int!
+  endsAt: DateTime
+  introCommissionBps: Int!
+  message: String
+  startsAt: DateTime
+}
+
 type VenueConnection {
   edges: [VenueEdge!]!
   pageInfo: PageInfo!
+}
+
+type VenueDailyRevenue {
+  bookings: Int!
+  date: String!
+  revenuePaise: Int!
 }
 
 """
 bookings R7, R8 — occupancy and money. Offline money never enters the ledger and is shown apart.
 """
 type VenueDashboard {
+  atVenueBookings: Int!
   bookedHours: Float!
   bookings: Int!
+  byHour: [VenueHourStat!]!
+  byTable: [VenueTableStat!]!
   cancelled: Int!
+  commissionPaise: Int!
+  customers: Int!
+  daily: [VenueDailyRevenue!]!
+
+  """058 — pay-at-venue money still to collect."""
+  duePaise: Int!
   from: String!
+
+  """This calendar month to today."""
+  monthPaise: Int!
   noShows: Int!
 
   """0 to 1."""
   occupancy: Float!
   offlinePaise: Int!
+  onlineBookings: Int!
   onlinePaise: Int!
   openHours: Float!
+
+  """PL4Y’s offers — paid for by PL4Y, not taken from the venue."""
+  platformDiscountPaise: Int!
+  refundedPaise: Int!
+  repeatCustomers: Int!
+
+  """058 — what the venue earned in the range, before commission."""
+  revenuePaise: Int!
   to: String!
+  todayPaise: Int!
+  venueDiscountPaise: Int!
+  walkIns: Int!
+
+  """This week, Monday to today."""
+  weekPaise: Int!
 }
 
 type VenueEdge {
@@ -7105,6 +7560,11 @@ input VenueHostPriceInput {
   sportId: ID!
 }
 
+type VenueHourStat {
+  bookings: Int!
+  hour: Int!
+}
+
 """venue hosts R7 — what the venue wants from PL4Y."""
 enum VenuePartnership {
   """Connect the venue’s own booking software."""
@@ -7186,6 +7646,15 @@ type VenuePayment {
   status: VenuePaymentStatus!
   venueId: ID!
   venueName: String!
+}
+
+"""
+058 — the venue owner’s choice: online bookings and payments, pay at venue, or both.
+"""
+enum VenuePaymentOptions {
+  AT_VENUE
+  BOTH
+  ONLINE
 }
 
 type VenuePaymentRefundPayload {
@@ -7311,6 +7780,49 @@ type VenueStaffMember {
 type VenueStaffPayload {
   staff: [VenueStaffMember!]
   userError: UserError
+}
+
+input VenueTableInput {
+  """false: out of service (bookings on it must be moved first)."""
+  active: Boolean
+
+  """Absent: a new table."""
+  id: ID
+  name: String
+  sportIds: [ID!]
+}
+
+type VenueTableStat {
+  bookings: Int!
+  courtId: ID!
+  hours: Float!
+  name: String!
+  revenuePaise: Int!
+}
+
+"""
+058 — one money line at a venue: a booking or a pay-at-venue payment, with each discount and who paid for it.
+"""
+type VenueTransaction {
+  at: DateTime!
+  collectedBy: String
+  commissionPaise: Int!
+  description: String!
+  grossPaise: Int!
+  id: ID!
+
+  """booking | venue_payment"""
+  kind: String!
+  method: String
+  paymentMode: String!
+  paymentStatus: String!
+  platformDiscountPaise: Int!
+  playerName: String!
+  playerPaise: Int!
+  reference: String!
+  refundedPaise: Int!
+  venueDiscountPaise: Int!
+  venueEarningsPaise: Int!
 }
 
 """The signed-in user."""

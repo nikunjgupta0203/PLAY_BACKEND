@@ -13,7 +13,12 @@ export const communities = createCommunitiesService({
   sport: {
     async findById(sportId) {
       const { sport } = await import('../sport/index.js');
-      return sport.byId(sportId).catch(() => null);
+      // Paused sports (cue-sports launch) read as inactive: nothing new is made for them.
+      return sport.byId(sportId).then((s) => ({ ...s, active: sport.isOffered(s) }), () => null);
+    },
+    async offeredIds() {
+      const { sport } = await import('../sport/index.js');
+      return sport.offeredIdsOrNull();
     },
   },
   users: {

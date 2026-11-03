@@ -22,6 +22,10 @@ export const venuePay = createVenuePayService({
     },
   },
   email,
+  async commissionBps(venueId) {
+    const { pricing } = await import('../pricing/index.js');
+    return pricing.commissionFor(venueId, 'venue_pay');
+  },
   async notify(userId, template, payload, target) {
     const { notifications } = await import('../notifications/index.js');
     // The player's tap opens their receipt; the venue's opens the desk.
@@ -42,6 +46,10 @@ export const venuePayouts = createVenuePayouts({
     return account ? { id: account.id, status: account.status, detailsChangedAt: account.detailsChangedAt } : null;
   },
   rates: { commissionGstBps: config.COMMISSION_GST_BPS, tdsBps: config.HOST_TDS_BPS },
+  async launchedAt() {
+    const { pricing } = await import('../pricing/index.js');
+    return (await pricing.settings()).launchedAt;
+  },
   async notify(userId, payload, venueId) {
     const { notifications } = await import('../notifications/index.js');
     await notifications.emit(userId, 'venue.payout_paid', payload as never, { kind: 'route', route: 'venue_desk', id: venueId });

@@ -164,6 +164,13 @@ export interface BookingsPort {
     taxPaise: bigint;
     holdExpiresAt: Date | null;
     venueName: string;
+    /** 058 — online | at_venue | offline | comp. Absent on older fakes: online. */
+    paymentMode?: string;
+    /** 058 — a pay-at-venue booking is paid in the app while it is `due`. */
+    paymentStatus?: string;
+    bookingCode?: string;
+    /** 058 — false when PL4Y's offer already applies and rewards do not stack on it. */
+    rewardsAllowed?: boolean;
   }>;
   /** Keeps the court held while the player is paying (as gap #22 does for seats). */
   extendHold(bookingId: string, minutes: number): Promise<unknown>;
@@ -718,13 +725,20 @@ export function createPaymentsService(deps: PaymentsDeps) {
     const bookings = bookingsPort();
     const booking = await bookings.byId(bookingId);
     if (booking.userId !== actor.userId) throw new SystemError('FORBIDDEN', 'This booking is not yours.');
-    if (booking.status === 'confirmed' || booking.status === 'checked_in' || booking.status === 'completed') {
-      throw new UserError(PaymentCode.ORDER_ALREADY_PAID, 'This booking is already paid for.');
+    // 058 — a pay-at-venue booking can be paid in the app any time before it is paid at the desk.
+    const dueAtVenue =
+      booking.paymentMode === 'at_venue' &&
+      (booking.paymentStatus === 'due' || booking.paymentStatus === 'failed') &&
+      (booking.status === 'confirmed' || booking.status === 'checked_in');
+    if (!dueAtVenue) {
+      if (booking.paymentStatus === 'paid' || booking.status === 'confirmed' || booking.status === 'checked_in' || booking.status === 'completed') {
+        throw new UserError(PaymentCode.ORDER_ALREADY_PAID, 'This booking is already paid for.');
+      }
+      if (booking.status !== 'held' || !booking.holdExpiresAt || booking.holdExpiresAt <= now()) {
+        throw new UserError(PaymentCode.HOLD_EXPIRED, 'Your hold on this court ran out. Please pick a slot again.');
+      }
+      await bookings.extendHold(bookingId, HOLD_WHILE_PAYING_MINUTES);
     }
-    if (booking.status !== 'held' || !booking.holdExpiresAt || booking.holdExpiresAt <= now()) {
-      throw new UserError(PaymentCode.HOLD_EXPIRED, 'Your hold on this court ran out. Please pick a slot again.');
-    }
-    await bookings.extendHold(bookingId, HOLD_WHILE_PAYING_MINUTES);
 
     const quote = {
       entryFeePaise: booking.courtPaise,
@@ -733,7 +747,8 @@ export function createPaymentsService(deps: PaymentsDeps) {
       totalPaise: booking.amountPaise,
       currency: CURRENCY,
     };
-    const discount = await discountFor(actor.userId, quote.totalPaise);
+    const discount =
+      booking.rewardsAllowed === false ? { discountPaise: 0n, rewardIds: [], label: null } : await discountFor(actor.userId, quote.totalPaise);
     const open = await repo.openOrderForBooking(bookingId);
     if (reusable(open, quote.totalPaise, discount)) {
       return bookingHandle(open!, quote, actor.userId, booking.venueName, discount);
@@ -820,7 +835,9 @@ export function createPaymentsService(deps: PaymentsDeps) {
   async function refreshBookingPayment(actor: Actor, bookingId: string): Promise<{ settled: boolean }> {
     const booking = await bookingsPort().byId(bookingId);
     if (booking.userId !== actor.userId) throw new SystemError('FORBIDDEN', 'This booking is not yours.');
-    if (booking.status !== 'held') return { settled: false };
+    // 058 — a pay-at-venue booking's open orders are always checked: a capture that lands after the
+    // desk took the money must still reach the settle path, which refunds it in full.
+    if (booking.status !== 'held' && booking.paymentMode !== 'at_venue') return { settled: false };
     let settled = false;
     for (const order of await repo.ordersForBooking(bookingId)) {
       if (order.status !== 'created' && order.status !== 'attempted') continue;

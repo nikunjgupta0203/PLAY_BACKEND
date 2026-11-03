@@ -154,7 +154,11 @@ export interface Earnings {
 export interface CommunitiesDeps {
   db: Db;
   repo: CommunitiesRepo;
-  sport: { findById(sportId: string): Promise<{ id: string; name: string; active: boolean } | null> };
+  sport: {
+    findById(sportId: string): Promise<{ id: string; name: string; active: boolean } | null>;
+    /** Cue-sports launch — the sports on offer, or null for all. */
+    offeredIds?(): Promise<string[] | null>;
+  };
   users: { namesByIds(ids: string[]): Promise<Map<string, string>> };
   limiter: { consume(key: string, window: Window): Promise<LimitResult> };
   /** Best-effort: a notice that fails never fails the change it reports. */
@@ -514,6 +518,7 @@ export function createCommunitiesService(deps: CommunitiesDeps) {
     const city = filter.city?.trim() ? cityVariants(filter.city) : null;
     const rows = await repo.search({
       sportId: filter.sportId ?? null,
+      anyOfSportIds: filter.sportId ? null : ((await deps.sport.offeredIds?.()) ?? null),
       cityKeys: city,
       access: filter.access ?? null,
       pattern: containsPattern(filter.text),

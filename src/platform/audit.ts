@@ -47,7 +47,9 @@ export interface AuditEntry {
     | 'reward_settings'
     | 'referral'
     | 'venue_payment'
-    | 'venue_payout';
+    | 'venue_payout'
+    | 'pricing_settings'
+    | 'offer';
   targetId: string;
   reason?: string | null;
   details?: Record<string, unknown>;

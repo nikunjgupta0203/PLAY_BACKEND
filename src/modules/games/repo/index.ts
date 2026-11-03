@@ -63,6 +63,8 @@ export interface NewGame {
 
 export interface SearchFilter {
   sportId?: string | null;
+  /** Cue-sports launch — any of these sports (the ones on offer); null: no limit. */
+  anyOfSportIds?: string[] | null;
   from: Date;
   to?: Date | null;
   near?: GeoPoint | null;
@@ -167,6 +169,8 @@ export function createGamesRepo(db: Db) {
     const where: Prisma.Sql[] = [Prisma.sql`g.status IN ('open', 'full')`, Prisma.sql`g.ends_at > ${f.from}`];
     if (f.to) where.push(Prisma.sql`g.starts_at < ${f.to}`);
     if (f.sportId) where.push(Prisma.sql`g.sport_id = ${f.sportId}::uuid`);
+    // Cue-sports launch — only the sports PL4Y offers now (sport/offered.ts).
+    if (f.anyOfSportIds) where.push(Prisma.sql`g.sport_id = ANY(${f.anyOfSportIds}::uuid[])`);
     if (f.near && f.radiusKm) {
       where.push(Prisma.sql`ST_DWithin(${place}, ${point(f.near)}, ${kmToMetres(f.radiusKm)}::double precision)`);
     }

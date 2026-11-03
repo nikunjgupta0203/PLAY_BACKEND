@@ -347,6 +347,10 @@ export interface EventFilter {
 
 export interface SportPort {
   byId(sportId: string): Promise<{ id: string }>;
+  /** Cue-sports launch — throws for a sport PL4Y does not offer now. Absent: byId. */
+  requireOffered?(sportId: string): Promise<{ id: string }>;
+  /** Cue-sports launch — the sports on offer, or null for all. */
+  offeredIdsOrNull?(): Promise<string[] | null>;
   formatsFor(sportId: string): Promise<{ key: string; teamSize: number }[]>;
   skillBandsFor(
     sportId: string,
@@ -1046,6 +1050,7 @@ export function createEventService(deps: EventDeps) {
     const ids = await repo.searchIds(
       {
         sportId: filter.sportId ?? null,
+        anyOfSportIds: filter.sportId ? null : ((await sport.offeredIdsOrNull?.()) ?? null),
         city: filter.city ?? null,
         near: filter.near ?? null,
         radiusKm,
@@ -1198,7 +1203,7 @@ export function createEventService(deps: EventDeps) {
    * things that cannot be fixed later are checked here.
    */
   async function create(actor: Actor, input: CreateEventInput): Promise<Event> {
-    await sport.byId(input.sportId);
+    await (sport.requireOffered ?? sport.byId)(input.sportId);
     const title = input.title.trim();
     const locationNote = trimmedOrNull(input.locationNote);
     assertMaxLength(title, TITLE_MAX, 'title');
