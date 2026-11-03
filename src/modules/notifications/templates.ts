@@ -247,8 +247,14 @@ const ESSENTIAL = new Set<TemplateKey>([
 
 export const isEssential = (key: string): boolean => ESSENTIAL.has(key as TemplateKey);
 
-const rupees = (paise: string | null): string =>
-  paise === null ? '' : ` ₹${(Number(paise) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+/** `₹480` for whole rupees, `₹280.80` otherwise — never `₹280.8`. */
+export const inr = (paise: string | number | bigint): string => {
+  const n = Number(paise);
+  const digits = n % 100 === 0 ? 0 : 2;
+  return `₹${(n / 100).toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+};
+
+const rupees = (paise: string | null): string => (paise === null ? '' : ` ${inr(paise)}`);
 
 const REASONS: Record<TemplatePayloads['registration.expired']['reason'], string> = {
   hold_expired: 'Your seat hold ran out before payment finished.',
@@ -501,7 +507,7 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
   },
   'payout.status': {
     render: (p) => {
-      const rupees = `₹${(Number(p.amountPaise) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+      const rupees = inr(p.amountPaise);
       return p.state === 'paid'
         ? {
             title: `${rupees} sent to your bank`,
@@ -569,7 +575,7 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
     render: (p) => {
       const refund =
         p.refundPaise && p.refundPaise !== '0'
-          ? ` ₹${(Number(p.refundPaise) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })} is on its way back to you.`
+          ? ` ${inr(p.refundPaise)} is on its way back to you.`
           : '';
       return p.by === 'venue'
         ? { title: `${p.venueName} cancelled your booking`, body: `${p.courtName} · ${istWhen(p.startsAt)}.${refund}` }

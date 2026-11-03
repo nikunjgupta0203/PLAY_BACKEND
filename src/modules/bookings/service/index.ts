@@ -314,7 +314,7 @@ export function createBookingsService(deps: BookingsDeps) {
 
   async function courtOfVenue(courtId: string) {
     const court = await venues.courtById(courtId);
-    if (!court?.venueId) throw new UserError(BookingCode.INVALID_SLOT, 'That court is not part of a venue.');
+    if (!court?.venueId) throw new UserError(BookingCode.INVALID_SLOT, 'That table is not part of a venue.');
     return court as typeof court & { venueId: string };
   }
 
@@ -390,7 +390,7 @@ export function createBookingsService(deps: BookingsDeps) {
     if (input.endsAt <= input.startsAt) throw new UserError(BookingCode.INVALID_SLOT, 'The end must be after the start.');
     if (input.courtId) {
       const court = await courtOfVenue(input.courtId);
-      if (court.venueId !== input.venueId) throw new UserError(BookingCode.INVALID_SLOT, 'That court is not at this venue.');
+      if (court.venueId !== input.venueId) throw new UserError(BookingCode.INVALID_SLOT, 'That table is not at this venue.');
     }
     return db.courtBlackout.create({
       data: {
@@ -479,7 +479,7 @@ export function createBookingsService(deps: BookingsDeps) {
     const [policy, rules] = await Promise.all([repo.policy(court.venueId), repo.rulesFor([courtId])]);
     const minutes = Math.round((endsAt.getTime() - startsAt.getTime()) / MIN);
     const basePaise = minutes > 0 ? priceAcross(rules, courtId, startsAt, endsAt) : null;
-    if (basePaise === null) throw new UserError(BookingCode.SLOT_UNAVAILABLE, 'That court is not open then.');
+    if (basePaise === null) throw new UserError(BookingCode.SLOT_UNAVAILABLE, 'That table is not open then.');
     const priced = deps.pricing
       ? await deps.pricing.priceBooking({ userId, venueId: court.venueId, basePaise, startsAt, endsAt })
       : { basePaise, venueOffer: null, venueDiscountPaise: 0n, platformOffer: null, platformDiscountPaise: 0n, courtPaise: basePaise };
@@ -1056,10 +1056,10 @@ export function createBookingsService(deps: BookingsDeps) {
     const q = await quoteFor(input.courtId, input.startsAt, input.endsAt);
     await requireRole(actor, q.court.venueId, 'desk');
     const name = input.name.trim();
-    if (name.length < 2) throw new UserError(BookingCode.INVALID_SLOT, 'Enter the name the court is booked under.');
+    if (name.length < 2) throw new UserError(BookingCode.INVALID_SLOT, 'Enter the name the table is booked under.');
     if (input.endsAt <= at) throw new UserError(BookingCode.OUTSIDE_BOOKING_WINDOW, 'That time has passed.');
     if (await repo.blackoutsAt(q.court.venueId, input.courtId, input.startsAt, input.endsAt)) {
-      throw new UserError(BookingCode.SLOT_UNAVAILABLE, 'That court is blocked out then.');
+      throw new UserError(BookingCode.SLOT_UNAVAILABLE, 'That table is blocked out then.');
     }
     const comp = input.paymentMode === 'comp';
     // The desk charges its own price: no PL4Y offers, no fee, no commission.
@@ -1102,7 +1102,7 @@ export function createBookingsService(deps: BookingsDeps) {
       return row as Booking;
     } catch (err) {
       if (isOverlap(err) || isRaceAbort(err)) {
-        throw new UserError(BookingCode.SLOT_UNAVAILABLE, 'That court is already booked or held then.');
+        throw new UserError(BookingCode.SLOT_UNAVAILABLE, 'That table is already booked or held then.');
       }
       throw err;
     }

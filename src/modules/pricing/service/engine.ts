@@ -237,7 +237,10 @@ export function settlementFor(p: Pick<Priced, 'basePaise' | 'venueDiscountPaise'
 
 /** "20% off, up to ₹100" — the line an offer shows on a card and in a notification. */
 export function offerSummary(o: Pick<OfferRule, 'kind' | 'percentBps' | 'flatPaise' | 'maxDiscountPaise' | 'minAmountPaise' | 'minMinutes'>): string {
-  const rupees = (p: bigint) => `₹${(Number(p) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  const rupees = (p: bigint) => {
+    const digits = p % 100n === 0n ? 0 : 2;
+    return `₹${(Number(p) / 100).toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  };
   const parts = [o.kind === 'percent' ? `${o.percentBps / 100}% off` : `${rupees(o.flatPaise)} off`];
   if (o.kind === 'percent' && o.maxDiscountPaise !== null) parts[0] += ` up to ${rupees(o.maxDiscountPaise)}`;
   if (o.minAmountPaise > 0n) parts.push(`on bookings of ${rupees(o.minAmountPaise)} or more`);
