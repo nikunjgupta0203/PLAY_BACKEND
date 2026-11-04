@@ -209,7 +209,10 @@ export function createVenuePayService(deps: VenuePayDeps) {
     let reason: string | null = null;
     if (!venue.payAtVenueEnabled) reason = 'not_enabled';
     else if (list.length === 0) reason = 'no_rates';
-    else if ((await deps.payoutStatusOf(venue.createdBy)) !== 'verified') reason = 'payout_account';
+    // 2026-11-04 founder: Pay at venue shows wherever it is switched on, beside Book a table. Like
+    // online bookings, it no longer waits for a verified bank account: the monthly payout holds
+    // the money until one is (payouts.ts holdFor), so there is still always somewhere to send it.
+    // else if ((await deps.payoutStatusOf(venue.createdBy)) !== 'verified') reason = 'payout_account';
     return { available: reason === null, reason, enabled: venue.payAtVenueEnabled, rates: list };
   }
 

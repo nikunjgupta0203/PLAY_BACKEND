@@ -10,7 +10,9 @@
  *     venue desk in the app, its tables, prices, bookings and staff. Tables or
  *     courts are "<Sport> 1…n"; a price gives every one of them weekly rules
  *     over the opening hours (with the peak band, if any); "Take bookings"
- *     switches bookings on.
+ *     switches bookings on. "Payment" At venue / Both (2026-11-04) switches
+ *     on walk-in Pay at venue, with an hourly rate per sport from its prices
+ *     (and a peak one); table bookings themselves are always paid online.
  *
  * Without --apply it only checks each row and says what it would do.
  *
@@ -32,6 +34,7 @@ import { venues, COURT_KINDS } from '../src/modules/venues/index.js';
 import type { CourtKind, OpeningHours } from '../src/modules/venues/index.js';
 import { validPhone } from '../src/modules/venues/service/hostDetails.js';
 import { bookings } from '../src/modules/bookings/index.js';
+import { venuePay } from '../src/modules/venuepay/index.js';
 import type { PaymentOptions } from '../src/modules/bookings/index.js';
 import { readSheet, type SheetRow } from './lib/sheet.js';
 
@@ -405,7 +408,10 @@ async function one(p: Plan): Promise<void> {
     return;
   }
   const tables = p.groups.map((g) => `${g.count} ${g.sportName}${g.pricePaise !== null ? ` @ ₹${g.pricePaise / 100n}${g.peakPaise !== null ? `/₹${g.peakPaise / 100n} peak` : ''}` : ''}`).join(', ');
-  const what = `${mine ? 'update' : 'new venue'}; owner ${p.owner.email} (${owner.isNew ? 'new account' : 'existing account'}); ${tables}${p.takeBookings ? `; bookings on (${p.payment ?? 'online'})` : ''}`;
+  const walkIn = p.payment === 'at_venue' || p.payment === 'both';
+  const what =
+    `${mine ? 'update' : 'new venue'}; owner ${p.owner.email} (${owner.isNew ? 'new account' : 'existing account'}); ${tables}` +
+    `${p.takeBookings ? '; bookings on (online)' : ''}${walkIn ? '; Pay at venue on' : ''}`;
   for (const m of imported) notes.push(`${p.label}: also listed by the Oct import as ${m.id} — remove that one in the portal if it is the same place.`);
 
   if (!apply) {
@@ -465,9 +471,32 @@ async function one(p: Plan): Promise<void> {
       ...(p.payment ? { paymentOptions: p.payment } : {}),
     });
   }
+  if (walkIn) await payAtVenue(actor, venueId, p);
   console.log(`  ${p.label} — ${mine ? 'updated' : 'listed'} ${venueId}: ${what}`);
   if (mine) tally.updated += 1;
   else tally.listed += 1;
+}
+
+/**
+ * Walk-in Pay at venue: one hourly rate per priced sport ("Snooker"), plus a peak one
+ * ("Snooker (peak 18:00–22:00)") where the peak price differs. Re-runs update the rate with
+ * the same name; rates the owner added in the app are left alone.
+ */
+async function payAtVenue(actor: { userId: string }, venueId: string, p: Plan): Promise<void> {
+  const have = await venuePay.rates(venueId, { includeInactive: true });
+  const wanted: { label: string; sportId: string; ratePerHourPaise: bigint }[] = [];
+  for (const g of p.groups) {
+    if (g.pricePaise === null) continue;
+    wanted.push({ label: g.sportName, sportId: g.sportId, ratePerHourPaise: g.pricePaise });
+    if (p.peak && g.peakPaise !== null && g.peakPaise !== g.pricePaise) {
+      wanted.push({ label: `${g.sportName} (peak ${hhmm(p.peak.from)}–${hhmm(p.peak.to)})`, sportId: g.sportId, ratePerHourPaise: g.peakPaise });
+    }
+  }
+  for (const [position, w] of wanted.entries()) {
+    const same = have.find((r) => r.label.toLowerCase() === w.label.toLowerCase());
+    await venuePay.saveRate(actor, venueId, { id: same?.id ?? null, label: w.label, sportId: w.sportId, ratePerHourPaise: w.ratePerHourPaise, active: true, position });
+  }
+  await venuePay.setEnabled(venueId, true);
 }
 
 const failed: string[] = [];

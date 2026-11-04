@@ -7,6 +7,7 @@
  * (notifications R3 does the same arithmetic). `venue_booking_policies.timezone`
  * is kept for the day a venue is not.
  */
+import { isTest } from '../../../platform/config.js';
 
 export const IST_OFFSET_MIN = 330;
 const MIN = 60_000;
@@ -87,7 +88,26 @@ export function allowedDurations(policy: Pick<Policy, 'minSlotMinutes' | 'slotSt
 
 /** Which ways of paying the player may choose. */
 export function paymentChoices(options: PaymentOptions): PaymentChoice[] {
+  // 2026-11-04 founder: a table booking is always paid online (QR + slot held). Paying at the
+  // venue is the walk-in `venuepay` flow, with no slot. The stored option is kept, not used, and
+  // bookings already made to pay at the desk still settle there (Collect on the desk).
+  if (onlineOnlyBookings()) return ['online'];
   return options === 'both' ? ['online', 'at_venue'] : [options];
+}
+
+/**
+ * Tests keep the pay-at-desk paths (old bookings still settle that way), so online-only applies
+ * outside tests, or when a test asks for it — as `sport/service/offered.ts` does.
+ */
+let onlineOnlyOverride: boolean | null = null;
+
+export function setOnlineOnlyBookingsForTests(on: boolean | null): void {
+  onlineOnlyOverride = on;
+}
+
+export function onlineOnlyBookings(): boolean {
+  if (onlineOnlyOverride !== null) return onlineOnlyOverride;
+  return !isTest;
 }
 
 /** "2026-10-12" → the UTC instant of local midnight that day. Null for a malformed date. */

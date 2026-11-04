@@ -23,7 +23,7 @@ import { createPaymentsRepo } from '../src/modules/payments/repo/index.js';
 import { createPaymentsService, type PaymentsService } from '../src/modules/payments/service/index.js';
 import { createBookingsRepo } from '../src/modules/bookings/repo/index.js';
 import { createBookingsService, type BookingsService } from '../src/modules/bookings/service/index.js';
-import { localMidnight } from '../src/modules/bookings/service/slots.js';
+import { localMidnight, setOnlineOnlyBookingsForTests } from '../src/modules/bookings/service/slots.js';
 import { createPricingService, type PricingService } from '../src/modules/pricing/service/index.js';
 import { createRewardsService, type RewardsService } from '../src/modules/rewards/service/index.js';
 import { createVenuePayouts, type VenuePayouts } from '../src/modules/venuepay/service/payouts.js';
@@ -129,7 +129,10 @@ afterAll(async () => {
   await stopTestDb();
 });
 
-afterEach(() => setSportFocusForTests(null));
+afterEach(() => {
+  setSportFocusForTests(null);
+  setOnlineOnlyBookingsForTests(null);
+});
 
 beforeEach(async () => {
   await truncateAll(prisma);
@@ -423,6 +426,17 @@ describe('2–9 · discover, pick, price, discount, pay, confirm, track', () => 
     await bookings.setPolicy(owner, venue.id, { paymentOptions: 'at_venue' });
     expect(await codeOf(() => bookings.hold(player, { courtId: tables[0]!.id, ...slot(12, 30), payment: 'online' }))).toBe('PAYMENT_OPTION_UNAVAILABLE');
     expect((await bookings.hold(player, { courtId: tables[0]!.id, ...slot(12, 30) })).paymentMode).toBe('at_venue');
+  });
+
+  it('2026-11-04: outside tests every table booking is paid online, whatever the venue chose', async () => {
+    setOnlineOnlyBookingsForTests(true);
+    const owner = await user('Owner');
+    const player = await user('Asha');
+    const { venue, tables } = await snookerClub(owner, 'both');
+    expect((await bookings.bookingOptions(venue.id)).paymentChoices).toEqual(['online']);
+    expect(await codeOf(() => bookings.hold(player, { courtId: tables[0]!.id, ...slot(12, 30), payment: 'at_venue' }))).toBe('PAYMENT_OPTION_UNAVAILABLE');
+    const b = await bookings.hold(player, { courtId: tables[0]!.id, ...slot(12, 30) });
+    expect(b).toMatchObject({ status: 'held', paymentMode: 'online' });
   });
 });
 

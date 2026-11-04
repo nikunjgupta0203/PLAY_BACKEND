@@ -200,12 +200,13 @@ describe('the arithmetic', () => {
 });
 
 describe('the offer', () => {
-  it('shows only once PL4Y switches it on, with a rate and a verified payout account', async () => {
+  it('shows once PL4Y switches it on with a rate — a bank account still being checked does not hide it', async () => {
     const owner = await user('Owner');
     const { venue } = await payableVenue(owner);
     expect((await venuePay.offer(venue.id)).available).toBe(true);
+    // 2026-11-04: the payout holds the money until the account is verified (see "holds the payout…").
     accountStatus = 'checking';
-    expect(await venuePay.offer(venue.id)).toMatchObject({ available: false, reason: 'payout_account' });
+    expect(await venuePay.offer(venue.id)).toMatchObject({ available: true, reason: null });
     accountStatus = 'verified';
     await venuePay.setEnabled(venue.id, false);
     expect(await venuePay.offer(venue.id)).toMatchObject({ available: false, reason: 'not_enabled' });
