@@ -24,6 +24,8 @@ export const QUEUES = {
   rating: 'rating',
   notify: 'notify',
   maintenance: 'maintenance',
+  // 060 — outside score and news feeds (G1). Its own queue: a slow provider never holds up the sweeps.
+  feeds: 'feeds',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

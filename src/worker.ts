@@ -661,6 +661,11 @@ const SCHEDULES: [string, string, string][] = [
   [QUEUES.maintenance, 'close-stale-tickets', '40 * * * *'],
   // careers R8 — applications 12 months past their last status change, nightly.
   [QUEUES.maintenance, 'purge-career-applications', '50 4 * * *'],
+  // 060 G1 — every minute each score feed checks whether it is due (feeds R4); most
+  // minutes cost nothing. Fixtures at 06:00 and 18:00 IST; headlines every two hours.
+  [QUEUES.feeds, 'feeds-live', '* * * * *'],
+  [QUEUES.feeds, 'feeds-fixtures', '30 0,12 * * *'],
+  [QUEUES.feeds, 'feeds-news', '20 */2 * * *'],
 ];
 
 async function registerSchedules(): Promise<void> {
@@ -1123,6 +1128,31 @@ export async function startWorkers(): Promise<() => void> {
       }
       default:
         logger.warn({ job: job.name }, 'unknown maintenance job');
+    }
+  });
+
+  // 060 — feeds never throw into the queue: a provider being down is recorded on
+  // the provider (portal /pro/feeds) and the next run tries again.
+  startWorker(QUEUES.feeds, async (job) => {
+    const { proFeeds } = await import('./modules/pro/index.js');
+    switch (job.name) {
+      case 'feeds-live': {
+        const runs = await proFeeds.pollLive();
+        const busy = runs.filter((r) => r.updated > 0 || r.errors.length > 0);
+        if (busy.length) logger.info({ runs: busy }, 'feeds: live poll');
+        return;
+      }
+      case 'feeds-fixtures': {
+        logger.info({ runs: await proFeeds.importFixtures() }, 'feeds: fixtures imported');
+        return;
+      }
+      case 'feeds-news': {
+        const { news } = await import('./modules/content/index.js');
+        logger.info({ result: await news.run() }, 'feeds: headlines imported');
+        return;
+      }
+      default:
+        logger.warn({ job: job.name }, 'unknown feeds job');
     }
   });
 

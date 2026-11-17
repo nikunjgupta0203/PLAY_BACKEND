@@ -44,6 +44,10 @@ export interface EventRow {
   refundPolicy?: string;
   /** org R3 — the organisation it is hosted as. */
   organizerProfileId?: string | null;
+  /** 059 — screening | meetup | fitness | original; null for a sports event. */
+  experienceKind?: string | null;
+  /** 059 — run by PL4Y itself. */
+  byPl4y?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -101,6 +105,9 @@ export interface SearchFilter {
   textPattern?: string | null;
   /** events R11 */
   kind?: string | null;
+  /** 059 — 'sports' is the null kind (Tournaments); anything else is that experience. */
+  experience?: string | null;
+  byPl4y?: boolean | null;
 }
 
 export function createEventRepo(db: Db) {
@@ -130,6 +137,9 @@ export function createEventRepo(db: Db) {
     else where.push(Prisma.sql`e.ends_at >= now()`);
     if (filter.to) where.push(Prisma.sql`e.starts_at <= ${filter.to}`);
     if (filter.kind) where.push(Prisma.sql`e.kind = ${filter.kind}`);
+    if (filter.experience === 'sports') where.push(Prisma.sql`e.experience_kind IS NULL`);
+    else if (filter.experience) where.push(Prisma.sql`e.experience_kind = ${filter.experience}`);
+    if (filter.byPl4y) where.push(Prisma.sql`e.by_pl4y`);
     if (filter.textPattern) {
       // Title first; the venue name too, because "SG Highway" is how players
       // remember where a tournament was.

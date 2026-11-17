@@ -192,6 +192,10 @@ export interface Event {
   status: EventStatus;
   /** events R11 */
   kind: EventKind;
+  /** 059 — screening | meetup | fitness | original; null for a sports event. Experiences have no draw. */
+  experienceKind: ExperienceKind | null;
+  /** 059 — "BY PL4Y". */
+  byPl4y: boolean;
   coverPublicId: string | null;
   /** Shown to staff and seated entrants only (the schema decides who sees it). */
   contactPhone: string | null;
@@ -341,7 +345,13 @@ export interface EventFilter {
   /** discovery R1 — free text over title and venue name. */
   query?: string | null;
   kind?: EventKind | null;
+  /** 059 — 'sports' (no experience kind) or one experience kind. */
+  experience?: 'sports' | ExperienceKind | null;
+  byPl4y?: boolean | null;
 }
+
+export type ExperienceKind = 'screening' | 'meetup' | 'fitness' | 'original';
+export const EXPERIENCE_KINDS: readonly ExperienceKind[] = ['screening', 'meetup', 'fitness', 'original'];
 
 // --- ports -------------------------------------------------------------------
 
@@ -573,6 +583,8 @@ const toEvent = (r: EventRow): Event => ({
   ...r,
   status: r.status as EventStatus,
   kind: r.kind === 'league_season' ? 'league_season' : 'tournament',
+  experienceKind: EXPERIENCE_KINDS.includes(r.experienceKind as ExperienceKind) ? (r.experienceKind as ExperienceKind) : null,
+  byPl4y: r.byPl4y ?? false,
   termsChangedAt: r.termsChangedAt ?? null,
   refundPolicy: r.refundPolicy === 'flexible' ? 'flexible' : 'standard',
   organizerProfileId: r.organizerProfileId ?? null,
@@ -1061,6 +1073,8 @@ export function createEventService(deps: EventDeps) {
         maxPricePaise: filter.maxPricePaise ?? null,
         textPattern: containsPattern(filter.query),
         kind: filter.kind ?? null,
+        experience: filter.experience ?? null,
+        byPl4y: filter.byPl4y ?? null,
       },
       {
         after: page.after ? decodeEventCursor(page.after) : null,
@@ -2328,7 +2342,18 @@ export function createEventService(deps: EventDeps) {
     await identity.removeStaff(eventId, userId);
   }
 
+  /** 059 — PL4Y staff mark an event as an experience, and as run by PL4Y. */
+  async function setExperience(eventId: string, experienceKind: ExperienceKind | null, byPl4y: boolean): Promise<Event> {
+    if (experienceKind !== null && !EXPERIENCE_KINDS.includes(experienceKind)) {
+      throw new UserError(EventCode.EVENT_NOT_FOUND, 'That is not a kind of experience.');
+    }
+    const found = await findByIds([eventId]);
+    if (!found.get(eventId)) throw notFound();
+    return toEvent(await repo.update(eventId, { experienceKind, byPl4y }));
+  }
+
   return {
+    setExperience,
     removeCategory,
     closePreview,
     courtsOf,

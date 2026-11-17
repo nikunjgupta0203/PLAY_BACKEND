@@ -15,7 +15,7 @@ import { builder, clampFirst } from '../../../graphql/builder.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { SystemError } from '../../../platform/errors/index.js';
-import { notifications, TEMPLATES } from '../index.js';
+import { categoryOf, notifications, tagOf, TEMPLATES } from '../index.js';
 import type { DeepLinkRoute, Notification, Preferences, Target, TemplateKey } from '../index.js';
 
 const TargetKindEnum = builder.enumType('NotificationTargetKind', {
@@ -45,6 +45,10 @@ const DeepLinkRouteEnum = builder.enumType('DeepLinkRoute', {
     REWARDS: { value: 'rewards' as DeepLinkRoute },
     VENUE_PAYMENT: { value: 'venue_payment' as DeepLinkRoute },
     VENUE_DESK: { value: 'venue_desk' as DeepLinkRoute },
+    PARTNER_INVITE: { value: 'partner_invite' as DeepLinkRoute },
+    MY_BOOKINGS: { value: 'my_bookings' as DeepLinkRoute },
+    PRO_MATCH: { value: 'pro_match' as DeepLinkRoute },
+    PREDICTIONS: { value: 'predictions' as DeepLinkRoute },
   },
 });
 
@@ -53,6 +57,30 @@ const TemplateKeyEnum = builder.enumType('NotificationKind', {
   values: Object.fromEntries(
     (Object.keys(TEMPLATES) as TemplateKey[]).map((k) => [k.replace(/[.]/g, '_').toUpperCase(), { value: k }]),
   ) as Record<string, { value: TemplateKey }>,
+});
+
+const NotificationCategoryEnum = builder.enumType('NotificationCategory', {
+  description: 'Floodlight — the filter chips on the Notifications screen. OTHER rows show under All only.',
+  values: {
+    MATCHES: { value: 'matches' },
+    PREDICTIONS: { value: 'predictions' },
+    COMMUNITY: { value: 'community' },
+    GAMES: { value: 'games' },
+    OTHER: { value: 'other' },
+  } as const,
+});
+
+const NotificationTagEnum = builder.enumType('NotificationTag', {
+  description: 'Floodlight — the mono tag on a row.',
+  values: {
+    LIVE: { value: 'live' },
+    PTS: { value: 'pts' },
+    CLUB: { value: 'club' },
+    CHAT: { value: 'chat' },
+    GAME: { value: 'game' },
+    TIX: { value: 'tix' },
+    PL4Y: { value: 'pl4y' },
+  } as const,
 });
 
 const TargetRef = builder.objectRef<Target>('NotificationTarget').implement({
@@ -80,6 +108,8 @@ export const NotificationRef = builder.objectRef<Notification>('Notification').i
   fields: (t) => ({
     id: t.exposeID('id'),
     kind: t.string({ resolve: (n) => n.template }),
+    category: t.field({ type: NotificationCategoryEnum, resolve: (n) => categoryOf(n.template) }),
+    tag: t.field({ type: NotificationTagEnum, resolve: (n) => tagOf(n.template) }),
     title: t.exposeString('title'),
     body: t.exposeString('body'),
     target: t.field({ type: TargetRef, nullable: true, resolve: (n) => n.target }),
@@ -105,7 +135,12 @@ builder.queryFields((t) => ({
   notifications: t.connection(
     {
       type: NotificationRef,
-      args: {},
+      args: {
+        category: t.arg({
+          type: NotificationCategoryEnum,
+          description: 'Floodlight — one filter chip. Omitted (or OTHER) is All.',
+        }),
+      },
       resolve: async (_root, args, ctx) => {
         const actor = requireActor(ctx);
         if (args.last != null || args.before != null) {
@@ -114,6 +149,7 @@ builder.queryFields((t) => ({
         const page = await notifications.feed(actor, {
           first: clampFirst(args.first, 20),
           after: args.after ?? null,
+          category: args.category && args.category !== 'other' ? args.category : null,
         });
         return {
           edges: page.edges,

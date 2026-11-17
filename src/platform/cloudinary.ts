@@ -49,6 +49,10 @@ export const folders = {
   partnershipRoot: (clientToken: string) => `pl4y/partners/${clientToken}`,
   /** communities — a community's cover, checked against this root the same way. */
   communityRoot: (communityId: string) => `pl4y/communities/${communityId}`,
+  /** content — a story's or short's cover, uploaded by PL4Y staff. */
+  contentRoot: (itemId: string) => `pl4y/content/${itemId}`,
+  /** communities — photos in a member's post, under the community's root. */
+  communityPostRoot: (communityId: string) => `pl4y/communities/${communityId}/posts`,
   /** careers R5 — one attempt at the careers form: its resume, stored private. */
   careerRoot: (clientToken: string) => `pl4y/careers/${clientToken}`,
 };

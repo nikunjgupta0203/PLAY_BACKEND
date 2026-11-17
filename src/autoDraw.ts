@@ -36,6 +36,9 @@ const FIELD_KINDS = new Set(['performance', 'scorecard']);
 export async function autoDrawCategory(categoryId: string, attempt: number): Promise<AutoDrawOutcome> {
   const category = await events.categoryById(categoryId).catch(() => null);
   if (!category || category.status !== 'closed') return { kind: 'skip' };
+  // 059 — an experience (a screening, a meetup) is a ticket, not a competition: no draw.
+  const event = (await events.findByIds([category.eventId])).get(category.eventId);
+  if (event?.experienceKind) return { kind: 'skip' };
   const rule = await sport.ruleForCategory(category);
 
   try {

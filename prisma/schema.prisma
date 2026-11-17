@@ -419,6 +419,8 @@ model PlayerProfile {
   /// updateSports is called, cleared to empty once every pending id has an
   /// answer. Read only by the profile's own owner.
   onboardingPendingSportIds String[]                               @default([]) @map("onboarding_pending_sport_ids") @db.Uuid
+  /// 059 — self-declared athlete label ("State-level shuttler"). Never verified.
+  athleteLabel              String?                                @map("athlete_label")
   createdAt                 DateTime                               @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                 DateTime                               @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -433,6 +435,7 @@ model PlayerProfile {
   ratingEvents      RatingEvent[]
   rankings          Ranking[]
   matchHistory      PlayerMatchHistory[]
+  records           ProfileRecord[]
 
   @@index([city])
   @@map("player_profiles")
@@ -701,6 +704,10 @@ model Event {
   status               String                                 @default("draft")
   /// events R11 — tournament | league_season. Discovery filters on it.
   kind                 String                                 @default("tournament")
+  /// 059 — screening | meetup | fitness | original; null for a sports event. No draw.
+  experienceKind       String?                                @map("experience_kind")
+  /// 059 — run by PL4Y itself ("BY PL4Y").
+  byPl4y               Boolean                                @default(false) @map("by_pl4y")
   coverPublicId        String?                                @map("cover_public_id")
   /// Shown to the event's staff and seated entrants only.
   contactPhone         String?                                @map("contact_phone")
@@ -2147,16 +2154,26 @@ model CommunityJoinRequest {
 }
 
 model CommunityPost {
-  id           String    @id @db.Uuid
-  communityId  String    @map("community_id") @db.Uuid
-  authorUserId String    @map("author_user_id") @db.Uuid
-  body         String
-  pinnedAt     DateTime? @map("pinned_at") @db.Timestamptz(6)
-  hiddenAt     DateTime? @map("hidden_at") @db.Timestamptz(6)
-  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id             String    @id @db.Uuid
+  communityId    String    @map("community_id") @db.Uuid
+  authorUserId   String    @map("author_user_id") @db.Uuid
+  body           String
+  /// 059 — text | photo | video | poll | event
+  kind           String    @default("text")
+  photoPublicIds String[]  @default([]) @map("photo_public_ids")
+  videoUrl       String?   @map("video_url")
+  eventTitle     String?   @map("event_title")
+  eventStartsAt  DateTime? @map("event_starts_at") @db.Timestamptz(6)
+  eventPlace     String?   @map("event_place")
+  pinnedAt       DateTime? @map("pinned_at") @db.Timestamptz(6)
+  hiddenAt       DateTime? @map("hidden_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  community   Community             @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  pollOptions CommunityPollOption[]
+  pollVotes   CommunityPollVote[]
+  rsvps       CommunityPostRsvp[]
 
   @@map("community_posts")
 }
@@ -2696,4 +2713,315 @@ model OfferRedemption {
   @@index([offerId, status], map: "offer_redemptions_offer_idx")
   @@index([userId, offerId], map: "offer_redemptions_user_idx")
   @@map("offer_redemptions")
+}
+
+// --- 059 Floodlight: content, pro matches, predictions ----------------------------
+
+/// A story, short, explainer or original PL4Y publishes.
+model ContentItem {
+  id              String    @id @db.Uuid
+  /// story | short | explainer | original | link
+  kind            String
+  sportId         String?   @map("sport_id") @db.Uuid
+  title           String
+  kicker          String?
+  summary         String?
+  body            String?
+  coverPublicId   String?   @map("cover_public_id")
+  videoUrl        String?   @map("video_url")
+  durationSeconds Int?      @map("duration_seconds")
+  /// 060 — a link item's publisher and address; an outside picture and its credit.
+  sourceName      String?   @map("source_name")
+  sourceUrl       String?   @map("source_url")
+  imageUrl        String?   @map("image_url")
+  imageCredit     String?   @map("image_credit")
+  imageCreditUrl  String?   @map("image_credit_url")
+  /// draft | published | archived
+  status          String    @default("draft")
+  featured        Boolean   @default(false)
+  publishedAt     DateTime? @map("published_at") @db.Timestamptz(6)
+  authorUserId    String?   @map("author_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([updatedAt(sort: Desc)], map: "content_items_staff_idx")
+  @@map("content_items")
+}
+
+model ProTeam {
+  id          String   @id @db.Uuid
+  sportId     String   @map("sport_id") @db.Uuid
+  name        String
+  shortCode   String   @map("short_code")
+  tint        String   @default("#2C2C24")
+  /// 060 — manual, or the feed that created or matched it.
+  provider    String   @default("manual")
+  providerRef String?  @map("provider_ref")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  homeMatches ProMatch[]   @relation("home")
+  awayMatches ProMatch[]   @relation("away")
+  fans        ProTeamFan[]
+
+  @@map("pro_teams")
+}
+
+/// A professional match, entered by PL4Y staff until a data feed exists.
+model ProMatch {
+  id            String    @id @db.Uuid
+  sportId       String    @map("sport_id") @db.Uuid
+  league        String
+  stage         String?
+  homeTeamId    String    @map("home_team_id") @db.Uuid
+  awayTeamId    String    @map("away_team_id") @db.Uuid
+  venueName     String?   @map("venue_name")
+  city          String?
+  startsAt      DateTime  @map("starts_at") @db.Timestamptz(6)
+  /// scheduled | live | break | finished | abandoned
+  status        String    @default("scheduled")
+  statusDetail  String?   @map("status_detail")
+  homeScore     String?   @map("home_score")
+  awayScore     String?   @map("away_score")
+  homeDetail    String?   @map("home_detail")
+  awayDetail    String?   @map("away_detail")
+  note          String?
+  stats         Json      @default("[]")
+  currentOver   Json      @default("[]") @map("current_over")
+  scorecard     Json      @default("[]")
+  featured      Boolean   @default(false)
+  chatOpen      Boolean   @default(true) @map("chat_open")
+  provider      String    @default("manual")
+  providerRef   String?   @map("provider_ref")
+  /// 060 G2 — fields staff edited by hand; the feed leaves them alone.
+  feedLocked    String[]  @default([]) @map("feed_locked")
+  feedCheckedAt DateTime? @map("feed_checked_at") @db.Timestamptz(6)
+  /// home | away | draw, once finished.
+  winner        String?
+  createdBy     String?   @map("created_by") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  homeTeam  ProTeam              @relation("home", fields: [homeTeamId], references: [id])
+  awayTeam  ProTeam              @relation("away", fields: [awayTeamId], references: [id])
+  moments   ProMatchMoment[]
+  messages  ProMatchMessage[]
+  questions PredictionQuestion[]
+
+  @@index([startsAt], map: "pro_matches_board_idx")
+  @@map("pro_matches")
+}
+
+model ProMatchMoment {
+  id          String   @id @db.Uuid
+  matchId     String   @map("match_id") @db.Uuid
+  atLabel     String?  @map("at_label")
+  /// six | four | wicket | milestone | goal | card | point | other
+  kind        String
+  title       String
+  detail      String?
+  /// 060 — a feed's own id for the moment, so a re-poll never writes it twice.
+  providerRef String?  @map("provider_ref")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  match ProMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, createdAt(sort: Desc)], map: "pro_match_moments_match_idx")
+  @@map("pro_match_moments")
+}
+
+model ProMatchMessage {
+  id        String    @id @db.Uuid
+  matchId   String    @map("match_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  body      String
+  hiddenAt  DateTime? @map("hidden_at") @db.Timestamptz(6)
+  hiddenBy  String?   @map("hidden_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  match ProMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, createdAt(sort: Desc), id(sort: Desc)], map: "pro_match_messages_room_idx")
+  @@map("pro_match_messages")
+}
+
+model ProTeamFan {
+  userId    String   @map("user_id") @db.Uuid
+  teamId    String   @map("team_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  team ProTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([userId, teamId])
+  @@map("pro_team_fans")
+}
+
+/// A free prediction question. No entry fee, no bought points, no cash prizes.
+model PredictionQuestion {
+  id                String    @id @db.Uuid
+  matchId           String?   @map("match_id") @db.Uuid
+  sportId           String    @map("sport_id") @db.Uuid
+  /// choice | exact_score | player_pick
+  kind              String
+  prompt            String
+  points            Int       @default(10)
+  live              Boolean   @default(false)
+  locksAt           DateTime  @map("locks_at") @db.Timestamptz(6)
+  /// open | settled | void
+  status            String    @default("open")
+  correctOptionId   String?   @map("correct_option_id") @db.Uuid
+  correctHome       Int?      @map("correct_home")
+  correctAway       Int?      @map("correct_away")
+  settledAt         DateTime? @map("settled_at") @db.Timestamptz(6)
+  settledBy         String?   @map("settled_by") @db.Uuid
+  /// 060 G4 — the answer the final score points to; staff confirm it.
+  suggestedOptionId String?   @map("suggested_option_id") @db.Uuid
+  suggestedHome     Int?      @map("suggested_home")
+  suggestedAway     Int?      @map("suggested_away")
+  suggestedAt       DateTime? @map("suggested_at") @db.Timestamptz(6)
+  createdBy         String?   @map("created_by") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  match   ProMatch?          @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  options PredictionOption[]
+  picks   PredictionPick[]
+
+  @@index([matchId, createdAt], map: "prediction_questions_match_idx")
+  @@map("prediction_questions")
+}
+
+model PredictionOption {
+  id         String  @id @db.Uuid
+  questionId String  @map("question_id") @db.Uuid
+  label      String
+  detail     String?
+  position   Int     @db.SmallInt
+  /// 060 G3 — home | draw | away: what picking it means for the result.
+  outcome    String?
+
+  question PredictionQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  picks    PredictionPick[]
+
+  @@unique([questionId, position], map: "prediction_options_position_key")
+  @@map("prediction_options")
+}
+
+model PredictionPick {
+  id            String   @id @db.Uuid
+  questionId    String   @map("question_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  optionId      String?  @map("option_id") @db.Uuid
+  home          Int?
+  away          Int?
+  correct       Boolean?
+  pointsAwarded Int?     @map("points_awarded")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  question PredictionQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  option   PredictionOption?  @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, userId], map: "prediction_picks_one_key")
+  @@index([userId, createdAt(sort: Desc)], map: "prediction_picks_user_idx")
+  @@map("prediction_picks")
+}
+
+/// Every prediction point a player earns, once (unique on user, reason, ref).
+model PredictionPoint {
+  id        String   @id @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  sportId   String?  @map("sport_id") @db.Uuid
+  points    Int
+  /// pick | daily
+  reason    String
+  ref       String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([userId, reason, ref], map: "prediction_points_once_key")
+  @@index([createdAt, userId], map: "prediction_points_board_idx")
+  @@map("prediction_points")
+}
+
+model CommunityPollOption {
+  id       String @id @db.Uuid
+  postId   String @map("post_id") @db.Uuid
+  label    String
+  position Int    @db.SmallInt
+
+  post  CommunityPost       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  votes CommunityPollVote[]
+
+  @@unique([postId, position], map: "community_poll_options_position_key")
+  @@map("community_poll_options")
+}
+
+model CommunityPollVote {
+  postId    String   @map("post_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  optionId  String   @map("option_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  post   CommunityPost       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  option CommunityPollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@id([postId, userId])
+  @@index([optionId], map: "community_poll_votes_option_idx")
+  @@map("community_poll_votes")
+}
+
+model CommunityPostRsvp {
+  postId    String   @map("post_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  post CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([postId, userId])
+  @@map("community_post_rsvps")
+}
+
+/// "My records — added by you." The player's own word.
+model ProfileRecord {
+  id        String   @id @db.Uuid
+  playerId  String   @map("player_id") @db.Uuid
+  sportId   String?  @map("sport_id") @db.Uuid
+  title     String
+  detail    String?
+  year      Int?     @db.SmallInt
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  player PlayerProfile @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@index([playerId, createdAt(sort: Desc)], map: "profile_records_player_idx")
+  @@map("profile_records")
+}
+
+/// 060 — what PL4Y follows on each feed (a series, a league + season, an event, a news search).
+model ProFeedFollow {
+  id           String    @id @db.Uuid
+  /// cricapi | api_football | snooker_org | google_news | newsdata
+  provider     String
+  ref          String
+  sportId      String    @map("sport_id") @db.Uuid
+  name         String
+  season       String?
+  enabled      Boolean   @default(true)
+  lastImportAt DateTime? @map("last_import_at") @db.Timestamptz(6)
+  lastError    String?   @map("last_error")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("pro_feed_follows")
+}
+
+/// 060 G10 — today's calls per provider (IST day) against its daily limit.
+model ProFeedProvider {
+  provider       String    @id
+  day            DateTime  @db.Date
+  calls          Int       @default(0)
+  lastCallAt     DateTime? @map("last_call_at") @db.Timestamptz(6)
+  lastLivePollAt DateTime? @map("last_live_poll_at") @db.Timestamptz(6)
+  lastError      String?   @map("last_error")
+  lastErrorAt    DateTime? @map("last_error_at") @db.Timestamptz(6)
+
+  @@map("pro_feed_providers")
 }

@@ -19,7 +19,8 @@ import { SportRef } from '../../sport/schema/index.js';
 import { sport } from '../../sport/index.js';
 import { MediaUploadPayload } from '../../venues/schema/index.js';
 import { CommunityCode, communities, communityCursor, communityFeed, feedCursor } from '../index.js';
-import type { Community, Earnings, JoinRequest, Membership, Message, Post, SortKey, Viewer } from '../index.js';
+import type { Community, Earnings, JoinRequest, Membership, Message, Poll, Post, PostKind, SortKey, Viewer } from '../index.js';
+import { requestLoader } from '../../../graphql/requestLoader.js';
 import { payments } from '../../payments/index.js';
 import { CreatePaymentOrderPayload, RefreshPaymentPayload } from '../../payments/schema/index.js';
 
@@ -576,12 +577,81 @@ builder.mutationFields((t) => ({
 
 // ─── the feed and the chat (communities R9) ──────────────────────────────────────────
 
+const PostKindEnum = builder.enumType('CommunityPostKind', {
+  values: { TEXT: { value: 'text' }, PHOTO: { value: 'photo' }, VIDEO: { value: 'video' }, POLL: { value: 'poll' }, EVENT: { value: 'event' } } as const,
+});
+
+const pollOf = (ctx: Ctx, postId: string) =>
+  requestLoader<string, Poll | null>(ctx, 'communityPoll', async (ids) => {
+    const found = await communityFeed.polls(ids, ctx.actor?.userId ?? null);
+    return ids.map((id) => found.get(id) ?? null);
+  }).load(postId);
+
+const rsvpOf = (ctx: Ctx, postId: string) =>
+  requestLoader<string, { count: number; going: boolean }>(ctx, 'communityRsvp', async (ids) => {
+    const found = await communityFeed.rsvps(ids, ctx.actor?.userId ?? null);
+    return ids.map((id) => found.get(id) ?? { count: 0, going: false });
+  }).load(postId);
+
+const authorRoleOf = (ctx: Ctx, communityId: string, userId: string) =>
+  requestLoader<string, string | null>(
+    ctx,
+    'communityAuthorRole',
+    async (keys) => Promise.all(keys.map(async (k) => {
+      const [c, u] = k.split(':');
+      return communities.roleOf(c!, u!);
+    })),
+  ).load(`${communityId}:${userId}`);
+
+const PollOptionRef = builder.objectRef<Poll['options'][number]>('CommunityPollOption').implement({
+  fields: (t) => ({
+    id: t.exposeID('id'),
+    label: t.exposeString('label'),
+    votes: t.exposeInt('votes'),
+    percent: t.exposeInt('percent'),
+  }),
+});
+
+const PollRef = builder.objectRef<Poll>('CommunityPoll').implement({
+  fields: (t) => ({
+    total: t.exposeInt('total'),
+    options: t.field({ type: [PollOptionRef], resolve: (p) => p.options }),
+    myOptionId: t.id({ nullable: true, resolve: (p) => p.myOptionId }),
+  }),
+});
+
+const ClubEventRef = builder.objectRef<NonNullable<Post['event']> & { postId: string }>('CommunityClubEvent').implement({
+  description: 'A club event posted in the feed. "I\'m in" is `rsvp`.',
+  fields: (t) => ({
+    title: t.exposeString('title'),
+    startsAt: t.field({ type: 'DateTime', resolve: (e) => e.startsAt }),
+    place: t.exposeString('place', { nullable: true }),
+    goingCount: t.int({ resolve: async (e, _a, ctx) => (await rsvpOf(ctx, e.postId)).count }),
+    viewerGoing: t.boolean({ resolve: async (e, _a, ctx) => (await rsvpOf(ctx, e.postId)).going }),
+  }),
+});
+
 const PostRef = builder.objectRef<Post>('CommunityPost').implement({
-  description: 'communities R9 — a post in the members’ feed. Plain text.',
+  description: 'communities R9 — a post in the members’ feed. Plain text, plus photos, a video link, a poll or a club event.',
   fields: (t) => ({
     id: t.exposeID('id'),
     body: t.exposeString('body'),
     pinned: t.exposeBoolean('pinned'),
+    kind: t.field({ type: PostKindEnum, resolve: (p) => p.kind }),
+    photoUrls: t.stringList({
+      resolve: (p) => p.photoPublicIds.map((id) => cloudinary.url(id, TRANSFORMS.venuePhoto)).filter((u): u is string => u !== null),
+    }),
+    videoUrl: t.exposeString('videoUrl', { nullable: true }),
+    poll: t.field({ type: PollRef, nullable: true, resolve: (p, _a, ctx) => (p.kind === 'poll' ? pollOf(ctx, p.id) : null) }),
+    event: t.field({ type: ClubEventRef, nullable: true, resolve: (p) => (p.event ? { ...p.event, postId: p.id } : null) }),
+    authorIsAdmin: t.boolean({
+      description: 'The ADMIN badge: the author is the owner or an admin.',
+      resolve: async (p, _a, ctx) => {
+        const role = await authorRoleOf(ctx, p.communityId, p.authorUserId);
+        return role === 'owner' || role === 'admin';
+      },
+    }),
+    community: t.field({ type: CommunityRef, nullable: true, resolve: (p) => communities.findById(p.communityId) }),
     createdAt: t.field({ type: 'DateTime', resolve: (p) => p.createdAt }),
     author: t.field({
       type: PlayerProfileRef,
@@ -668,6 +738,52 @@ const PostPayload = builder
     }),
   });
 
+const PollVotePayload = builder
+  .objectRef<{ poll: Poll | null; userError: UserErrorShape | null }>('VoteCommunityPollPayload')
+  .implement({
+    fields: (t) => ({
+      poll: t.field({ type: PollRef, nullable: true, resolve: (p) => p.poll }),
+      userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
+    }),
+  });
+
+const RsvpPayload = builder
+  .objectRef<{ goingCount: number; going: boolean; userError: UserErrorShape | null }>('RsvpCommunityEventPayload')
+  .implement({
+    fields: (t) => ({
+      goingCount: t.exposeInt('goingCount'),
+      going: t.exposeBoolean('going'),
+      userError: t.field({ type: UserErrorRef, nullable: true, resolve: (p) => p.userError }),
+    }),
+  });
+
+builder.queryFields((t) => ({
+  myClubEvents: t.field({
+    type: [PostRef],
+    description: 'Floodlight — club events coming up in the player’s communities, soonest first (My PL4Y, Home).',
+    args: { first: t.arg.int({ defaultValue: 10 }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const mine = await communities.listForUser(actor.userId);
+      return communityFeed.upcomingEvents(mine.map((c) => c.id), args.first ?? 10);
+    },
+  }),
+  myCommunityPosts: t.field({
+    type: [PostRef],
+    description: 'Floodlight — "From your communities" on Home: the newest posts across the player’s communities.',
+    args: { first: t.arg.int({ defaultValue: 6 }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const mine = await communities.listForUser(actor.userId);
+      const pages = await Promise.all(mine.slice(0, 10).map((c) => communityFeed.posts(c.id, actor.userId, { first: 3 })));
+      return pages
+        .flatMap((p) => p.nodes)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, Math.min(Math.max(args.first ?? 6, 1), 20));
+    },
+  }),
+}));
+
 const MessagePayload = builder
   .objectRef<{ message: Message | null; userError: UserErrorShape | null }>('CommunityMessagePayload')
   .implement({
@@ -680,12 +796,70 @@ const MessagePayload = builder
 builder.mutationFields((t) => ({
   createCommunityPost: t.field({
     type: PostPayload,
-    description: 'communities R9 — active members. Up to 2,000 characters. INVALID_POST, POSTING_TOO_FAST.',
-    args: { communityId: t.arg.id({ required: true }), body: t.arg.string({ required: true }) },
+    description:
+      'communities R9 — active members. Up to 2,000 characters. Floodlight: `kind` adds photos (upload under ' +
+      'communityPostPhotoUploadSignature), a video link, 2–4 poll options (the body is the question) or a club event. ' +
+      'INVALID_POST, POSTING_TOO_FAST.',
+    args: {
+      communityId: t.arg.id({ required: true }),
+      body: t.arg.string({ required: true }),
+      kind: t.arg({ type: PostKindEnum }),
+      photoPublicIds: t.arg.stringList(),
+      videoUrl: t.arg.string(),
+      pollOptions: t.arg.stringList(),
+      eventTitle: t.arg.string(),
+      eventStartsAt: t.arg({ type: 'DateTime' }),
+      eventPlace: t.arg.string(),
+    },
     resolve: async (_root, args, ctx) => {
       const actor = requireActor(ctx);
-      const { data, userError } = await attempt(() => communityFeed.createPost(actor, String(args.communityId), args.body));
+      const { data, userError } = await attempt(() =>
+        communityFeed.createPost(actor, String(args.communityId), args.body, {
+          kind: (args.kind as PostKind | null | undefined) ?? 'text',
+          photoPublicIds: args.photoPublicIds ?? [],
+          videoUrl: args.videoUrl ?? null,
+          pollOptions: args.pollOptions ?? [],
+          event: args.eventTitle && args.eventStartsAt ? { title: args.eventTitle, startsAt: args.eventStartsAt, place: args.eventPlace ?? null } : null,
+        }),
+      );
       return { post: data, userError };
+    },
+  }),
+
+  voteCommunityPoll: t.field({
+    type: PollVotePayload,
+    description: 'Members. A vote can be changed.',
+    args: { postId: t.arg.id({ required: true }), optionId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() => communityFeed.vote(actor, String(args.postId), String(args.optionId)));
+      return { poll: data, userError };
+    },
+  }),
+
+  rsvpCommunityEvent: t.field({
+    type: RsvpPayload,
+    description: '"I\'m in" on a club event post. Members; `going: false` takes it back.',
+    args: { postId: t.arg.id({ required: true }), going: t.arg.boolean({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const { data, userError } = await attempt(() => communityFeed.rsvp(actor, String(args.postId), args.going));
+      return { goingCount: data?.count ?? 0, going: data?.going ?? false, userError };
+    },
+  }),
+
+  communityPostPhotoUploadSignature: t.field({
+    type: MediaUploadPayload,
+    description: 'ADR 0003 §C2 — a member uploads a post photo under this, then passes `folder/publicId` in photoPublicIds.',
+    args: { communityId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      const id = String(args.communityId);
+      const { data, userError } = await attempt(async () => {
+        if (!(await communities.roleOf(id, actor.userId))) throw forbidden();
+        return cloudinary.signUpload({ publicId: `photo-${newId()}`, folder: cloudinary.folders.communityPostRoot(id) });
+      });
+      return { upload: data, userError };
     },
   }),
 

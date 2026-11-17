@@ -290,7 +290,8 @@ export function createGamesService(deps: GamesDeps) {
 
   /** My Games: hosted, joined and invited, newest start first. The client groups them. */
   async function listForUser(userId: string): Promise<Game[]> {
-    const ids = await repo.idsForUser(userId, new Date(now().getTime() - HISTORY_MS));
+    const at = now();
+    const ids = await repo.idsForUser(userId, new Date(at.getTime() - HISTORY_MS), at);
     return (await repo.byIds(ids)).map(live);
   }
 
@@ -306,6 +307,11 @@ export function createGamesService(deps: GamesDeps) {
   async function invitedUserIds(gameId: string): Promise<string[]> {
     const rows = await db.gameInvite.findMany({ where: { gameId }, orderBy: { createdAt: 'asc' }, select: { userId: true } });
     return rows.map((r) => r.userId);
+  }
+
+  /** Floodlight — "Decline" on a game invite: the invite goes, the game is untouched. */
+  async function declineInvite(actor: Actor, gameId: string): Promise<void> {
+    await db.gameInvite.deleteMany({ where: { gameId, userId: actor.userId } });
   }
 
   async function isInvited(gameId: string, userId: string): Promise<boolean> {
@@ -664,6 +670,7 @@ export function createGamesService(deps: GamesDeps) {
   }
 
   return {
+    declineInvite,
     findById,
     byId,
     search,

@@ -25,6 +25,12 @@ export const MESSAGE_MAX = 1000;
 export const POST_WINDOW: Window = { seconds: 3600, max: 10 };
 export const MESSAGE_WINDOW: Window = { seconds: 60, max: 20 };
 
+export type PostKind = 'text' | 'photo' | 'video' | 'poll' | 'event';
+export const POST_KINDS: readonly PostKind[] = ['text', 'photo', 'video', 'poll', 'event'];
+export const MAX_PHOTOS = 6;
+export const POLL_MIN = 2;
+export const POLL_MAX = 4;
+
 export interface Post {
   id: string;
   communityId: string;
@@ -32,6 +38,27 @@ export interface Post {
   body: string;
   pinned: boolean;
   createdAt: Date;
+  /** Floodlight — what the post carries besides its text. */
+  kind: PostKind;
+  photoPublicIds: string[];
+  videoUrl: string | null;
+  event: { title: string; startsAt: Date; place: string | null } | null;
+}
+
+/** Floodlight — the extras a post can carry. Text-only posts pass none. */
+export interface PostExtras {
+  kind?: PostKind;
+  photoPublicIds?: string[];
+  videoUrl?: string | null;
+  pollOptions?: string[];
+  event?: { title: string; startsAt: Date; place?: string | null } | null;
+}
+
+export interface Poll {
+  postId: string;
+  total: number;
+  options: { id: string; label: string; votes: number; percent: number }[];
+  myOptionId: string | null;
 }
 
 export interface Message {
@@ -48,16 +75,37 @@ export interface FeedDeps {
   db: Db;
   limiter: { consume(key: string, window: Window): Promise<LimitResult> };
   roleOf(communityId: string, userId: string | null): Promise<Role | null>;
+  /** ADR 0003 §C2 — the folder a community's post photos must live under. */
+  photoRoot?(communityId: string): string;
   now?: () => Date;
 }
 
-const asPost = (r: { id: string; communityId: string; authorUserId: string; body: string; pinnedAt: Date | null; createdAt: Date }): Post => ({
+type PostRow = {
+  id: string;
+  communityId: string;
+  authorUserId: string;
+  body: string;
+  pinnedAt: Date | null;
+  createdAt: Date;
+  kind: string;
+  photoPublicIds: string[];
+  videoUrl: string | null;
+  eventTitle: string | null;
+  eventStartsAt: Date | null;
+  eventPlace: string | null;
+};
+
+const asPost = (r: PostRow): Post => ({
   id: r.id,
   communityId: r.communityId,
   authorUserId: r.authorUserId,
   body: r.body,
   pinned: r.pinnedAt !== null,
   createdAt: r.createdAt,
+  kind: r.kind as PostKind,
+  photoPublicIds: r.photoPublicIds,
+  videoUrl: r.videoUrl,
+  event: r.eventTitle && r.eventStartsAt ? { title: r.eventTitle, startsAt: r.eventStartsAt, place: r.eventPlace } : null,
 });
 
 const asMessage = (r: { id: string; communityId: string; senderUserId: string; body: string; deletedAt: Date | null; createdAt: Date }): Message => ({
@@ -141,13 +189,148 @@ export function createCommunityFeed(deps: FeedDeps) {
     return row ? asPost(row) : null;
   }
 
-  async function createPost(actor: Actor, communityId: string, raw: string): Promise<Post> {
+  /**
+   * Floodlight — a post may carry photos, a video link, a poll or a club event.
+   * Text is required for a text post and a poll (its question); a photo, video
+   * or event post may go without a caption.
+   */
+  async function createPost(actor: Actor, communityId: string, raw: string, extras: PostExtras = {}): Promise<Post> {
     await requireMember(actor, communityId);
-    const body = text(raw, POST_MAX, 'post');
+    const kind = extras.kind ?? 'text';
+    if (!POST_KINDS.includes(kind)) throw new UserError(FeedCode.INVALID_POST, 'That is not a kind of post.');
+    const captionOptional = kind === 'photo' || kind === 'video' || kind === 'event';
+    const body = captionOptional && raw.trim().length === 0 ? '' : text(raw, POST_MAX, kind === 'poll' ? 'poll question' : 'post');
+
+    const photos = kind === 'photo' ? [...new Set(extras.photoPublicIds ?? [])] : [];
+    if (kind === 'photo') {
+      if (photos.length < 1 || photos.length > MAX_PHOTOS) throw new UserError(FeedCode.INVALID_POST, `Add 1 to ${MAX_PHOTOS} photos.`);
+      const root = deps.photoRoot?.(communityId);
+      if (root && photos.some((p) => !p.startsWith(`${root}/`))) throw forbidden();
+    }
+    let videoUrl: string | null = null;
+    if (kind === 'video') {
+      try {
+        const u = new URL((extras.videoUrl ?? '').trim());
+        if (u.protocol !== 'https:') throw new Error('not https');
+        videoUrl = u.toString();
+      } catch {
+        throw new UserError(FeedCode.INVALID_POST, 'Add a video link that starts with https://.');
+      }
+    }
+    const options = kind === 'poll' ? (extras.pollOptions ?? []).map((o) => o.trim()).filter(Boolean) : [];
+    if (kind === 'poll') {
+      if (options.length < POLL_MIN || options.length > POLL_MAX) throw new UserError(FeedCode.INVALID_POST, `A poll has ${POLL_MIN} to ${POLL_MAX} options.`);
+      if (options.some((o) => o.length > 80)) throw new UserError(FeedCode.INVALID_POST, 'A poll option is at most 80 characters.');
+      if (new Set(options.map((o) => o.toLowerCase())).size !== options.length) throw new UserError(FeedCode.INVALID_POST, 'Each poll option is different.');
+    }
+    let event: { eventTitle: string; eventStartsAt: Date; eventPlace: string | null } | null = null;
+    if (kind === 'event') {
+      const title = (extras.event?.title ?? '').trim();
+      const startsAt = extras.event?.startsAt;
+      if (title.length < 1 || title.length > 80) throw new UserError(FeedCode.INVALID_POST, 'An event needs a name, up to 80 characters.');
+      if (!startsAt || Number.isNaN(startsAt.getTime())) throw new UserError(FeedCode.INVALID_POST, 'An event needs a date and time.');
+      if (startsAt.getTime() < now().getTime()) throw new UserError(FeedCode.INVALID_POST, 'An event is in the future.');
+      const place = extras.event?.place?.trim() || null;
+      if (place && place.length > 120) throw new UserError(FeedCode.INVALID_POST, 'The place is at most 120 characters.');
+      event = { eventTitle: title, eventStartsAt: startsAt, eventPlace: place };
+    }
+
     await slowDown(`communities:post:${actor.userId}`, POST_WINDOW);
-    const row = await db.communityPost.create({ data: { id: newId(), communityId, authorUserId: actor.userId, body } });
+    const row = await db.communityPost.create({
+      data: {
+        id: newId(),
+        communityId,
+        authorUserId: actor.userId,
+        body,
+        kind,
+        photoPublicIds: photos,
+        videoUrl,
+        ...(event ?? {}),
+        ...(options.length ? { pollOptions: { create: options.map((label, position) => ({ id: newId(), label, position })) } } : {}),
+      },
+    });
     await touch(communityId);
     return asPost(row);
+  }
+
+  // --- Floodlight: polls and club events ------------------------------------------
+
+  async function polls(postIds: readonly string[], viewerUserId: string | null): Promise<Map<string, Poll>> {
+    const out = new Map<string, Poll>();
+    if (postIds.length === 0) return out;
+    const [options, counts, mine] = await Promise.all([
+      db.communityPollOption.findMany({ where: { postId: { in: [...postIds] } }, orderBy: [{ position: 'asc' }] }),
+      db.communityPollVote.groupBy({ by: ['optionId'], where: { postId: { in: [...postIds] } }, _count: { _all: true } }),
+      viewerUserId ? db.communityPollVote.findMany({ where: { postId: { in: [...postIds] }, userId: viewerUserId } }) : Promise.resolve([]),
+    ]);
+    const votes = new Map(counts.map((c) => [c.optionId, c._count._all]));
+    const myVote = new Map(mine.map((v) => [v.postId, v.optionId]));
+    for (const postId of postIds) {
+      const own = options.filter((o) => o.postId === postId);
+      if (!own.length) continue;
+      const total = own.reduce((n, o) => n + (votes.get(o.id) ?? 0), 0);
+      out.set(postId, {
+        postId,
+        total,
+        options: own.map((o) => {
+          const v = votes.get(o.id) ?? 0;
+          return { id: o.id, label: o.label, votes: v, percent: total ? Math.round((v / total) * 100) : 0 };
+        }),
+        myOptionId: myVote.get(postId) ?? null,
+      });
+    }
+    return out;
+  }
+
+  /** Members; a vote can be changed. */
+  async function vote(actor: Actor, postId: string, optionId: string): Promise<Poll> {
+    const row = await postOf(postId);
+    await requireMember(actor, row.communityId);
+    const option = await db.communityPollOption.findUnique({ where: { id: optionId } });
+    if (!option || option.postId !== postId) throw new UserError(FeedCode.INVALID_POST, 'Pick one of the poll’s options.');
+    await db.communityPollVote.upsert({
+      where: { postId_userId: { postId, userId: actor.userId } },
+      create: { postId, userId: actor.userId, optionId },
+      update: { optionId, createdAt: now() },
+    });
+    return (await polls([postId], actor.userId)).get(postId)!;
+  }
+
+  async function rsvps(postIds: readonly string[], viewerUserId: string | null): Promise<Map<string, { count: number; going: boolean }>> {
+    const out = new Map<string, { count: number; going: boolean }>();
+    if (postIds.length === 0) return out;
+    const [counts, mine] = await Promise.all([
+      db.communityPostRsvp.groupBy({ by: ['postId'], where: { postId: { in: [...postIds] } }, _count: { _all: true } }),
+      viewerUserId ? db.communityPostRsvp.findMany({ where: { postId: { in: [...postIds] }, userId: viewerUserId } }) : Promise.resolve([]),
+    ]);
+    const going = new Set(mine.map((m) => m.postId));
+    for (const id of postIds) out.set(id, { count: counts.find((c) => c.postId === id)?._count._all ?? 0, going: going.has(id) });
+    return out;
+  }
+
+  /** "I'm in" — members, on an event post that has not started. */
+  async function rsvp(actor: Actor, postId: string, going: boolean): Promise<{ count: number; going: boolean }> {
+    const row = await postOf(postId);
+    await requireMember(actor, row.communityId);
+    if (row.kind !== 'event') throw new UserError(FeedCode.INVALID_POST, 'Only an event post takes an RSVP.');
+    if (going) {
+      if (row.eventStartsAt && row.eventStartsAt.getTime() < now().getTime()) throw new UserError(FeedCode.INVALID_POST, 'That event has started.');
+      await db.communityPostRsvp.createMany({ data: [{ postId, userId: actor.userId }], skipDuplicates: true });
+    } else {
+      await db.communityPostRsvp.deleteMany({ where: { postId, userId: actor.userId } });
+    }
+    return (await rsvps([postId], actor.userId)).get(postId)!;
+  }
+
+  /** Club events coming up in these communities, soonest first: My PL4Y and Home. */
+  async function upcomingEvents(communityIds: string[], first = 10): Promise<Post[]> {
+    if (communityIds.length === 0) return [];
+    const rows = await db.communityPost.findMany({
+      where: { communityId: { in: communityIds }, kind: 'event', deletedAt: null, hiddenAt: null, eventStartsAt: { gte: now() } },
+      orderBy: [{ eventStartsAt: 'asc' }],
+      take: Math.min(Math.max(first, 1), 50),
+    });
+    return rows.map(asPost);
   }
 
   async function postOf(postId: string) {
@@ -216,7 +399,7 @@ export function createCommunityFeed(deps: FeedDeps) {
     return asMessage(await db.communityMessage.update({ where: { id: messageId }, data: { deletedAt: now() } }));
   }
 
-  return { posts, pinnedPost, createPost, deletePost, pinPost, messages, sendMessage, deleteMessage };
+  return { posts, pinnedPost, createPost, deletePost, pinPost, messages, sendMessage, deleteMessage, polls, vote, rsvps, rsvp, upcomingEvents };
 }
 
 export type CommunityFeed = ReturnType<typeof createCommunityFeed>;

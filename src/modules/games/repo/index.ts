@@ -198,14 +198,15 @@ export function createGamesRepo(db: Db) {
   }
 
   /** Every game this person hosts, plays in or is invited to; newest start first. */
-  async function idsForUser(userId: string, since: Date): Promise<string[]> {
+  /** `at` is the service clock: an invited game shows until it ends. */
+  async function idsForUser(userId: string, since: Date, at: Date = new Date()): Promise<string[]> {
     const rows = await db.$queryRaw<{ id: string }[]>`
       SELECT g.id
         FROM games g
        WHERE g.starts_at >= ${since}
          AND (EXISTS (SELECT 1 FROM game_participants p
                        WHERE p.game_id = g.id AND p.user_id = ${userId}::uuid AND p.status = 'joined')
-           OR (g.status IN ('open', 'full') AND g.ends_at > now()
+           OR (g.status IN ('open', 'full') AND g.ends_at > ${at}
                AND EXISTS (SELECT 1 FROM game_invites i WHERE i.game_id = g.id AND i.user_id = ${userId}::uuid)))
        ORDER BY g.starts_at DESC, g.id
        LIMIT 100`;

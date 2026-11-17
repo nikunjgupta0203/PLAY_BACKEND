@@ -41,6 +41,8 @@
     "onboard:venues": "tsx --env-file-if-exists=.env scripts/onboard-venues.ts",
     "seed:fixtures": "tsx --env-file-if-exists=.env scripts/seed-fixtures.ts",
     "seed:home": "tsx --env-file-if-exists=.env scripts/seed-home-feed.ts",
+    "seed:floodlight": "tsx --env-file-if-exists=.env scripts/seed-floodlight.ts",
+    "seed:feeds-e2e": "tsx --env-file-if-exists=.env scripts/seed-feeds-e2e.ts",
     "cloudinary:setup": "tsx --env-file-if-exists=.env scripts/cloudinary-setup.ts"
   },
   "dependencies": {

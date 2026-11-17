@@ -1084,6 +1084,15 @@ enum CommunityBilling {
   YEARLY
 }
 
+"""A club event posted in the feed. "I'm in" is `rsvp`."""
+type CommunityClubEvent {
+  goingCount: Int!
+  place: String
+  startsAt: DateTime!
+  title: String!
+  viewerGoing: Boolean!
+}
+
 type CommunityConnection {
   edges: [CommunityEdge!]!
   pageInfo: PageInfo!
@@ -1228,14 +1237,38 @@ enum CommunityPayoutStatus {
   READY
 }
 
-"""communities R9 — a post in the members’ feed. Plain text."""
+type CommunityPoll {
+  myOptionId: ID
+  options: [CommunityPollOption!]!
+  total: Int!
+}
+
+type CommunityPollOption {
+  id: ID!
+  label: String!
+  percent: Int!
+  votes: Int!
+}
+
+"""
+communities R9 — a post in the members’ feed. Plain text, plus photos, a video link, a poll or a club event.
+"""
 type CommunityPost {
   author: PlayerProfile
+
+  """The ADMIN badge: the author is the owner or an admin."""
+  authorIsAdmin: Boolean!
   body: String!
+  community: Community
   createdAt: DateTime!
+  event: CommunityClubEvent
   id: ID!
+  kind: CommunityPostKind!
   mine: Boolean!
+  photoUrls: [String!]!
   pinned: Boolean!
+  poll: CommunityPoll
+  videoUrl: String
 
   """The author, or an admin."""
   viewerCanDelete: Boolean!
@@ -1249,6 +1282,14 @@ type CommunityPostConnection {
 type CommunityPostEdge {
   cursor: String!
   node: CommunityPost!
+}
+
+enum CommunityPostKind {
+  EVENT
+  PHOTO
+  POLL
+  TEXT
+  VIDEO
 }
 
 type CommunityPostPayload {
@@ -1285,6 +1326,107 @@ communities R1, R2 — PUBLIC: listed and open to find. PRIVATE: membership is a
 enum CommunityVisibility {
   PRIVATE
   PUBLIC
+}
+
+input ContentInput {
+  body: String
+
+  """`folder/publicId` from adminContentCoverUploadSignature."""
+  coverPublicId: String
+  durationSeconds: Int
+  featured: Boolean
+  kicker: String
+  kind: ContentKind!
+
+  """A link only: its publisher."""
+  sourceName: String
+
+  """A link only: its address."""
+  sourceUrl: String
+  sportId: ID
+  summary: String
+  title: String!
+
+  """https only. A short needs one to publish."""
+  videoUrl: String
+}
+
+"""
+Something PL4Y published. `body` is plain text with blank-line paragraphs: render as text, never markup.
+"""
+type ContentItem {
+  body: String
+  coverPublicId: String
+  coverUrl: String
+  durationSeconds: Int
+  featured: Boolean!
+  id: ID!
+
+  """Show under the picture when set: "Photo: Jane Doe on Unsplash"."""
+  imageCredit: String
+  imageCreditUrl: String
+  kicker: String
+  kind: ContentKind!
+  publishedAt: DateTime
+
+  """A link’s publisher: "ESPNcricinfo"."""
+  sourceName: String
+
+  """Where a link opens."""
+  sourceUrl: String
+  sport: Sport
+  status: ContentStatus!
+  summary: String
+  thumbUrl: String
+  title: String!
+  updatedAt: DateTime!
+  videoUrl: String
+}
+
+type ContentItemPayload {
+  item: ContentItem
+  userError: UserError
+}
+
+enum ContentKind {
+  """"Explained · 60 sec"."""
+  EXPLAINER
+
+  """
+  content R5 — an outside headline. Opens sourceUrl in the in-app browser; there is no body.
+  """
+  LINK
+
+  """A PL4Y Originals feature: the Home hero."""
+  ORIGINAL
+
+  """A vertical video, played in a web view."""
+  SHORT
+
+  """An article."""
+  STORY
+}
+
+type ContentPage {
+  endCursor: String
+  hasNextPage: Boolean!
+  nodes: [ContentItem!]!
+}
+
+"""
+content R4 — the Home feed’s PL4Y regions. An empty region is left out of the layout.
+"""
+type ContentShelf {
+  explainer: ContentItem
+  hero: ContentItem
+  shorts: [ContentItem!]!
+  stories: [ContentItem!]!
+}
+
+enum ContentStatus {
+  ARCHIVED
+  DRAFT
+  PUBLISHED
 }
 
 type Conversation {
@@ -1692,10 +1834,14 @@ enum DeepLinkRoute {
   CONVERSATION
   COURT_BOOKING
   EVENT_DRAW
+  MY_BOOKINGS
   ORGANISATION
   ORGANIZER_DASHBOARD
   ORGANIZER_PAYOUTS
+  PARTNER_INVITE
   PAYMENT_HISTORY
+  PREDICTIONS
+  PRO_MATCH
   REWARDS
   SUPPORT_TICKET
   VENUE_DESK
@@ -1774,6 +1920,9 @@ type DrawPreviewSeed {
 }
 
 type Event implements Node {
+  """"BY PL4Y" — run by PL4Y itself."""
+  byPl4y: Boolean!
+
   """A cancellation before this instant is refunded in full."""
   cancellationCutoffAt: DateTime
   categories: [EventCategory!]!
@@ -1787,6 +1936,7 @@ type Event implements Node {
   coverUrl: String
   description: String
   endsAt: DateTime!
+  experienceKind: ExperienceKind
   galleryUrls: [String!]!
   hostTermsAccepted: Boolean!
   id: ID!
@@ -2016,7 +2166,12 @@ type EventEdge {
 }
 
 input EventFilter {
+  """Only events PL4Y runs."""
+  byPl4y: Boolean
   city: String
+
+  """PL4Y Experiences type chips."""
+  experience: ExperienceFilter
 
   """A `Format.key`."""
   format: String
@@ -2126,9 +2281,117 @@ enum EventStatus {
   PUBLISHED
 }
 
+enum ExperienceFilter {
+  FITNESS
+  MEETUP
+  ORIGINAL
+  SCREENING
+
+  """Sports events: tournaments and leagues."""
+  SPORTS
+}
+
+"""
+059 — what kind of outing an experience is. A sports event has none (it shows under Tournaments).
+"""
+enum ExperienceKind {
+  FITNESS
+  MEETUP
+  ORIGINAL
+  SCREENING
+}
+
 enum FeeBasis {
   PLAYER
   TEAM
+}
+
+"""
+Something PL4Y follows on a feed: a CricAPI series, an API-Football league + season, a snooker.org event, a news search.
+"""
+type FeedFollow {
+  enabled: Boolean!
+  id: ID!
+  lastError: String
+  lastImportAt: DateTime
+  name: String!
+  provider: FeedProvider!
+  ref: String!
+  season: String
+  sport: Sport!
+}
+
+input FeedFollowInput {
+  enabled: Boolean
+
+  """As players see it: "IPL 2026", "ISL"."""
+  name: String!
+  provider: FeedProvider!
+
+  """The feed’s id (series, league, event), or the search for news."""
+  ref: String!
+
+  """API-Football: the season year."""
+  season: String
+  sportId: ID!
+}
+
+type FeedFollowPayload {
+  follow: FeedFollow
+  userError: UserError
+}
+
+enum FeedJob {
+  """Import fixtures for every enabled follow."""
+  FIXTURES
+
+  """Poll live matches now, due or not."""
+  LIVE
+
+  """Import headlines now."""
+  NEWS
+}
+
+enum FeedProvider {
+  API_FOOTBALL
+  CRICAPI
+  GOOGLE_NEWS
+  NEWSDATA
+  PEXELS
+  SNOOKER_ORG
+  UNSPLASH
+}
+
+"""
+G10 — one provider: is a key set, calls today (IST) against its limit, the last error.
+"""
+type FeedProviderStatus {
+  callsToday: Int!
+  capped: Boolean!
+
+  """A key (or the switch) is set on the worker."""
+  configured: Boolean!
+  dailyLimit: Int!
+  label: String!
+  lastCallAt: DateTime
+  lastError: String
+  lastErrorAt: DateTime
+  lastLivePollAt: DateTime
+  provider: FeedProvider!
+}
+
+type FeedRunPayload {
+  runs: [FeedRunSummary!]!
+  userError: UserError
+}
+
+type FeedRunSummary {
+  created: Int!
+  errors: [String!]!
+  provider: FeedProvider!
+  skipped: String
+  unchanged: Int!
+  updated: Int!
 }
 
 type FieldAttempt {
@@ -2713,6 +2976,14 @@ type LedgerEntry {
   kind: String!
 }
 
+type MakePredictionPayload {
+  pick: PredictionPick
+
+  """Fresh, with the new split."""
+  question: PredictionQuestion
+  userError: UserError
+}
+
 type ManagedVenue {
   role: VenueRole!
   venue: Venue!
@@ -3136,6 +3407,7 @@ type Mutation {
 
   """portal R6 — a note for the team. The applicant never sees it."""
   addPartnershipNote(body: String!, id: ID!): PartnershipApplicationPayload!
+  addProfileRecord(detail: String, sportId: ID, title: String!, year: Int): ProfileRecordPayload!
 
   """
   Teammate registration — the captain enters a teammate who has a PL4Y account (a PlayerProfile id from in-app search) and pays for the team; no invite to accept. When the team is whole the seat is held for payment (PAYMENT_PENDING), or the team joins the waitlist if the draw is full. Once paid, the QR ticket shows on every teammate’s own login. A teammate with no account is still invited by email.
@@ -3155,6 +3427,7 @@ type Mutation {
     venueId: ID!
   ): VenuePayload!
   adminAddOrganisationMember(email: String!, organisationId: ID!, reason: String!, role: OrganisationAddableRole!): AddOrganisationMemberPayload!
+  adminAddProMoment(input: ProMomentInput!, matchId: ID!): ProMomentPayload!
 
   """Take a ticket (assign it to yourself), or let it go (toMe false)."""
   adminAssignSupportTicket(ticketId: ID!, toMe: Boolean!): StaffSupportTicketPayload!
@@ -3171,12 +3444,22 @@ type Mutation {
   adminCancelUserDeletion(reason: String!, userId: ID!): AdminUserPayload!
 
   """
+  ADR 0003 §C2 — upload under this signature, then save `folder/publicId` as coverPublicId.
+  """
+  adminContentCoverUploadSignature(
+    """Omit for an item not saved yet."""
+    itemId: ID
+  ): MediaUploadPayload!
+
+  """
   portal — PL4Y staff create a draft hosted by an organisation (required). Its draws, edits and publishing then go through the usual mutations, which staff may call on any event.
   """
   adminCreateEvent(input: CreateEventInput!, reason: String!): EventPayload!
 
   """org R1 — created verified, with its owner (or an invite to them)."""
   adminCreateOrganisation(input: CreateOrganisationInput!, reason: String!): CreateOrganisationPayload!
+  adminCreatePredictionQuestion(input: PredictionQuestionInput!): PredictionQuestionPayload!
+  adminCreateProMatch(input: ProMatchInput!): ProMatchPayload!
 
   """
   portal — open an account for someone. They sign in later with a code to this email; the app asks for their sports then.
@@ -3189,9 +3472,28 @@ type Mutation {
   adminCreateVenue(input: CreateVenueInput!, ownerEmail: String, reason: String!): VenuePayload!
 
   """
+  Portal — deletes a draft or archived item. A published one must be archived first.
+  """
+  adminDeleteContent(id: ID!): ContentItemPayload!
+
+  """Portal — stop following. Matches already imported stay."""
+  adminDeleteFeedFollow(id: ID!): ProOkPayload!
+
+  """
+  Portal — removes the match, its moments, chat and questions. Admins; the reason is audited.
+  """
+  adminDeleteProMatch(id: ID!, reason: String!): ProOkPayload!
+  adminDeleteProMoment(id: ID!): ProOkPayload!
+
+  """
   communities R10 — take one post out of a community’s feed, for everyone. What it said stays in the database.
   """
   adminHideCommunityPost(postId: ID!, reason: String!): StaffCommunityPayload!
+
+  """
+  Portal — moderation. The message is gone for players; the body stays here. Audited.
+  """
+  adminHideProMatchMessage(id: ID!, reason: String!): ProOkPayload!
 
   """
   identity R19 — brings a deactivated account back when the player asks. They sign in as usual afterwards.
@@ -3209,6 +3511,11 @@ type Mutation {
   adminRefundVenuePayment(reason: String!, venuePaymentId: ID!): VenuePaymentRefundPayload!
   adminReinstateOrganisation(organisationId: ID!, reason: String!): OrganisationPayload!
   adminReinstateUser(reason: String!, userId: ID!): AdminUserPayload!
+
+  """
+  pro R8 — hands locked fields back to the feed (all of them when `fields` is left out).
+  """
+  adminReleaseProMatchFeed(fields: [String!], id: ID!): ProMatchPayload!
 
   """
   games — takes one comment out of a game’s thread, for everyone. What it said is kept in the audit log.
@@ -3245,10 +3552,39 @@ type Mutation {
   """
   adminReviewFraudCase(confirmed: Boolean!, reason: String!, subjectId: ID!, subjectType: FraudSubject!): AdminClosedPayload!
 
+  """Portal — run a feed job now. Spends calls from the same daily budget."""
+  adminRunFeed(job: FeedJob!): FeedRunPayload!
+
+  """Portal — create (no `id`) or edit. Saving never publishes."""
+  adminSaveContent(id: ID, input: ContentInput!): ContentItemPayload!
+
+  """
+  Portal — follow a series, league, event or news search (or edit one when `id` is given).
+  """
+  adminSaveFeedFollow(id: ID, input: FeedFollowInput!): FeedFollowPayload!
+
+  """Portal — create a team, or edit one when `id` is given."""
+  adminSaveProTeam(id: ID, input: ProTeamInput!): ProTeamPayload!
+
   """
   communities R10 — hide a community (gone from Discover and invite links; members still see it, flagged) or show it again. Admin and support. The reason goes in the audit log.
   """
   adminSetCommunityHidden(communityId: ID!, hidden: Boolean!, reason: String!): StaffCommunityPayload!
+
+  """content R2, R3 — publish, unpublish to draft, or archive."""
+  adminSetContentStatus(id: ID!, status: ContentStatus!): ContentItemPayload!
+
+  """
+  Portal — make an event a PL4Y Experience (screening, meetup, fitness, original) or a sports event again (null), and mark it BY PL4Y. Experiences have no draw. Admin and support; the reason is audited.
+  """
+  adminSetEventExperience(
+    byPl4y: Boolean!
+    eventId: ID!
+
+    """screening | meetup | fitness | original, or null."""
+    experienceKind: String
+    reason: String!
+  ): Boolean!
 
   """
   org R2 — the only way ownership moves. The previous owner stays on as an admin.
@@ -3267,6 +3603,11 @@ type Mutation {
   adminSetSupportTicketStatus(status: SupportTicketStatus!, ticketId: ID!): StaffSupportTicketPayload!
 
   """
+  predictions R3 — marks every pick and writes points, once. Settles a result: the reason is audited.
+  """
+  adminSettlePredictionQuestion(away: Int, home: Int, id: ID!, optionId: ID, reason: String!): PredictionQuestionPayload!
+
+  """
   org R7 — no publishing, no entries, payouts held. The reason is shown to its owner.
   """
   adminSuspendOrganisation(organisationId: ID!, reason: String!): OrganisationPayload!
@@ -3275,10 +3616,21 @@ type Mutation {
   adminSuspendUser(reason: String!, userId: ID!): AdminUserPayload!
   adminUpdateOrganisation(input: OrganisationDetailsInput!, organisationId: ID!, reason: String!): OrganisationPayload!
 
+  """Portal — only while open. Set `locksAt` to now to lock it early."""
+  adminUpdatePredictionQuestion(id: ID!, input: PredictionQuestionPatch!): PredictionQuestionPayload!
+
+  """
+  Portal — the live desk: status, score, over, stats, scorecard. Published to open Match Centres at once.
+  """
+  adminUpdateProMatch(id: ID!, input: ProMatchLiveInput!): ProMatchPayload!
+
   """
   portal — correct someone’s name, email, phone, city or bio. Only the fields sent change. A new city clears their map pin, as it does in the app.
   """
   adminUpdateUser(input: AdminUpdateUserInput!, reason: String!, userId: ID!): AdminUserPayload!
+
+  """predictions R4 — nobody earns anything. Audited."""
+  adminVoidPredictionQuestion(id: ID!, reason: String!): PredictionQuestionPayload!
 
   """
   The next round from a round whose heats are all final: the top `perHeat` of each heat, then the `best` of the rest across heats.
@@ -3390,6 +3742,11 @@ type Mutation {
   communityCoverUploadSignature(communityId: ID!): MediaUploadPayload!
 
   """
+  ADR 0003 §C2 — a member uploads a post photo under this, then passes `folder/publicId` in photoPublicIds.
+  """
+  communityPostPhotoUploadSignature(communityId: ID!): MediaUploadPayload!
+
+  """
   Host only, once the game has started. A game also completes by itself when its end time passes.
   """
   completeGame(gameId: ID!): GamePayload!
@@ -3425,9 +3782,9 @@ type Mutation {
   createCommunityPaymentOrder(communityId: ID!): CreatePaymentOrderPayload!
 
   """
-  communities R9 — active members. Up to 2,000 characters. INVALID_POST, POSTING_TOO_FAST.
+  communities R9 — active members. Up to 2,000 characters. Floodlight: `kind` adds photos (upload under communityPostPhotoUploadSignature), a video link, 2–4 poll options (the body is the question) or a club event. INVALID_POST, POSTING_TOO_FAST.
   """
-  createCommunityPost(body: String!, communityId: ID!): CommunityPostPayload!
+  createCommunityPost(body: String!, communityId: ID!, eventPlace: String, eventStartsAt: DateTime, eventTitle: String, kind: CommunityPostKind, photoPublicIds: [String!], pollOptions: [String!], videoUrl: String): CommunityPostPayload!
 
   """
   Creates a draft. Publishing is the validation gate (events R1). PL4Y staff use adminCreateEvent.
@@ -3485,6 +3842,9 @@ type Mutation {
   identity R19 — temporary. Ends every session and hides the profile; ratings, history, entries and payments are kept. Signing in again offers to reactivate. Permanent deletion is requestAccountDeletion.
   """
   deactivateAccount: OkPayload!
+
+  """Floodlight — the invitee says no. "Accept" is joinGame."""
+  declineGameInvite(gameId: ID!): Boolean!
   declineMessageRequest(conversationId: ID!): ConversationPayload!
   declinePartnerInvite(token: String!): RegistrationPayload!
 
@@ -3503,6 +3863,7 @@ type Mutation {
   chat R12 — deletes your own message for everyone. It shows as deleted in the thread.
   """
   deleteMessage(messageId: ID!): MessagePayload!
+  deleteProfileRecord(id: ID!): ProfileRecordPayload!
 
   """
   venues R5 — soft delete. Completed tournaments keep resolving their venue.
@@ -3580,6 +3941,11 @@ type Mutation {
   leaveOrganisation(organisationId: ID!): OrganisationOkPayload!
   leaveWaitlist(registrationId: ID!): RegistrationPayload!
   logout(allDevices: Boolean = false): OkPayload!
+
+  """
+  predictions R2 — pick an option, or give both scores for an exact-score question. Changeable until it locks.
+  """
+  makePrediction(away: Int, home: Int, optionId: ID, questionId: ID!): MakePredictionPayload!
   markAllNotificationsRead: MarkReadPayload!
 
   """
@@ -3843,6 +4209,9 @@ type Mutation {
   """R22 — the captain takes back an invite nobody has answered."""
   revokePartnerInvite(inviteId: ID!): InvitePartnerPayload!
 
+  """"I'm in" on a club event post. Members; `going: false` takes it back."""
+  rsvpCommunityEvent(going: Boolean!, postId: ID!): RsvpCommunityEventPayload!
+
   """
   payouts R1 — saves (or replaces) the host bank details and starts the bank check. With `organisationId`, the organisation’s account instead: its owner only (org R6).
   """
@@ -3892,6 +4261,10 @@ type Mutation {
 
   """Opens the conversation when there is none (chat R2, R3)."""
   sendMessage(input: SendMessageInput!): SendMessagePayload!
+  sendProMatchMessage(body: String!, matchId: ID!): SendProMatchMessagePayload!
+
+  """profile R20 — up to 40 characters; blank clears it."""
+  setAthleteLabel(label: String): SetAthleteLabelPayload!
   setAvatar(publicId: String!): ProfilePayload!
 
   """
@@ -3905,6 +4278,9 @@ type Mutation {
 
   """bookings R4 — replaces a court’s weekly opening rules."""
   setCourtAvailability(courtId: ID!, rules: [CourtRuleInput!]!): VenueBookingSetupPayload!
+
+  """pro R6 — replaces the list. Up to 10."""
+  setFavouriteTeams(teamIds: [ID!]!): SetFavouriteTeamsPayload!
 
   """
   F14 — when a match is played, with or without a court. Players get the 30-minute reminder. Null takes the time (and any court) off.
@@ -4094,6 +4470,21 @@ type Mutation {
   """
   venuePhotoUploadSignature(venueId: ID!): MediaUploadPayload!
   verifyOtp(client: AuthClient = APP, code: String!, deviceLabel: String, email: String!): SessionPayload!
+
+  """Members. A vote can be changed."""
+  voteCommunityPoll(optionId: ID!, postId: ID!): VoteCommunityPollPayload!
+}
+
+"""Everything on the Predict screen for the signed-in player."""
+type MyPredictions {
+  badges: [PredictionBadge!]!
+  challenge: PredictionChallenge!
+  cityRank: PredictionCityRank
+
+  """Picks made in the last 7 days, settled or not."""
+  picksThisWeek: Int!
+  results(first: Int = 10): [PredictionResult!]!
+  stats: PredictionStats!
 }
 
 """
@@ -4145,12 +4536,25 @@ R4 — `title` and `body` are rendered on the server from versioned templates. R
 """
 type Notification {
   body: String!
+  category: NotificationCategory!
   createdAt: DateTime!
   id: ID!
   kind: String!
   readAt: DateTime
+  tag: NotificationTag!
   target: NotificationTarget
   title: String!
+}
+
+"""
+Floodlight — the filter chips on the Notifications screen. OTHER rows show under All only.
+"""
+enum NotificationCategory {
+  COMMUNITY
+  GAMES
+  MATCHES
+  OTHER
+  PREDICTIONS
 }
 
 type NotificationConnection {
@@ -4225,6 +4629,8 @@ enum NotificationKind {
   PAYMENT_UPDATED
   PAYOUT_ACCOUNT_STATUS
   PAYOUT_STATUS
+  PREDICTION_SETTLED
+  PRO_MATCH_LIVE
   RANKING_CHANGED
   RATING_CHANGED
   REFERRAL_CONVERTED
@@ -4255,6 +4661,17 @@ input NotificationPreferencesInput {
   muted: [NotificationKind!]
   pushEnabled: Boolean
   quietHours: Boolean
+}
+
+"""Floodlight — the mono tag on a row."""
+enum NotificationTag {
+  CHAT
+  CLUB
+  GAME
+  LIVE
+  PL4Y
+  PTS
+  TIX
 }
 
 """
@@ -5129,6 +5546,11 @@ type PlayerProfile implements Node {
 
   """profile R16 — one sport over a period. The record part is public (R5)."""
   analytics(period: AnalyticsPeriod = D90, sportId: ID!): PlayerAnalytics!
+
+  """
+  profile R20 — self-declared, never verified. Shown as an ATHLETE label.
+  """
+  athleteLabel: String
   avatarUrl(size: AvatarSize = md): String
   bio: String
   city: String
@@ -5136,6 +5558,11 @@ type PlayerProfile implements Node {
   """False when city and bio were withheld for this viewer."""
   detailsVisible: Boolean!
   displayName: String!
+
+  """
+  pro R6 — the teams this player follows. Hidden with the rest of the details.
+  """
+  favouriteTeams: [ProTeam!]!
   id: ID!
 
   """
@@ -5166,6 +5593,11 @@ type PlayerProfile implements Node {
 
   """profile R14 — the newest completed matches, every sport."""
   recentResults(first: Int = 5): [MatchResultSummary!]!
+
+  """
+  profile R21 — records the player added. Hidden with the rest of the details when the profile is not visible.
+  """
+  records: [ProfileRecord!]!
   sports: [PlayerSport!]!
 
   """profile R8 — one materialised snapshot per selected sport."""
@@ -5222,6 +5654,196 @@ enum PlayingAreaKind {
   TURF
 }
 
+type PredictionBadge {
+  description: String!
+  earned: Boolean!
+  key: String!
+  name: String!
+}
+
+"""
+predictions R7 — ranked by total pick points. Pick points never change a player’s rating.
+"""
+type PredictionBoard {
+  entries: [PredictionBoardEntry!]!
+
+  """Your own row, pinned below the list."""
+  me: PredictionBoardEntry
+  size: Int!
+}
+
+type PredictionBoardEntry {
+  isMe: Boolean!
+  player: PlayerProfile
+  points: Int!
+  rank: Int!
+}
+
+enum PredictionBoardScope {
+  CITY
+
+  """One community you are in, or all of yours."""
+  COMMUNITY
+
+  """Players you have an active chat with, and you."""
+  FRIENDS
+  GLOBAL
+  SPORT
+}
+
+"""
+predictions R6 — today’s (IST) challenge. Finishing it adds `bonus` points once.
+"""
+type PredictionChallenge {
+  bonus: Int!
+  completed: Boolean!
+  date: String!
+  tasks: [PredictionChallengeTask!]!
+}
+
+type PredictionChallengeTask {
+  done: Boolean!
+  key: String!
+  label: String!
+  progress: Int!
+  target: Int!
+}
+
+type PredictionCityRank {
+  city: String!
+  rank: Int!
+}
+
+enum PredictionKind {
+  CHOICE
+  EXACT_SCORE
+  PLAYER_PICK
+}
+
+type PredictionOption {
+  detail: String
+  id: ID!
+
+  """Null until settled."""
+  isCorrect: Boolean
+  label: String!
+  outcome: PredictionOutcome
+
+  """Share of all picks, 0–100."""
+  percent: Int!
+  picks: Int!
+}
+
+input PredictionOptionInput {
+  detail: String
+  label: String!
+
+  """
+  A choice question on a match: ties the option to the result for settle suggestions.
+  """
+  outcome: PredictionOutcome
+}
+
+"""predictions R8 — what an option means for the match result."""
+enum PredictionOutcome {
+  AWAY
+  DRAW
+  HOME
+}
+
+type PredictionPick {
+  away: Int
+
+  """Null while open, and on a void question."""
+  correct: Boolean
+  createdAt: DateTime!
+  home: Int
+  id: ID!
+  optionId: ID
+  pointsAwarded: Int
+  updatedAt: DateTime!
+}
+
+"""predictions R1 — a free question. Points have no cash value."""
+type PredictionQuestion {
+  correctAway: Int
+  correctHome: Int
+  id: ID!
+
+  """No more picks: past the lock time, settled or void."""
+  isLocked: Boolean!
+  kind: PredictionKind!
+  live: Boolean!
+  locksAt: DateTime!
+  match: ProMatch
+  myPick: PredictionPick
+  options: [PredictionOption!]!
+  points: Int!
+  prompt: String!
+  settledAt: DateTime
+  sport: Sport!
+  status: PredictionStatus!
+  suggestedAt: DateTime
+  suggestedAway: Int
+  suggestedHome: Int
+
+  """
+  predictions R8 — the answer the final score points to. Staff confirm it.
+  """
+  suggestedOptionId: ID
+  totalPicks: Int!
+}
+
+input PredictionQuestionInput {
+  kind: PredictionKind!
+  live: Boolean
+  locksAt: DateTime!
+  matchId: ID
+
+  """2 to 6; none for an exact-score question."""
+  options: [PredictionOptionInput!]
+
+  """Default 10, or 30 for a live question."""
+  points: Int
+  prompt: String!
+
+  """Needed only without a match."""
+  sportId: ID
+}
+
+input PredictionQuestionPatch {
+  locksAt: DateTime
+  points: Int
+  prompt: String
+}
+
+type PredictionQuestionPayload {
+  question: PredictionQuestion
+  userError: UserError
+}
+
+type PredictionResult {
+  pick: PredictionPick!
+  question: PredictionQuestion!
+}
+
+type PredictionStats {
+  """0–100. Null before anything settles."""
+  accuracy: Int
+  bestStreak: Int!
+  correct: Int!
+  picks: Int!
+  points: Int!
+  settled: Int!
+  streak: Int!
+}
+
+enum PredictionStatus {
+  OPEN
+  SETTLED
+  VOID
+}
+
 type PreferencesPayload {
   preferences: NotificationPreferences
   userError: UserError
@@ -5269,8 +5891,260 @@ type PricingSettingsPayload {
   userError: UserError
 }
 
+enum ProBoardFilter {
+  FINISHED
+  LIVE
+  UPCOMING
+}
+
+"""
+pro R4 — a message in a match’s public room. Render `body` as plain text.
+"""
+type ProChatMessage {
+  author: PlayerProfile
+  body: String!
+  createdAt: DateTime!
+
+  """Staff only see these; players never get them."""
+  hidden: Boolean!
+  id: ID!
+  mine: Boolean!
+}
+
+type ProChatPage {
+  endCursor: String
+  hasNextPage: Boolean!
+  nodes: [ProChatMessage!]!
+}
+
+"""One table of the scorecard: a batting or bowling card, a box score."""
+type ProInnings {
+  columns: [String!]!
+  footer: String
+  rows: [ProScoreRow!]!
+  team: String!
+  title: String!
+}
+
+"""
+A professional match. Entered by PL4Y staff while there is no data feed (`provider` = manual).
+"""
+type ProMatch {
+  away: ProTeam!
+  awayDetail: String
+  awayScore: String
+
+  """pro R5 — subscribe for `pro.match.updated` and `pro.chat.message`."""
+  channel: String!
+
+  """Fans who have said something in the room."""
+  chatCount: Int!
+  chatOpen: Boolean!
+  city: String
+
+  """The balls of the over in play: "1", "4", "W", "6"."""
+  currentOver: [String!]!
+  featured: Boolean!
+
+  """
+  pro R8 — fields staff edited by hand; the feed leaves them alone until handed back.
+  """
+  feedLocked: [String!]!
+  home: ProTeam!
+
+  """"20 ov"."""
+  homeDetail: String
+  homeScore: String
+  id: ID!
+  isLive: Boolean!
+  league: String!
+  moments(first: Int = 30): [ProMoment!]!
+
+  """"MI need 41 off 34"."""
+  note: String
+
+  """
+  manual, or the feed that keeps it current: cricapi, api_football, snooker_org.
+  """
+  provider: String!
+  providerRef: String
+
+  """
+  The Match Centre’s Predict tab: every question on the match, newest first.
+  """
+  questions: [PredictionQuestion!]!
+
+  """
+  G9 — when the score was last confirmed: the latest feed check or edit. "Updated 3 min ago".
+  """
+  scoreCheckedAt: DateTime!
+  scorecard: [ProInnings!]!
+  sport: Sport!
+  stage: String
+  startsAt: DateTime!
+  stats: [ProMatchStat!]!
+  status: ProMatchStatus!
+
+  """"2nd innings", "67'"."""
+  statusDetail: String
+  updatedAt: DateTime!
+  venueName: String
+  winner: ProMatchWinner
+}
+
+input ProMatchInput {
+  awayTeamId: ID!
+  city: String
+  featured: Boolean
+  homeTeamId: ID!
+  league: String!
+  sportId: ID!
+  stage: String
+  startsAt: DateTime!
+  venueName: String
+}
+
+"""
+Everything that changes during play. A field left out stays as it is; null clears it.
+"""
+input ProMatchLiveInput {
+  awayDetail: String
+  awayScore: String
+  chatOpen: Boolean
+  city: String
+
+  """Up to 12 balls."""
+  currentOver: [String!]
+  featured: Boolean
+  homeDetail: String
+  homeScore: String
+  league: String
+  note: String
+
+  """[{ team, title, columns, rows: [{ name, detail, cells }], footer }]"""
+  scorecard: [JSONObject!]
+  stage: String
+  startsAt: DateTime
+
+  """[{ label, value }] — up to 6."""
+  stats: [JSONObject!]
+  status: ProMatchStatus
+  statusDetail: String
+  venueName: String
+
+  """Once finished: who won. Settle suggestions read it."""
+  winner: ProMatchWinner
+}
+
+type ProMatchPayload {
+  match: ProMatch
+  userError: UserError
+}
+
+type ProMatchStat {
+  label: String!
+  value: String!
+}
+
+enum ProMatchStatus {
+  ABANDONED
+
+  """Innings break, half time: still live for the board."""
+  BREAK
+  FINISHED
+  LIVE
+  SCHEDULED
+}
+
+enum ProMatchWinner {
+  AWAY
+  DRAW
+  HOME
+}
+
+type ProMoment {
+  atLabel: String
+  createdAt: DateTime!
+  detail: String
+  id: ID!
+  kind: ProMomentKind!
+  title: String!
+}
+
+input ProMomentInput {
+  atLabel: String
+  detail: String
+  kind: ProMomentKind!
+  title: String!
+}
+
+enum ProMomentKind {
+  CARD
+  FOUR
+  GOAL
+  MILESTONE
+  OTHER
+  POINT
+  SIX
+  WICKET
+}
+
+type ProMomentPayload {
+  moment: ProMoment
+  userError: UserError
+}
+
+type ProOkPayload {
+  ok: Boolean!
+  userError: UserError
+}
+
+type ProScoreRow {
+  cells: [String!]!
+  detail: String
+  name: String!
+}
+
+"""A professional team. `tint` is the code circle’s colour, from data."""
+type ProTeam {
+  id: ID!
+  name: String!
+  shortCode: String!
+  sport: Sport!
+  tint: String!
+}
+
+input ProTeamInput {
+  name: String!
+  shortCode: String!
+  sportId: ID!
+  tint: String
+}
+
+type ProTeamPayload {
+  team: ProTeam
+  userError: UserError
+}
+
 type ProfilePayload {
   profile: PlayerProfile
+  userError: UserError
+}
+
+"""
+profile R21 — a record the player added themselves. Show it as "Added by you / by them".
+"""
+type ProfileRecord {
+  createdAt: DateTime!
+  detail: String
+  id: ID!
+  sport: Sport
+  title: String!
+  year: Int
+}
+
+type ProfileRecordPayload {
+  record: ProfileRecord
   userError: UserError
 }
 
@@ -5299,6 +6173,10 @@ type Query {
   """
   adminCommunityPayments(communityId: ID!): [CommunityPayment!]!
 
+  """Portal — every item, last edited first."""
+  adminContent(first: Int = 100, kind: ContentKind, status: ContentStatus): [ContentItem!]!
+  adminContentItem(id: ID!): ContentItem
+
   """
   portal — every entry on an event, newest first, with its partners, its place on the waitlist and its money.
   """
@@ -5306,6 +6184,10 @@ type Query {
 
   """portal — any event, any status, by title or link; soonest start first."""
   adminEvents(first: Int, offset: Int, search: String, status: EventStatus): AdminEventPage!
+  adminFeedFollows: [FeedFollow!]!
+
+  """Portal — G10: each provider’s calls today against its limit."""
+  adminFeedProviders: [FeedProviderStatus!]!
   adminFraudQueue(first: Int, offset: Int, reviewed: Boolean): FraudCasePage!
 
   """Every signal on one person, for their page in the portal."""
@@ -5328,6 +6210,17 @@ type Query {
   adminOrganisations(first: Int, offset: Int, search: String, verification: OrganisationVerification): OrganisationPage!
   adminOverview: AdminOverview!
 
+  """Portal — every question, newest first."""
+  adminPredictionQuestions(first: Int = 100): [PredictionQuestion!]!
+
+  """
+  Portal — the room with hidden messages included (marked), for moderation.
+  """
+  adminProMatchChat(before: String, first: Int = 100, matchId: ID!): ProChatPage!
+
+  """Portal — every pro match, newest start first."""
+  adminProMatches(first: Int = 100): [ProMatch!]!
+
   """Portal — referrals, newest first. Filter HELD for the review queue."""
   adminReferrals(first: Int = 100, status: ReferralStatus): [Referral!]!
   adminStaff: [PlatformStaffMember!]!
@@ -5344,6 +6237,9 @@ type Query {
   Portal — pay-at-venue payments, newest first, optionally for one venue.
   """
   adminVenuePayments(first: Int = 100, venueId: ID): [VenuePayment!]!
+
+  """Explore — players who call themselves athletes (profile R20)."""
+  athletes(first: Int = 10, q: String, sportId: ID): [PlayerProfile!]!
   careerApplication(id: ID!): CareerApplication
 
   """portal — careers applications, newest first. At most 100 a page."""
@@ -5396,6 +6292,9 @@ type Query {
   Portal — held and ready community payouts, oldest first. Any staff member reads; admin and finance pay.
   """
   communityPayoutsOpen: [CommunityPayout!]!
+  contentFeed(after: String, first: Int = 20, kind: ContentKind, q: String, sportId: ID): ContentPage!
+  contentItem(id: ID!): ContentItem
+  contentShelf(sportId: ID): ContentShelf!
   conversation(id: ID!): Conversation
 
   """chat R3 — your chats and requests either way, newest activity first."""
@@ -5477,9 +6376,19 @@ type Query {
   me: Viewer
 
   """
+  Floodlight — club events coming up in the player’s communities, soonest first (My PL4Y, Home).
+  """
+  myClubEvents(first: Int = 10): [CommunityPost!]!
+
+  """
   Communities the viewer is an active member of, most recently active first.
   """
   myCommunities: [Community!]!
+
+  """
+  Floodlight — "From your communities" on Home: the newest posts across the player’s communities.
+  """
+  myCommunityPosts(first: Int = 6): [CommunityPost!]!
 
   """
   The viewer’s open requests: waiting for an admin, or approved and waiting for payment.
@@ -5492,6 +6401,7 @@ type Query {
     offset: Int
   ): [CourtBooking!]!
   myEventGrants: [EventGrant!]!
+  myFavouriteTeams: [ProTeam!]!
 
   """
   My Games: games the viewer hosts, has joined or is invited to (last 90 days on), newest start first.
@@ -5515,6 +6425,7 @@ type Query {
   myPartnerInvites: [PartnerInviteDetails!]!
   myPayoutAccount: PayoutAccount
   myPayouts(after: String, before: String, first: Int, last: Int): PayoutConnection!
+  myPredictions: MyPredictions!
 
   """
   The signed-in player's own profile. A fresh install reads it here rather than walking the player through onboarding again.
@@ -5542,7 +6453,15 @@ type Query {
   node(id: ID!): Node
   nodes(ids: [ID!]!): [Node]!
   notificationPreferences: NotificationPreferences!
-  notifications(after: String, before: String, first: Int, last: Int): NotificationConnection!
+  notifications(
+    after: String
+    before: String
+
+    """Floodlight — one filter chip. Omitted (or OTHER) is All."""
+    category: NotificationCategory
+    first: Int
+    last: Int
+  ): NotificationConnection!
 
   """Offers a player can get at this venue now: the venue’s own and PL4Y’s."""
   offersAtVenue(venueId: ID!): [Offer!]!
@@ -5598,9 +6517,31 @@ type Query {
   Player search by display name. Every active player is listed, A–Z; a blank query lists them all. Visibility only withholds details.
   """
   players(after: String, before: String, first: Int, last: Int, query: String!, sportId: ID): PlayerConnection!
+  predictionLeaderboard(communityId: ID, first: Int = 50, scope: PredictionBoardScope!, sportId: ID): PredictionBoard!
+  predictionQuestion(id: ID!): PredictionQuestion
+
+  """Open questions, soonest to lock first."""
+  predictionQuestions(first: Int = 20, includeLocked: Boolean = false, live: Boolean, matchId: ID, sportId: ID): [PredictionQuestion!]!
 
   """Portal — commission, the introductory period and discount stacking."""
   pricingSettings: PricingSettings!
+  proMatch(id: ID!): ProMatch
+
+  """pro R4 — newest first; `before` pages back. Signed-in players only."""
+  proMatchChat(before: String, first: Int = 30, matchId: ID!): ProChatPage!
+
+  """
+  pro R3 — the Matches board: live first, then upcoming soonest, then the latest results.
+  """
+  proMatches(
+    filter: ProBoardFilter
+    first: Int = 30
+
+    """A team name, short code or league."""
+    q: String
+    sportId: ID
+  ): [ProMatch!]!
+  proTeams(sportId: ID): [ProTeam!]!
 
   """
   A leaderboard. Only settled ratings with five or more matches appear (rating R9), and the first page of every board is served from cache.
@@ -6262,6 +7203,12 @@ type RoundCards {
   judges: [GameScore!]!
 }
 
+type RsvpCommunityEventPayload {
+  going: Boolean!
+  goingCount: Int!
+  userError: UserError
+}
+
 """
 F21 — the few numbers a host may change about how a match is played. Each applies only to sports scored that way; anything else is refused.
 """
@@ -6418,6 +7365,11 @@ type SendMessagePayload {
   userError: UserError
 }
 
+type SendProMatchMessagePayload {
+  message: ProChatMessage
+  userError: UserError
+}
+
 type Session {
   accessToken: String!
   isNewUser: Boolean!
@@ -6430,6 +7382,16 @@ type SessionPayload {
   """
   reactivationToken: String
   session: Session
+  userError: UserError
+}
+
+type SetAthleteLabelPayload {
+  athleteLabel: String
+  userError: UserError
+}
+
+type SetFavouriteTeamsPayload {
+  teams: [ProTeam!]
   userError: UserError
 }
 
@@ -7855,6 +8817,11 @@ type Viewer {
 type ViewerPayload {
   userError: UserError
   viewer: Viewer
+}
+
+type VoteCommunityPollPayload {
+  poll: CommunityPoll
+  userError: UserError
 }
 
 input WalkInBookingInput {

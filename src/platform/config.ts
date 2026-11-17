@@ -183,6 +183,28 @@ export const configSchema = z.object({
   // Only needed once "enhanced push security" is switched on in the Expo project.
   EXPO_ACCESS_TOKEN: z.string().default(''),
 
+  // ── Floodlight live data (migration 060, docs/modules/22-floodlight.md) ──
+  // Read by the WORKER only: set these on Render's worker service. A provider
+  // with no key is off; nothing calls it. The app never calls a provider.
+  CRICAPI_KEY: z.string().default(''),
+  API_SPORTS_KEY: z.string().default(''),
+  // snooker.org's approved X-Requested-By value (ask webmaster@snooker.org).
+  SNOOKER_API_ID: z.string().default(''),
+  NEWSDATA_KEY: z.string().default(''),
+  UNSPLASH_KEY: z.string().default(''),
+  PEXELS_KEY: z.string().default(''),
+  // Google News RSS needs no key, so it has a switch instead.
+  // Google News RSS needs no key: on unless switched off (NEWS_RSS_ENABLED=false). Its daily budget still applies.
+  NEWS_RSS_ENABLED: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  // G10 — calls per IST day. Polling stops before the cap; the next day starts again.
+  CRICAPI_DAILY_LIMIT: int(1, 1_000_000).default(100),
+  API_SPORTS_DAILY_LIMIT: int(1, 1_000_000).default(100),
+  SNOOKER_DAILY_LIMIT: int(1, 1_000_000).default(500),
+  NEWSDATA_DAILY_LIMIT: int(1, 1_000_000).default(200),
+  NEWS_RSS_DAILY_LIMIT: int(1, 1_000_000).default(200),
+  UNSPLASH_DAILY_LIMIT: int(1, 1_000_000).default(200),
+  PEXELS_DAILY_LIMIT: int(1, 1_000_000).default(300),
+
   // identity R14 — refund-fraud prevention, not spam prevention.
   DISPOSABLE_EMAIL_DOMAINS: z
     .string()

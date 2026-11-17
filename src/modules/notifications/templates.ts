@@ -40,6 +40,10 @@ export const DEEP_LINK_ROUTES = [
   'venue_desk',
   /** cue launch — the player's bookings list (upcoming, past, cancelled). */
   'my_bookings',
+  /** Floodlight — a pro match's Match Centre; `id` is the pro match. */
+  'pro_match',
+  /** Floodlight — the Predict screen (points, open questions, results). */
+  'predictions',
 ] as const;
 export type DeepLinkRoute = (typeof DEEP_LINK_ROUTES)[number];
 
@@ -213,6 +217,10 @@ export interface TemplatePayloads {
   'referral.converted': { friendName: string; percentBps: number; capPaise: string };
   /** rewards — a discount is ready to use: a held referral approved, or a refunded payment's reward back. */
   'reward.available': { reason: 'referral' | 'restored'; percentBps: number; capPaise: string };
+  /** Floodlight — a match between teams the player follows has started. */
+  'pro.match_live': { home: string; away: string; league: string };
+  /** Floodlight — a pick was settled. Points have no cash value. */
+  'prediction.settled': { prompt: string; correct: boolean; points: number };
 }
 
 export type TemplateKey = keyof TemplatePayloads;
@@ -750,6 +758,19 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
           : `${offer(p.percentBps, p.capPaise)} is ready for your next payment.`,
     }),
   },
+  'pro.match_live': {
+    render: (p) => ({
+      title: `${p.home} v ${p.away} is live`,
+      body: `${p.league}. Follow the score and answer live questions in the Match Centre.`,
+    }),
+  },
+  'prediction.settled': {
+    render: (p) => ({
+      // An exact-score pick with the right result but the wrong score earns a third.
+      title: p.correct ? `You got it right · +${p.points} pts` : p.points > 0 ? `Right result · +${p.points} pts` : 'Not this time',
+      body: p.points > 0 ? `${p.prompt} Your points are on the leaderboard.` : `${p.prompt} New questions are open now.`,
+    }),
+  },
 };
 
 /** "1 hr 30 min". */
@@ -813,3 +834,36 @@ export function quietHoursEnd(at: Date): Date {
   if (end.getTime() <= at.getTime()) end.setUTCDate(end.getUTCDate() + 1);
   return end;
 }
+
+// --- Floodlight: what a row is about ---------------------------------------------------
+
+/** The Notifications screen's filter chips. Everything is in ALL. */
+export type NotificationCategory = 'matches' | 'predictions' | 'community' | 'games' | 'other';
+/** The mono tag a row shows: LIVE, PTS, CLUB, CHAT, GAME, TIX, PL4Y. */
+export type NotificationTag = 'live' | 'pts' | 'club' | 'chat' | 'game' | 'tix' | 'pl4y';
+
+/** Template-key prefixes for each filter. Prefix match keeps new templates in their family. */
+export const CATEGORY_PREFIXES: Record<Exclude<NotificationCategory, 'other'>, string[]> = {
+  matches: ['pro.', 'match.', 'draw.'],
+  predictions: ['prediction.'],
+  community: ['community.', 'chat.'],
+  games: ['game.'],
+};
+
+export function categoryOf(template: string): NotificationCategory {
+  for (const [category, prefixes] of Object.entries(CATEGORY_PREFIXES)) {
+    if (prefixes.some((p) => template.startsWith(p))) return category as NotificationCategory;
+  }
+  return 'other';
+}
+
+export function tagOf(template: string): NotificationTag {
+  if (template.startsWith('pro.') || template === 'match.starting_soon' || template === 'match.ready') return 'live';
+  if (template.startsWith('prediction.')) return 'pts';
+  if (template.startsWith('community.')) return 'club';
+  if (template.startsWith('chat.')) return 'chat';
+  if (template.startsWith('game.') || template.startsWith('match.') || template.startsWith('draw.')) return 'game';
+  if (/^(registration|partner|booking|checkin|waitlist|category|event|payment)\./.test(template)) return 'tix';
+  return 'pl4y';
+}
+

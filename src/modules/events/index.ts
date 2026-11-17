@@ -158,6 +158,7 @@ export {
   CATEGORY_STATUSES,
   CURRENCY,
   EVENT_STATUSES,
+  EXPERIENCE_KINDS,
   EventCode,
   MESSAGE_MAX,
   computePriceQuote,
@@ -166,6 +167,7 @@ export {
 } from './service/index.js';
 export type {
   EventKind,
+  ExperienceKind,
   Availability,
   Capacity,
   CategoryStatus,

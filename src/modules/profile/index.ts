@@ -2,6 +2,7 @@
 import { db } from '../../platform/db.js';
 import { cloudinary } from '../../platform/cloudinary.js';
 import { sport } from '../sport/index.js';
+import { createProfileExtras } from './service/floodlight.js';
 import { createProfileService, type MatchesPort, type UsersPort } from './service/index.js';
 
 /**
@@ -102,6 +103,11 @@ export const profile = createProfileService({
   },
 });
 
+/** Floodlight — the athlete label and the player's own records (profile R20, R21). */
+export const profileExtras = createProfileExtras({ db });
+
+export { ATHLETE_LABEL_MAX, MAX_RECORDS, RecordCode } from './service/floodlight.js';
+export type { ProfileExtras, ProfileRecord } from './service/floodlight.js';
 export { BIO_MAX, cleanDisplayName, ProfileCode, PROVISIONAL_MATCHES, VISIBILITIES } from './service/index.js';
 export type {
   Achievement,

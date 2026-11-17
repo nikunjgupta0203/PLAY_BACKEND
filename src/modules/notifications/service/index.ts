@@ -17,6 +17,7 @@ import { newId } from '../../../platform/ids.js';
 import { logger } from '../../../platform/logging/index.js';
 import type { PushGateway, PushTicket } from '../../../platform/push.js';
 import {
+  CATEGORY_PREFIXES,
   DEEP_LINK_ROUTES,
   inQuietHours,
   isEssential,
@@ -25,6 +26,7 @@ import {
   quietHoursEnd,
   render,
   type DeepLinkRoute,
+  type NotificationCategory,
   type Target,
   type TemplateKey,
   type TemplatePayloads,
@@ -326,12 +328,14 @@ export function createNotificationsService(deps: NotificationsDeps) {
 
   async function feed(
     actor: Actor,
-    page: { first: number; after?: string | null },
+    page: { first: number; after?: string | null; category?: Exclude<NotificationCategory, 'other'> | null },
   ): Promise<{ edges: { cursor: string; node: Notification }[]; hasNextPage: boolean }> {
     const after = page.after ? parseCursor(page.after) : null;
+    const family = page.category ? CATEGORY_PREFIXES[page.category] : null;
     const rows = await db.notification.findMany({
       where: {
         userId: actor.userId,
+        ...(family ? { AND: [{ OR: family.map((prefix) => ({ template: { startsWith: prefix } })) }] } : {}),
         ...(after
           ? {
               OR: [

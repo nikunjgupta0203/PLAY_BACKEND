@@ -47,6 +47,8 @@ const CHANNELS: ChannelRule[] = [
   { pattern: /^private-match-[0-9a-f-]{36}$/, entitled: () => true },
   // Match status transitions for everyone with the event open.
   { pattern: /^presence-event-[0-9a-f-]{36}$/, entitled: () => true },
+  // pro R5 — a pro match's Match Centre: score changes and chat, for any signed-in fan.
+  { pattern: /^private-pro-match-[0-9a-f-]{36}$/, entitled: () => true },
 ];
 
 type Result = { status: number; body: Record<string, unknown> };

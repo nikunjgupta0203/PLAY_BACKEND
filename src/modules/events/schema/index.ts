@@ -40,7 +40,36 @@ import type {
   EventStatus,
   PriceQuote,
 } from '../index.js';
-import type { ClosePreviewRow, EventCourt, EventReport, RefundPolicy, ReportReason, TeamSettingsInput } from '../service/index.js';
+import type { ClosePreviewRow, EventCourt, EventReport, ExperienceKind, RefundPolicy, ReportReason, TeamSettingsInput } from '../service/index.js';
+
+// --- 059: experiences --------------------------------------------------------
+
+builder.mutationFields((t) => ({
+  adminSetEventExperience: t.field({
+    type: 'Boolean',
+    description:
+      'Portal — make an event a PL4Y Experience (screening, meetup, fitness, original) or a sports event again (null), ' +
+      'and mark it BY PL4Y. Experiences have no draw. Admin and support; the reason is audited.',
+    args: {
+      eventId: t.arg.id({ required: true }),
+      experienceKind: t.arg.string({ description: 'screening | meetup | fitness | original, or null.' }),
+      byPl4y: t.arg.boolean({ required: true }),
+      reason: t.arg.string({ required: true }),
+    },
+    resolve: async (_root, args, ctx) => {
+      const staff = await requirePlatformStaff(ctx, ['admin', 'support']);
+      const eventId = String(args.eventId);
+      const kind = (args.experienceKind || null) as ExperienceKind | null;
+      await audited(
+        staff,
+        { action: 'event.experience', targetType: 'event', targetId: eventId, details: { experienceKind: kind, byPl4y: args.byPl4y } },
+        args.reason,
+        () => events.setExperience(eventId, kind, args.byPl4y),
+      );
+      return true;
+    },
+  }),
+}));
 
 // --- enums -------------------------------------------------------------------
 
@@ -414,6 +443,8 @@ builder.node(EventRef, {
     }),
     status: t.field({ type: EventStatusEnum, resolve: (e) => e.status }),
     kind: t.field({ type: EventKindEnum, resolve: (e) => e.kind }),
+    experienceKind: t.field({ type: ExperienceKindEnum, nullable: true, resolve: (e) => e.experienceKind }),
+    byPl4y: t.exposeBoolean('byPl4y', { description: '"BY PL4Y" — run by PL4Y itself.' }),
     contactPhone: t.string({
       nullable: true,
       description: "The host's number. Null unless the viewer is staff or holds a seat.",
@@ -735,8 +766,30 @@ const UpdateEventCategoryInput = builder.inputType('UpdateEventCategoryInput', {
   }),
 });
 
+const ExperienceKindEnum = builder.enumType('ExperienceKind', {
+  description: '059 — what kind of outing an experience is. A sports event has none (it shows under Tournaments).',
+  values: {
+    SCREENING: { value: 'screening' },
+    MEETUP: { value: 'meetup' },
+    FITNESS: { value: 'fitness' },
+    ORIGINAL: { value: 'original' },
+  } as const,
+});
+
+const ExperienceFilterEnum = builder.enumType('ExperienceFilter', {
+  values: {
+    SPORTS: { value: 'sports', description: 'Sports events: tournaments and leagues.' },
+    SCREENING: { value: 'screening' },
+    MEETUP: { value: 'meetup' },
+    FITNESS: { value: 'fitness' },
+    ORIGINAL: { value: 'original' },
+  } as const,
+});
+
 const EventFilterInput = builder.inputType('EventFilter', {
   fields: (t) => ({
+    experience: t.field({ type: ExperienceFilterEnum, description: 'PL4Y Experiences type chips.' }),
+    byPl4y: t.boolean({ description: 'Only events PL4Y runs.' }),
     query: t.string({
       description: 'discovery R1 — free text, matched against the title and the venue name.',
     }),
@@ -823,6 +876,8 @@ builder.queryFields((t) => ({
             maxPricePaise: f?.maxPricePaise != null ? BigInt(f.maxPricePaise) : null,
             query: f?.query ?? null,
             kind: f?.kind ?? null,
+            experience: (f?.experience as 'sports' | ExperienceKind | null | undefined) ?? null,
+            byPl4y: f?.byPl4y ?? null,
           },
           { first: clampFirst(args.first, 20), after: args.after ?? null },
         );

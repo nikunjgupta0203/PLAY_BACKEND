@@ -1,4 +1,5 @@
 /** The ONLY surface other modules may import (conventions.md §1). */
+import { cloudinary } from '../../platform/cloudinary.js';
 import { config } from '../../platform/config.js';
 import { db } from '../../platform/db.js';
 import { consume } from '../../platform/rateLimit.js';
@@ -40,6 +41,7 @@ export const communityFeed = createCommunityFeed({
   db,
   limiter: { consume },
   roleOf: (communityId, userId) => communities.roleOf(communityId, userId),
+  photoRoot: (communityId) => cloudinary.folders.communityPostRoot(communityId),
 });
 
 /** communities R10 — monthly creator payouts, paid by hand like host payouts. */
@@ -63,8 +65,8 @@ export const communityPayouts = createCommunityPayouts({
 
 export { CommunityPayoutCode, communityPayoutQuote, periodOf, previousPeriod } from './service/payouts.js';
 export type { CommunityPayout, CommunityPayouts } from './service/payouts.js';
-export { FeedCode, MESSAGE_MAX, POST_MAX, cursorOf as feedCursor } from './service/feed.js';
-export type { CommunityFeed, Message, Post } from './service/feed.js';
+export { FeedCode, MAX_PHOTOS, MESSAGE_MAX, POLL_MAX, POLL_MIN, POST_KINDS, POST_MAX, cursorOf as feedCursor } from './service/feed.js';
+export type { CommunityFeed, Message, Poll, Post, PostExtras, PostKind } from './service/feed.js';
 export {
   APPROVAL_TTL_MS,
   COMMISSION_BPS,

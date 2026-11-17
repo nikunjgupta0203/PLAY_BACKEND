@@ -49,6 +49,9 @@ export interface AuditEntry {
     | 'venue_payment'
     | 'venue_payout'
     | 'pricing_settings'
+    | 'pro_match'
+    | 'pro_match_message'
+    | 'prediction_question'
     | 'offer';
   targetId: string;
   reason?: string | null;

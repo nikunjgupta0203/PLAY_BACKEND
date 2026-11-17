@@ -44,11 +44,11 @@ export const notifications = createNotificationsService({
 });
 
 export { BULK_CHUNK, NotificationCode } from './service/index.js';
-export { DEEP_LINK_ROUTES, TEMPLATES, inQuietHours, render } from './templates.js';
+export { CATEGORY_PREFIXES, DEEP_LINK_ROUTES, TEMPLATES, categoryOf, inQuietHours, render, tagOf } from './templates.js';
 export type {
   Delivery,
   Notification,
   NotificationsService,
   Preferences,
 } from './service/index.js';
-export type { DeepLinkRoute, Target, TemplateKey, TemplatePayloads } from './templates.js';
+export type { DeepLinkRoute, NotificationCategory, NotificationTag, Target, TemplateKey, TemplatePayloads } from './templates.js';

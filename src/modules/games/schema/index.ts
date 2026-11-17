@@ -468,6 +468,17 @@ builder.mutationFields((t) => ({
     },
   }),
 
+  declineGameInvite: t.field({
+    type: 'Boolean',
+    description: 'Floodlight — the invitee says no. "Accept" is joinGame.',
+    args: { gameId: t.arg.id({ required: true }) },
+    resolve: async (_root, args, ctx) => {
+      const actor = requireActor(ctx);
+      await games.declineInvite(actor, String(args.gameId));
+      return true;
+    },
+  }),
+
   addGameComment: t.field({
     type: GameCommentPayload,
     description: 'games R8 — joined players only.',

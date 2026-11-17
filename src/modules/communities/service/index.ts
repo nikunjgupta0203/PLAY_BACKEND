@@ -817,6 +817,8 @@ export function createCommunitiesService(deps: CommunitiesDeps) {
           userId: actor.userId,
           note,
           status: approved ? 'approved' : 'pending',
+          // Stamped from the service clock: the sweep (R4) ages requests by createdAt.
+          createdAt: now(),
           decidedAt: approved ? now() : null,
           approvalExpiresAt: approved ? new Date(now().getTime() + APPROVAL_TTL_MS) : null,
         },
