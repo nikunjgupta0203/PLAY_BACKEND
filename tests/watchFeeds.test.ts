@@ -49,6 +49,7 @@ describe('API-Sports, the other sports', () => {
     expect(m.live).toMatchObject({ status: 'finished', homeScore: '112', awayScore: '104', winner: 'home', note: 'Boston Celtics win' });
     expect(apiSportsFollows(g, team, { ref: '12' })).toBe(true);
     expect(apiSportsFollows(g, team, { ref: '13' })).toBe(false);
+    expect(apiSportsFollows(g, team, { ref: '*' })).toBe(true);
   });
 
   it('an ice hockey game in play: plain number scores', () => {

@@ -39,6 +39,9 @@ export const API_SPORTS: ApiSportsSpec[] = [
 ];
 
 const RESERVE = 10;
+/** A follow of "*" takes any competition that day, capped: "show this sport, whatever is on". */
+export const ANY = '*';
+const ANY_PER_DAY = 12;
 const utcDay = (at: Date): string => at.toISOString().slice(0, 10);
 
 /** API-Sports answers 200 with `errors` set when the plan or the key refuses. */
@@ -159,6 +162,7 @@ export function parseApiSportsGame(raw: unknown, spec: Pick<ApiSportsSpec, 'path
 /** Does this game belong to the follow? League id for games, a word in the event name for fights. */
 export function apiSportsFollows(raw: unknown, spec: Pick<ApiSportsSpec, 'path'>, follow: Pick<FeedFollow, 'ref'>): boolean {
   const g = obj(raw);
+  if (follow.ref.trim() === ANY) return true;
   if (spec.path === 'fights') return (str(g['slug']) ?? '').toLowerCase().includes(follow.ref.trim().toLowerCase());
   return str(obj(g['league'])['id']) === follow.ref.trim();
 }
@@ -185,10 +189,16 @@ export function apiSportsAdapter(spec: ApiSportsSpec, key: () => string = () => 
       const out: FeedMatch[] = [];
       // Yesterday too: Matches › Results shows what just finished, with its score.
       for (const day of [utcDay(new Date(now.getTime() - 86_400_000)), utcDay(now), utcDay(new Date(now.getTime() + 86_400_000))]) {
+        const any = follow.ref.trim() === ANY;
+        let taken = 0;
         for (const g of await dayList(http, day, now)) {
           if (!apiSportsFollows(g, spec, follow)) continue;
-          const m = parseApiSportsGame(g, spec, spec.path === 'fights' ? null : follow.name || null);
-          if (m && m.startsAt && m.home && m.away) out.push(m);
+          // "*" names no league: each game keeps its own competition's name.
+          const m = parseApiSportsGame(g, spec, spec.path === 'fights' || any ? null : follow.name || null);
+          if (!m || !m.startsAt || !m.home || !m.away) continue;
+          if (any && taken >= ANY_PER_DAY) break;
+          out.push(m);
+          taken += 1;
         }
       }
       return out;
