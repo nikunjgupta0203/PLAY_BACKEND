@@ -360,6 +360,8 @@ export function createProService(deps: ProDeps) {
     const t = now();
     const first = Math.min(Math.max(filter.first ?? 30, 1), 50);
     const past = new Date(t.getTime() - 3 * 86_400_000);
+    // The Results tab reaches further back: F1 and fight cards are a week or more apart.
+    const resultsSince = new Date(t.getTime() - 14 * 86_400_000);
     const ahead = new Date(t.getTime() + 14 * 86_400_000);
     // A fixture 12 hours past its start that nobody moved to live is not "upcoming": hide it.
     const stale = new Date(t.getTime() - 12 * 3_600_000);
@@ -369,7 +371,7 @@ export function createProService(deps: ProDeps) {
         : filter.status === 'upcoming'
           ? { status: 'scheduled', startsAt: { lte: ahead, gte: stale } }
           : filter.status === 'finished'
-            ? { status: { in: ['finished', 'abandoned'] }, startsAt: { gte: past } }
+            ? { status: { in: ['finished', 'abandoned'] }, startsAt: { gte: resultsSince } }
             : {
                 OR: [
                   { status: { in: LIVE } },
