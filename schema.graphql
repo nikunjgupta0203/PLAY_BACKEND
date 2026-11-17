@@ -6541,6 +6541,11 @@ type Query {
     q: String
     sportId: ID
   ): [ProMatch!]!
+
+  """
+  Floodlight — the sports PL4Y follows for matches, news and predictions, in display order. Not the sports offered for play (`sports`).
+  """
+  proSports: [Sport!]!
   proTeams(sportId: ID): [ProTeam!]!
 
   """

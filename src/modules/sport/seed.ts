@@ -696,6 +696,107 @@ export const ARCHERY: SportSeed = {
   scoringRule: { kind: 'scorecard', method: 'ends', units: 6, par: null, arrowsPerEnd: 6 },
 };
 
+/*
+ * Watch sports (Floodlight, 2026-11-17): followed for matches, news and
+ * predictions. Not offered for play (offered.ts), so these play settings are
+ * only here because every sport row carries them (sport R1).
+ */
+export const AMERICAN_FOOTBALL: SportSeed = {
+  slug: 'american-football',
+  name: 'American Football',
+  sortOrder: 33,
+  formats: [{ key: 'eleven_a_side', name: '11-a-side', teamSize: 11 }],
+  skillBands: SKILL_BANDS,
+  // NFL: 4 × 15 minutes; one 10-minute overtime in the regular season.
+  scoringRule: {
+    kind: 'goals',
+    periods: 4,
+    periodMinutes: 15,
+    tiebreaker: 'extra_period',
+    extraPeriodMinutes: 10,
+    extraPeriods: 1,
+    actions: [
+      { key: 'touchdown', label: 'Touchdown', value: 6 },
+      { key: 'field_goal', label: 'Field goal', value: 3 },
+      { key: 'safety', label: 'Safety', value: 2 },
+      { key: 'two_point', label: '2-point conversion', value: 2 },
+      { key: 'extra_point', label: 'Extra point', value: 1 },
+    ],
+  },
+};
+
+export const BASEBALL: SportSeed = {
+  slug: 'baseball',
+  name: 'Baseball',
+  sortOrder: 34,
+  formats: [{ key: 'nine_a_side', name: '9-a-side', teamSize: 9 }],
+  skillBands: SKILL_BANDS,
+  // 9 innings, extra innings while level. Baseball has no clock: an inning is
+  // a period here, and the minutes are nominal.
+  scoringRule: {
+    kind: 'goals',
+    periods: 9,
+    periodMinutes: 20,
+    tiebreaker: 'extra_period',
+    extraPeriodMinutes: 20,
+    extraPeriods: 1,
+    repeatExtraPeriods: true,
+    actions: [{ key: 'run', label: 'Run', value: 1 }],
+  },
+};
+
+export const ICE_HOCKEY: SportSeed = {
+  slug: 'ice-hockey',
+  name: 'Ice Hockey',
+  sortOrder: 35,
+  formats: [{ key: 'six_a_side', name: '6-a-side', teamSize: 6 }],
+  skillBands: SKILL_BANDS,
+  // 3 × 20 minutes; 5 minutes of overtime, then a shootout.
+  scoringRule: {
+    kind: 'goals',
+    periods: 3,
+    periodMinutes: 20,
+    tiebreaker: 'extra_period_then_shootout',
+    extraPeriodMinutes: 5,
+    extraPeriods: 1,
+  },
+};
+
+export const RUGBY: SportSeed = {
+  slug: 'rugby',
+  name: 'Rugby',
+  sortOrder: 36,
+  formats: [
+    { key: 'fifteens', name: 'Rugby union (15s)', teamSize: 15 },
+    { key: 'sevens', name: 'Sevens', teamSize: 7 },
+  ],
+  skillBands: SKILL_BANDS,
+  // Union: 2 × 40 minutes.
+  scoringRule: {
+    kind: 'goals',
+    periods: 2,
+    periodMinutes: 40,
+    tiebreaker: 'none',
+    extraPeriodMinutes: null,
+    actions: [
+      { key: 'try', label: 'Try', value: 5 },
+      { key: 'conversion', label: 'Conversion', value: 2 },
+      { key: 'penalty', label: 'Penalty goal', value: 3 },
+      { key: 'drop_goal', label: 'Drop goal', value: 3 },
+    ],
+  },
+};
+
+export const FORMULA_1: SportSeed = {
+  slug: 'formula-1',
+  name: 'Formula 1',
+  sortOrder: 37,
+  formats: [{ key: 'grand_prix', name: 'Grand Prix', teamSize: 1 }],
+  skillBands: SKILL_BANDS,
+  // A race: lowest time wins.
+  scoringRule: RACE,
+};
+
 export const LAUNCH_SPORTS: SportSeed[] = [
   PICKLEBALL,
   BADMINTON,
@@ -730,6 +831,11 @@ export const LAUNCH_SPORTS: SportSeed[] = [
   GOLF,
   BOWLING,
   ARCHERY,
+  AMERICAN_FOOTBALL,
+  BASEBALL,
+  ICE_HOCKEY,
+  RUGBY,
+  FORMULA_1,
 ];
 
 /**

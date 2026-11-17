@@ -11,6 +11,8 @@ import { requestLoader } from '../../../graphql/requestLoader.js';
 import { audited, requirePlatformStaff } from '../../../graphql/staff.js';
 import { attempt, requireActor, UserErrorRef, type UserErrorShape } from '../../../graphql/userError.js';
 import { SportRef } from '../../sport/schema/index.js';
+import { sport } from '../../sport/index.js';
+import { WATCH_SPORT_SLUGS } from '../watchSports.js';
 import { PlayerProfileRef } from '../../profile/schema/index.js';
 import { MOMENT_KINDS, FOLLOW_PROVIDERS, pro, proFeeds, proMatchChannel } from '../index.js';
 import type { Innings, MomentKind, ProChatMessage, ProMatch, ProMoment, ProStat, ProStatus, ProTeam, ProWinner, FeedFollow, RunSummary } from '../index.js';
@@ -211,6 +213,14 @@ builder.queryFields((t) => ({
     nullable: true,
     args: { id: t.arg.id({ required: true }) },
     resolve: (_root, args) => pro.match(String(args.id)),
+  }),
+  proSports: t.field({
+    type: [SportRef],
+    description: 'Floodlight — the sports PL4Y follows for matches, news and predictions, in display order. Not the sports offered for play (`sports`).',
+    resolve: async () => {
+      const found = await Promise.all(WATCH_SPORT_SLUGS.map((slug) => sport.findBySlug(slug)));
+      return found.filter((s): s is NonNullable<typeof s> => s !== null && s.active);
+    },
   }),
   proTeams: t.field({
     type: [ProTeamRef],

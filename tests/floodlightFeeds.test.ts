@@ -563,3 +563,18 @@ describe('headlines', () => {
     await expect(prisma.contentItem.create({ data: { id: newId(), kind: 'link', title: 'x' } })).rejects.toThrow(/content_items_link_check/);
   });
 });
+
+describe('watch sports (founder list, 2026-11-17)', () => {
+  it('are the 11 sports, each with a seed entry and a row the migrations create or the seed always had', async () => {
+    const { WATCH_SPORT_SLUGS } = await import('../src/modules/pro/watchSports.js');
+    const { LAUNCH_SPORTS } = await import('../src/modules/sport/seed.js');
+    const { readFileSync, readdirSync } = await import('node:fs');
+    expect(WATCH_SPORT_SLUGS).toHaveLength(11);
+    const seeded = new Set(LAUNCH_SPORTS.map((s) => s.slug));
+    expect(WATCH_SPORT_SLUGS.filter((s) => !seeded.has(s))).toEqual([]);
+    // Production never runs the seed: the sports added for watching must come with a migration.
+    const dir = readdirSync('prisma/migrations').find((d) => d.endsWith('_061_watch_sports'))!;
+    const sql = readFileSync(`prisma/migrations/${dir}/migration.sql`, 'utf8');
+    for (const slug of ['american-football', 'baseball', 'ice-hockey', 'rugby', 'formula-1']) expect(sql).toContain(`'${slug}'`);
+  });
+});
