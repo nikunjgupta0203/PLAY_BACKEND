@@ -13,12 +13,54 @@
  */
 import type { Db } from './db.js';
 
-export type FeedProvider = 'cricapi' | 'api_football' | 'snooker_org' | 'google_news' | 'newsdata' | 'unsplash' | 'pexels';
-export const FEED_PROVIDERS: readonly FeedProvider[] = ['cricapi', 'api_football', 'snooker_org', 'google_news', 'newsdata', 'unsplash', 'pexels'];
+export type FeedProvider =
+  | 'cricapi'
+  | 'api_football'
+  | 'api_basketball'
+  | 'api_nfl'
+  | 'api_baseball'
+  | 'api_hockey'
+  | 'api_rugby'
+  | 'api_mma'
+  | 'jolpica'
+  | 'lichess'
+  | 'pandascore'
+  | 'snooker_org'
+  | 'google_news'
+  | 'newsdata'
+  | 'unsplash'
+  | 'pexels';
+export const FEED_PROVIDERS: readonly FeedProvider[] = [
+  'cricapi',
+  'api_football',
+  'api_basketball',
+  'api_nfl',
+  'api_baseball',
+  'api_hockey',
+  'api_rugby',
+  'api_mma',
+  'jolpica',
+  'lichess',
+  'pandascore',
+  'snooker_org',
+  'google_news',
+  'newsdata',
+  'unsplash',
+  'pexels',
+];
 
 export const FEED_LABELS: Record<FeedProvider, string> = {
   cricapi: 'CricketData.org (CricAPI)',
   api_football: 'API-Football',
+  api_basketball: 'API-Basketball',
+  api_nfl: 'API-American-Football (NFL)',
+  api_baseball: 'API-Baseball',
+  api_hockey: 'API-Hockey',
+  api_rugby: 'API-Rugby',
+  api_mma: 'API-MMA',
+  jolpica: 'Jolpica F1',
+  lichess: 'Lichess broadcasts',
+  pandascore: 'PandaScore (esports)',
   snooker_org: 'snooker.org',
   google_news: 'Google News RSS',
   newsdata: 'NewsData.io',

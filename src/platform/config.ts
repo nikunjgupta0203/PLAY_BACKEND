@@ -188,6 +188,8 @@ export const configSchema = z.object({
   // with no key is off; nothing calls it. The app never calls a provider.
   CRICAPI_KEY: z.string().default(''),
   API_SPORTS_KEY: z.string().default(''),
+  /** pandascore.co esports token (free plan). */
+  PANDASCORE_KEY: z.string().default(''),
   // snooker.org's approved X-Requested-By value (ask webmaster@snooker.org).
   SNOOKER_API_ID: z.string().default(''),
   NEWSDATA_KEY: z.string().default(''),
@@ -199,6 +201,10 @@ export const configSchema = z.object({
   // G10 — calls per IST day. Polling stops before the cap; the next day starts again.
   CRICAPI_DAILY_LIMIT: int(1, 1_000_000).default(100),
   API_SPORTS_DAILY_LIMIT: int(1, 1_000_000).default(100),
+  /** Jolpica asks for at most 500 calls an hour; a day of F1 needs a handful. */
+  JOLPICA_DAILY_LIMIT: int(1, 1_000_000).default(300),
+  LICHESS_DAILY_LIMIT: int(1, 1_000_000).default(1500),
+  PANDASCORE_DAILY_LIMIT: int(1, 1_000_000).default(900),
   SNOOKER_DAILY_LIMIT: int(1, 1_000_000).default(500),
   NEWSDATA_DAILY_LIMIT: int(1, 1_000_000).default(200),
   NEWS_RSS_DAILY_LIMIT: int(1, 1_000_000).default(200),

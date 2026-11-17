@@ -278,6 +278,33 @@ function wholeScore(raw: string | null): number | null {
   return /^\d{1,3}$/.test(v) ? Number(v) : null;
 }
 
+/** Sports where a level result is a real outcome players should be able to pick. */
+const DRAW_SPORTS = new Set(['football', 'chess', 'rugby']);
+
+/** The system's question for one match: the prompt and its options, tied to the result. Pure. */
+export function autoQuestionFor(m: { sport: string; league: string; stage: string | null; home: string; away: string }): {
+  prompt: string;
+  options: { label: string; outcome: Outcome }[];
+} {
+  const test = m.sport === 'cricket' && /\btest\b/i.test(`${m.league} ${m.stage ?? ''}`);
+  const draws = DRAW_SPORTS.has(m.sport) || test;
+  const label = (s: string) => (s.length > 60 ? `${s.slice(0, 59)}…` : s);
+  const options: { label: string; outcome: Outcome }[] = [
+    { label: label(m.home), outcome: 'home' },
+    ...(draws ? [{ label: 'Draw', outcome: 'draw' as Outcome }] : []),
+    { label: label(m.away), outcome: 'away' },
+  ];
+  const prompt =
+    m.sport === 'formula-1'
+      ? `Who finishes ahead: ${m.home} or ${m.away}?`
+      : m.sport === 'chess'
+        ? 'Who wins this game?'
+        : m.sport === 'mma'
+          ? 'Who wins the fight?'
+          : 'Who wins?';
+  return { prompt: prompt.slice(0, 200), options };
+}
+
 /** The match side of a suggestion: its final score and, when known, who won. */
 export interface FinalResult {
   homeScore: string | null;
@@ -556,6 +583,58 @@ export function createPredictionsService(deps: PredictionsDeps) {
     return count;
   }
 
+  /**
+   * predictions R10 (2026-11-17) — every upcoming feed match gets one "Who
+   * wins?" question, so Home's "Make your call" is never empty. Made by the
+   * system (no staff author); a match that already has a question is left
+   * alone, so staff questions are never doubled. Locks at the start.
+   */
+  async function autoWinnerQuestions(opts: { horizonHours?: number; max?: number } = {}): Promise<number> {
+    const t = now().getTime();
+    const matches = await db.proMatch.findMany({
+      where: {
+        provider: { not: 'manual' },
+        status: 'scheduled',
+        startsAt: { gte: new Date(t + 10 * 60_000), lte: new Date(t + (opts.horizonHours ?? 72) * 3_600_000) },
+        questions: { none: {} },
+      },
+      include: { homeTeam: { select: { name: true } }, awayTeam: { select: { name: true } } },
+      orderBy: [{ startsAt: 'asc' }],
+      take: opts.max ?? 60,
+    });
+    const slugs = new Map((await db.sport.findMany({ where: { id: { in: [...new Set(matches.map((m) => m.sportId))] } }, select: { id: true, slug: true } })).map((s) => [s.id, s.slug]));
+    let made = 0;
+    for (const m of matches) {
+      const q = autoQuestionFor({ sport: slugs.get(m.sportId) ?? '', league: m.league, stage: m.stage, home: m.homeTeam.name, away: m.awayTeam.name });
+      try {
+        await createQuestion(null, { matchId: m.id, kind: 'choice', prompt: q.prompt, points: 10, locksAt: m.startsAt, options: q.options });
+        made += 1;
+      } catch {
+        // A match that changed under us (started, deleted): the next run looks again.
+      }
+    }
+    return made;
+  }
+
+  /**
+   * predictions R10 — a system question settles itself from the feed's final
+   * result (the suggestion of R8). Staff questions still wait for staff: their
+   * prompts can ask anything, and points cannot be taken back.
+   */
+  async function autoSettleMatch(matchId: string): Promise<number> {
+    const rows = await db.predictionQuestion.findMany({ where: { matchId, status: 'open', createdBy: null, kind: 'choice', suggestedOptionId: { not: null } }, select: { id: true, suggestedOptionId: true } });
+    let settled = 0;
+    for (const r of rows) {
+      try {
+        await settle(null, r.id, { optionId: r.suggestedOptionId });
+        settled += 1;
+      } catch {
+        // Settled or voided a moment ago by someone else.
+      }
+    }
+    return settled;
+  }
+
   // --- staff: questions ----------------------------------------------------------
 
   async function createQuestion(staffUserId: string | null, input: QuestionInput): Promise<Question> {
@@ -726,6 +805,8 @@ export function createPredictionsService(deps: PredictionsDeps) {
     settle,
     voidQuestion,
     suggestForMatch,
+    autoWinnerQuestions,
+    autoSettleMatch,
     voidOpenForMatch,
     createQuestion,
     updateQuestion,

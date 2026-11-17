@@ -17,9 +17,24 @@ import { UserError } from '../../../platform/errors/index.js';
 import type { LivePatch, ProMatch, ProService } from '../service/index.js';
 import type { FeedFollow, FeedMatch, ScoreAdapter } from './types.js';
 
-export type ScoreProvider = 'cricapi' | 'api_football' | 'snooker_org';
+export type ScoreProvider = 'cricapi' | 'api_football' | 'api_basketball' | 'api_nfl' | 'api_baseball' | 'api_hockey' | 'api_rugby' | 'api_mma' | 'jolpica' | 'lichess' | 'pandascore' | 'snooker_org';
 export type NewsProvider = 'google_news' | 'newsdata';
-export const FOLLOW_PROVIDERS: readonly FeedProvider[] = ['cricapi', 'api_football', 'snooker_org', 'google_news', 'newsdata'];
+export const FOLLOW_PROVIDERS: readonly FeedProvider[] = [
+  'cricapi',
+  'api_football',
+  'api_basketball',
+  'api_nfl',
+  'api_baseball',
+  'api_hockey',
+  'api_rugby',
+  'api_mma',
+  'jolpica',
+  'lichess',
+  'pandascore',
+  'snooker_org',
+  'google_news',
+  'newsdata',
+];
 
 const AHEAD_MS = 15 * 60_000;
 
@@ -247,10 +262,13 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
         continue;
       }
       await budget.markLivePoll(a.provider);
+      const teamIds = [...new Set(watch.flatMap((w) => [w.homeTeamId, w.awayTeamId]))];
+      const refs = new Map((await db.proTeam.findMany({ where: { id: { in: teamIds } }, select: { id: true, providerRef: true } })).map((x) => [x.id, x.providerRef]));
+      const watched = watch.map((w) => ({ ...w, homeRef: refs.get(w.homeTeamId) ?? null, awayRef: refs.get(w.awayTeamId) ?? null }));
       const http = feedHttp(budget, a.provider, deps.fetcher);
       try {
         const sportId = await sportIdOf(a.sportSlug);
-        for (const m of await a.live(watch, http, t)) {
+        for (const m of await a.live(watched, http, t)) {
           try {
             const r = await apply(a.provider, m, sportId, null);
             if (r === 'updated') summary.updated += 1;

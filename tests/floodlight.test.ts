@@ -442,3 +442,42 @@ describe('profile', () => {
     expect((await extras.athletes({ excludeUserId: ravi })).length).toBe(1);
   });
 });
+
+// --- predictions R10: the system question -------------------------------------------
+
+describe('predictions R10 — a "Who wins?" on every upcoming feed match, settled by the result', () => {
+  it('makes one per feed match (not manual, not one that has a question), and settles it from the result', async () => {
+    const t = await teams();
+    const at = new Date(clock.getTime() + 5 * 3_600_000);
+    const feed = await pro.createMatch(null, { sportId: football, league: 'ISL', homeTeamId: t.home, awayTeamId: t.away, startsAt: at, provider: 'api_football', providerRef: 'fx-1' });
+    const manual = await pro.createMatch(null, { sportId: football, league: 'ISL', homeTeamId: t.home, awayTeamId: t.away, startsAt: at });
+    const staffed = await pro.createMatch(null, { sportId: football, league: 'ISL', homeTeamId: t.home, awayTeamId: t.away, startsAt: at, provider: 'api_football', providerRef: 'fx-2' });
+    await predictions.createQuestion(await user('Staff'), { matchId: staffed.id, kind: 'choice', prompt: 'First scorer?', locksAt: at, options: [{ label: 'A' }, { label: 'B' }] });
+
+    expect(await predictions.autoWinnerQuestions()).toBe(1);
+    expect(await predictions.autoWinnerQuestions()).toBe(0); // once only
+    expect(await predictions.forMatch(manual.id)).toHaveLength(0);
+    const [q] = await predictions.forMatch(feed.id);
+    expect(q).toMatchObject({ prompt: 'Who wins?', locksAt: at, points: 10 });
+    expect(q!.options.map((o) => [o.label, o.outcome])).toEqual([['Mumbai City', 'home'], ['Draw', 'draw'], ['Bengaluru FC', 'away']]);
+
+    const fan = await user('Fan');
+    await predictions.pick(fan, q!.id, { optionId: q!.options[0]!.id });
+    clock = new Date(at.getTime() + 2 * 3_600_000);
+    await pro.updateMatch(feed.id, { status: 'finished', homeScore: '2', awayScore: '1', winner: 'home' });
+    await predictions.suggestForMatch(feed.id, { homeScore: '2', awayScore: '1', winner: 'home' });
+    expect(await predictions.autoSettleMatch(feed.id)).toBe(1);
+    const settled = await predictions.question(q!.id);
+    expect(settled?.status).toBe('settled');
+    expect((await predictions.stats(fan)).points).toBe(10);
+  });
+
+  it('never settles a staff question on its own', async () => {
+    const m = await match();
+    const q = await predictions.createQuestion(await user('Staff'), { matchId: m.id, kind: 'choice', prompt: 'Who wins?', locksAt: m.startsAt, options: [{ label: 'Mumbai City', outcome: 'home' }, { label: 'Bengaluru FC', outcome: 'away' }] });
+    clock = new Date(m.startsAt.getTime() + 3 * 3_600_000);
+    await predictions.suggestForMatch(m.id, { homeScore: '1', awayScore: '0', winner: 'home' });
+    expect(await predictions.autoSettleMatch(m.id)).toBe(0);
+    expect((await predictions.question(q.id))?.status).toBe('open');
+  });
+});

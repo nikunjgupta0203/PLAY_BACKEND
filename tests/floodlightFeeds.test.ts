@@ -397,10 +397,10 @@ describe('feed runner', () => {
 
   it('football: moments once, then the result suggests the answers', async () => {
     await runner.saveFollow(null, { provider: 'api_football', ref: '323', season: '2026', sportId: football, name: 'ISL' });
-    // Free plan (real key, 2026-11-17): no season=, no ids=; date= is today and tomorrow, shared by follows.
-    routes = [[/fixtures\?date=2026-11-14/, football200([fixture(), { ...fixture(), league: { id: 999, name: 'Other league' }, fixture: { ...fixture().fixture, id: 9002 } }])], [/fixtures\?date=2026-11-15/, football200([])]];
+    // Free plan (real key, 2026-11-17): no season=, no ids=; date= is yesterday (results), today and tomorrow, shared by follows.
+    routes = [[/fixtures\?date=2026-11-13/, football200([])], [/fixtures\?date=2026-11-14/, football200([fixture(), { ...fixture(), league: { id: 999, name: 'Other league' }, fixture: { ...fixture().fixture, id: 9002 } }])], [/fixtures\?date=2026-11-15/, football200([])]];
     await runner.importFixtures();
-    expect(calls).toEqual([expect.stringMatching(/fixtures\?date=2026-11-14&timezone=UTC/), expect.stringMatching(/fixtures\?date=2026-11-15&timezone=UTC/)]);
+    expect(calls).toEqual([expect.stringMatching(/fixtures\?date=2026-11-13&timezone=UTC/), expect.stringMatching(/fixtures\?date=2026-11-14&timezone=UTC/), expect.stringMatching(/fixtures\?date=2026-11-15&timezone=UTC/)]);
     expect(await prisma.proMatch.count()).toBe(1); // only the followed league
     const m = (await prisma.proMatch.findFirstOrThrow({ include: { homeTeam: true } }));
     expect(m.homeTeam).toMatchObject({ name: 'Mumbai City', shortCode: 'MCI', provider: 'api_football', providerRef: '101' });

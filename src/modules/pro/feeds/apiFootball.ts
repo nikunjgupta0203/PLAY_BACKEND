@@ -196,7 +196,8 @@ export function apiFootballAdapter(key: () => string = () => config.API_SPORTS_K
     pollMinutes: 3,
     configured: () => key() !== '',
     async fixtures(follow: FeedFollow, http: FeedHttp, now: Date) {
-      const days = [utcDay(now), utcDay(new Date(now.getTime() + 86_400_000))];
+      // Yesterday too (the free plan reads ±1 day): Results shows what just finished.
+      const days = [utcDay(new Date(now.getTime() - 86_400_000)), utcDay(now), utcDay(new Date(now.getTime() + 86_400_000))];
       const out: FeedMatch[] = [];
       for (const day of days) {
         for (const fx of await dayList(http, day, now)) {

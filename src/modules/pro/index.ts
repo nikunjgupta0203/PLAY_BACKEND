@@ -34,6 +34,9 @@ export const pro = createProService({
     const { predictions } = await import('../predictions/index.js');
     const n = await predictions.suggestForMatch(match.id, { homeScore: match.homeScore, awayScore: match.awayScore, winner: match.winner });
     if (n > 0) logger.info({ matchId: match.id, suggested: n }, 'settle suggestions ready');
+    // predictions R10 — the system's own "Who wins?" settles from the result.
+    const settled = await predictions.autoSettleMatch(match.id);
+    if (settled > 0) logger.info({ matchId: match.id, settled }, 'system questions settled');
   },
   async abandoned(match) {
     const { predictions } = await import('../predictions/index.js');

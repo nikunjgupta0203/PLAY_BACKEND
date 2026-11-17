@@ -2353,10 +2353,38 @@ enum FeedJob {
 }
 
 enum FeedProvider {
+  """Baseball: a follow is the league id (MLB = 1)."""
+  API_BASEBALL
+
+  """Basketball: a follow is the league id."""
+  API_BASKETBALL
   API_FOOTBALL
+
+  """Ice hockey: a follow is the league id (NHL = 57)."""
+  API_HOCKEY
+
+  """MMA: a follow is a word in the event name, like "UFC"."""
+  API_MMA
+
+  """American football: a follow is the league id (NFL = 1)."""
+  API_NFL
+
+  """Rugby: a follow is the league id."""
+  API_RUGBY
   CRICAPI
   GOOGLE_NEWS
+
+  """Formula 1 (Jolpica, no key): a follow is the season, or "current"."""
+  JOLPICA
+
+  """
+  Chess (Lichess broadcasts, no key): a follow is the broadcast tournament id.
+  """
+  LICHESS
   NEWSDATA
+
+  """Esports (PandaScore): a follow is the league id."""
+  PANDASCORE
   PEXELS
   SNOOKER_ORG
   UNSPLASH

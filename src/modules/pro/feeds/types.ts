@@ -47,6 +47,9 @@ export interface FeedFollow {
   enabled: boolean;
 }
 
+/** A match being polled, with its sides' ids at the provider (F1 reads its two drivers' places). */
+export type WatchedMatch = ProMatch & { homeRef: string | null; awayRef: string | null };
+
 export interface ScoreAdapter {
   provider: FeedProvider;
   /** The sport this feed's matches belong to when a follow doesn't say. */
@@ -57,7 +60,7 @@ export interface ScoreAdapter {
   /** One follow's fixtures for the next fortnight (and anything already under way). */
   fixtures(follow: FeedFollow, http: FeedHttp, now: Date): Promise<FeedMatch[]>;
   /** Fresh state for the watched matches. Returns only those it found. */
-  live(watch: ProMatch[], http: FeedHttp, now: Date): Promise<FeedMatch[]>;
+  live(watch: WatchedMatch[], http: FeedHttp, now: Date): Promise<FeedMatch[]>;
 }
 
 /** A short code from a name: "Manchester City" → MCI, "FC Goa" → GOA, "India" → IND. */

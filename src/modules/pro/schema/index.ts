@@ -534,6 +534,15 @@ const FeedProviderEnum = builder.enumType('FeedProvider', {
   values: {
     CRICAPI: { value: 'cricapi' },
     API_FOOTBALL: { value: 'api_football' },
+    API_BASKETBALL: { value: 'api_basketball', description: 'Basketball: a follow is the league id.' },
+    API_NFL: { value: 'api_nfl', description: 'American football: a follow is the league id (NFL = 1).' },
+    API_BASEBALL: { value: 'api_baseball', description: 'Baseball: a follow is the league id (MLB = 1).' },
+    API_HOCKEY: { value: 'api_hockey', description: 'Ice hockey: a follow is the league id (NHL = 57).' },
+    API_RUGBY: { value: 'api_rugby', description: 'Rugby: a follow is the league id.' },
+    API_MMA: { value: 'api_mma', description: 'MMA: a follow is a word in the event name, like "UFC".' },
+    JOLPICA: { value: 'jolpica', description: 'Formula 1 (Jolpica, no key): a follow is the season, or "current".' },
+    LICHESS: { value: 'lichess', description: 'Chess (Lichess broadcasts, no key): a follow is the broadcast tournament id.' },
+    PANDASCORE: { value: 'pandascore', description: 'Esports (PandaScore): a follow is the league id.' },
     SNOOKER_ORG: { value: 'snooker_org' },
     GOOGLE_NEWS: { value: 'google_news' },
     NEWSDATA: { value: 'newsdata' },
@@ -688,7 +697,13 @@ builder.mutationFields((t) => ({
     resolve: async (_root, args, ctx) => {
       await requirePlatformStaff(ctx, [...EDITORS]);
       const { data, userError } = await attempt(async () => {
-        if (args.job === 'fixtures') return proFeeds.importFixtures();
+        if (args.job === 'fixtures') {
+          const runs = await proFeeds.importFixtures();
+          // predictions R10 — the portal's "run now" makes the questions too.
+          const { predictions } = await import('../../predictions/index.js');
+          await predictions.autoWinnerQuestions();
+          return runs;
+        }
         if (args.job === 'live') return proFeeds.pollLive({ force: true });
         const { news } = await import('../../content/index.js');
         const r = await news.run();

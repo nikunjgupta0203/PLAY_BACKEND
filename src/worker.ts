@@ -1144,6 +1144,9 @@ export async function startWorkers(): Promise<() => void> {
       }
       case 'feeds-fixtures': {
         logger.info({ runs: await proFeeds.importFixtures() }, 'feeds: fixtures imported');
+        // predictions R10 — a "Who wins?" on every upcoming feed match.
+        const { predictions } = await import('./modules/predictions/index.js');
+        logger.info({ made: await predictions.autoWinnerQuestions() }, 'predictions: system questions made');
         return;
       }
       case 'feeds-news': {
