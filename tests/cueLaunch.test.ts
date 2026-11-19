@@ -291,6 +291,19 @@ describe('1 · sports: snooker, pool and billiards only', () => {
   });
 });
 
+describe('2026-11-19 · Home "Book a table": only venues that take bookings', () => {
+  it('venues(bookable) leaves out a listed venue whose bookings are off, whatever its name sorts as', async () => {
+    const owner = await user('Owner');
+    const { venue } = await snookerClub(owner);
+    const pickleball = await seedSport(prisma, PICKLEBALL);
+    modules.sport.refresh();
+    // "A…" sorts before "Cue Masters": by name it would take the rail's first place.
+    await modules.venues.create(owner, { name: 'Ace Turf', address: 'CP', city: 'New Delhi', location: { lat: 28.63, lng: 77.22 }, courts: [{ name: 'C1', sportIds: [pickleball] }] });
+    expect((await modules.venues.search({}, { first: 10 })).nodes.map((v) => v.name)).toEqual(['Ace Turf', 'Cue Masters']);
+    expect((await modules.venues.search({ bookable: true }, { first: 10 })).nodes.map((v) => v.id)).toEqual([venue.id]);
+  });
+});
+
 describe('2–9 · discover, pick, price, discount, pay, confirm, track', () => {
   it('the whole flow online: 40 minutes off-peak, venue 20% + PL4Y 10% up to ₹100, paid, on the dashboard, 0% commission, paid out', async () => {
     const owner = await user('Owner');

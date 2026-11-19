@@ -18,6 +18,7 @@ import type { EventDeps, EventService, PublishGate } from '../src/modules/events
 import { EventCode, createEventService } from '../src/modules/events/service/index.js';
 import { HOST_COMMISSION_BPS } from '../src/modules/events/service/priceQuote.js';
 import type { SportService } from '../src/modules/sport/service/index.js';
+import { setSportFocusForTests } from '../src/modules/sport/service/index.js';
 import type { VenueService } from '../src/modules/venues/service/index.js';
 import { isUserError } from '../src/platform/errors/index.js';
 import { newId } from '../src/platform/ids.js';
@@ -682,6 +683,22 @@ describe('events', () => {
       expect(t.kind).toBe('tournament');
       expect((await events.search({ kind: 'tournament' }, { first: 20 })).nodes.map((e) => e.id)).toEqual([t.id]);
       expect((await events.search({ kind: 'league_season' }, { first: 20 })).nodes).toEqual([]);
+    });
+
+    it('2026-11-19: the sport focus hides a paused sport’s events, never its experiences (a screening is a ticket)', async () => {
+      const tournament = await published('Pickleball Ladder');
+      const screening = await published('Pickleball Final — Screening');
+      await events.setExperience(screening.id, 'screening', true);
+      setSportFocusForTests(true); // pickleball is paused outside tests
+      sport.refresh();
+      try {
+        expect((await events.search({}, { first: 20 })).nodes.map((e) => e.id)).toEqual([screening.id]);
+        expect((await events.search({ experience: 'screening' }, { first: 20 })).nodes.map((e) => e.id)).toEqual([screening.id]);
+      } finally {
+        setSportFocusForTests(null);
+        sport.refresh();
+      }
+      expect((await events.search({}, { first: 20 })).nodes.map((e) => e.id).sort()).toEqual([tournament.id, screening.id].sort());
     });
   });
 

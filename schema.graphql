@@ -6697,6 +6697,9 @@ type Query {
   venues(
     after: String
     before: String
+
+    """Only venues that take table bookings in the app (Home "Book a table")."""
+    bookable: Boolean
     city: String
     first: Int
     last: Int

@@ -192,6 +192,8 @@ export function createVenueRepo(db: Db) {
     anyOfSportIds?: string[] | null;
     /** discovery R1 — an ILIKE pattern, already escaped (platform/search.ts). */
     textPattern?: string | null;
+    /** Only venues whose booking policy is switched on. */
+    bookable?: boolean | null;
     /** Distance in metres, or the name, plus the id that broke the tie. */
     after?: { sortKey: string; id: string } | null;
     limit: number;
@@ -210,6 +212,9 @@ export function createVenueRepo(db: Db) {
     if (opts.city) where.push(Prisma.sql`lower(btrim(v.city)) IN (${Prisma.join(cityVariants(opts.city))})`);
     if (opts.textPattern) {
       where.push(Prisma.sql`(v.name ILIKE ${opts.textPattern} OR v.address ILIKE ${opts.textPattern})`);
+    }
+    if (opts.bookable) {
+      where.push(Prisma.sql`EXISTS (SELECT 1 FROM venue_booking_policies p WHERE p.venue_id = v.id AND p.bookable)`);
     }
     if (opts.sportId) {
       where.push(Prisma.sql`

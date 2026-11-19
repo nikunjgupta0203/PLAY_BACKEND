@@ -320,6 +320,8 @@ export function createVenueService(deps: VenueDeps) {
       sportId?: string | null;
       /** discovery R1 — free text over name and address. */
       query?: string | null;
+      /** Only venues that take table bookings. */
+      bookable?: boolean | null;
     },
     page: { first: number; after?: string | null },
   ): Promise<Page<Venue>> {
@@ -346,6 +348,7 @@ export function createVenueService(deps: VenueDeps) {
       sportId: filter.sportId ?? null,
       anyOfSportIds: filter.sportId ? null : ((await deps.offeredSportIds?.()) ?? null),
       textPattern: containsPattern(filter.query),
+      bookable: filter.bookable ?? null,
       after: page.after ? decodeCursor(page.after) : null,
       // One extra row answers hasNextPage without a second count query.
       limit: first + 1,

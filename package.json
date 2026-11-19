@@ -40,6 +40,7 @@
     "import:venues": "tsx --env-file-if-exists=.env scripts/import-venues.ts",
     "onboard:venues": "tsx --env-file-if-exists=.env scripts/onboard-venues.ts",
     "seed:fixtures": "tsx --env-file-if-exists=.env scripts/seed-fixtures.ts",
+    "import:screenings": "tsx --env-file-if-exists=.env scripts/import-screenings.ts",
     "seed:home": "tsx --env-file-if-exists=.env scripts/seed-home-feed.ts",
     "seed:floodlight": "tsx --env-file-if-exists=.env scripts/seed-floodlight.ts",
     "seed:feeds-e2e": "tsx --env-file-if-exists=.env scripts/seed-feeds-e2e.ts",

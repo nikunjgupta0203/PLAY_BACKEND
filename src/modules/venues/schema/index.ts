@@ -422,6 +422,7 @@ builder.queryFields((t) => ({
         city: t.arg.string(),
         sportId: t.arg.id(),
         query: t.arg.string({ description: 'discovery R1 — free text over name and address.' }),
+        bookable: t.arg.boolean({ description: 'Only venues that take table bookings in the app (Home "Book a table").' }),
       },
       resolve: async (_root, args) => {
         if (args.last != null || args.before != null) {
@@ -436,6 +437,7 @@ builder.queryFields((t) => ({
             city: args.city ?? null,
             sportId: args.sportId ?? null,
             query: args.query ?? null,
+            bookable: args.bookable ?? null,
           },
           { first, after: args.after ?? null },
         );

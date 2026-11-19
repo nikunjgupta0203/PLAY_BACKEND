@@ -1,13 +1,16 @@
 /**
  * sport — which sports PL4Y offers right now (cue-sports launch, 2026-11-03).
  *
- * PL4Y launches with snooker, pool and billiards only. Every other sport stays
- * seeded, scored and resolvable (sport R3: a match played two years ago must
- * keep rendering its sport), but is hidden from every list, picker, filter and
- * discovery surface, and nothing new can be created for it.
+ * PL4Y launched with snooker, pool and billiards only. On 2026-11-19 the
+ * founder opened venues and events for the sports below the cue sports.
+ * Every other sport stays seeded, scored and resolvable (sport R3: a match
+ * played two years ago must keep rendering its sport), but is hidden from
+ * every list, picker, filter and discovery surface, and nothing new can be
+ * created for it.
  *
  * To bring a sport back, uncomment its slug below. Nothing else changes: no
- * migration, no data, and the app reads the list from `Query.sports`.
+ * migration, no data, and the app reads the list from `Query.sports`. (The
+ * five watch sports got their play settings in migration 063.)
  */
 import { isTest } from '../../../platform/config.js';
 
@@ -15,23 +18,29 @@ export const OFFERED_SPORT_SLUGS: readonly string[] = [
   'snooker',
   'pool',
   'billiards',
-  // --- paused for the cue-sports launch — uncomment to re-enable ---
+  // --- opened 2026-11-19 ---
+  'cricket',
+  'football',
+  'american-football',
+  'basketball',
+  'baseball',
+  'ice-hockey',
+  'formula-1',
+  'rugby',
+  'mma',
+  'chess',
+  'esports',
+  // --- paused — uncomment to re-enable ---
   // 'pickleball',
   // 'badminton',
   // 'table-tennis',
   // 'tennis',
-  // 'football',
-  // 'basketball',
   // 'volleyball',
   // 'squash',
   // 'padel',
   // 'kabaddi',
-  // 'cricket',
   // 'carrom',
-  // 'chess',
-  // 'esports',
   // 'boxing',
-  // 'mma',
   // 'wrestling',
   // 'karate',
   // 'taekwondo',

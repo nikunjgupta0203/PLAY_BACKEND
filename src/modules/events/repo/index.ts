@@ -128,7 +128,11 @@ export function createEventRepo(db: Db) {
 
     if (filter.sportId) where.push(Prisma.sql`e.sport_id = ${filter.sportId}::uuid`);
     // Cue-sports launch — only the sports PL4Y offers now (sport/offered.ts).
-    if (filter.anyOfSportIds) where.push(Prisma.sql`e.sport_id = ANY(${filter.anyOfSportIds}::uuid[])`);
+    // An experience (a screening of an F1 race, a cricket watch-along) is a
+    // ticket, not a game of the sport, so the focus does not hide it.
+    if (filter.anyOfSportIds) {
+      where.push(Prisma.sql`(e.experience_kind IS NOT NULL OR e.sport_id = ANY(${filter.anyOfSportIds}::uuid[]))`);
+    }
     // One city under any of its spellings (platform/city.ts).
     if (filter.city) where.push(Prisma.sql`lower(btrim(e.city)) IN (${Prisma.join(cityVariants(filter.city))})`);
     if (filter.from) where.push(Prisma.sql`e.starts_at >= ${filter.from}`);
