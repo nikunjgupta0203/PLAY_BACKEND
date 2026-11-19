@@ -5919,6 +5919,21 @@ type PricingSettingsPayload {
   userError: UserError
 }
 
+"""
+065 — one delivery (ball-by-ball feeds). `over` is 0-based: 14 and ball 3 read "14.3".
+"""
+type ProBall {
+  ball: Int!
+  batter: String
+  bowler: String
+  extras: Int!
+  innings: Int!
+  over: Int!
+  runs: Int!
+  text: String
+  wicket: Boolean!
+}
+
 enum ProBoardFilter {
   FINISHED
   LIVE
@@ -5962,6 +5977,11 @@ type ProMatch {
   awayDetail: String
   awayScore: String
 
+  """
+  065 — the Overs and Commentary tabs, oldest first. Empty without a ball-by-ball feed.
+  """
+  balls: [ProBall!]!
+
   """pro R5 — subscribe for `pro.match.updated` and `pro.chat.message`."""
   channel: String!
 
@@ -5993,6 +6013,9 @@ type ProMatch {
 
   """"MI need 41 off 34"."""
   note: String
+
+  """065 — the Graphs tab: one point per innings per over the feed saw."""
+  progress: [ProProgressPoint!]!
 
   """
   manual, or the feed that keeps it current: cricapi, api_football, snooker_org.
@@ -6147,6 +6170,17 @@ type ProOkPayload {
   userError: UserError
 }
 
+"""
+065 — the worm: after `balls` legal balls of innings `innings`, `team` had `runs` for `wickets`.
+"""
+type ProProgressPoint {
+  balls: Int!
+  innings: Int!
+  runs: Int!
+  team: String!
+  wickets: Int!
+}
+
 type ProScoreRow {
   cells: [String!]!
   detail: String
@@ -6169,6 +6203,9 @@ type ProSquadPlayer {
 """A professional team. `tint` is the code circle’s colour, from data."""
 type ProTeam {
   id: ID!
+
+  """065 — the team badge (https); null shows the code circle."""
+  logoUrl: String
   name: String!
   shortCode: String!
   sport: Sport!
@@ -6176,6 +6213,8 @@ type ProTeam {
 }
 
 input ProTeamInput {
+  """065 — an https image address; empty clears it, left out keeps it."""
+  logoUrl: String
   name: String!
   shortCode: String!
   sportId: ID!

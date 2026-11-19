@@ -13,7 +13,7 @@
 import { config } from '../../../platform/config.js';
 import type { FeedHttp } from '../../../platform/feeds.js';
 import type { LivePatch, ProStatus, Winner } from '../service/index.js';
-import { arr, codeFor, cut, num, obj, str, type FeedFollow, type FeedMatch, type FeedSide, type ScoreAdapter, type WatchedMatch } from './types.js';
+import { arr, codeFor, cut, logoUrl, num, obj, str, type FeedFollow, type FeedMatch, type FeedSide, type ScoreAdapter, type WatchedMatch } from './types.js';
 
 const BASE = 'https://api.pandascore.co';
 const RESERVE = 20;
@@ -30,7 +30,7 @@ export function parsePandaMatch(raw: unknown, league: string | null): FeedMatch 
     const sid = o ? str(o['id']) : null;
     const name = o ? str(o['name']) : null;
     if (!sid || !name) return null;
-    return { ref: sid, name: cut(name, 60)!, code: (str(o!['acronym']) ?? codeFor(name)).slice(0, 5).toUpperCase() };
+    return { ref: sid, name: cut(name, 60)!, code: (str(o!['acronym']) ?? codeFor(name)).slice(0, 5).toUpperCase(), logo: logoUrl(o!['image_url']) };
   };
   const home = sideOf(sides[0]);
   const away = sideOf(sides[1]);

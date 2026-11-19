@@ -154,8 +154,8 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
     if (!match) {
       // Only a fixtures import makes matches: it knows the sport, the league and both sides.
       if (!sportId || !feed.home || !feed.away || !feed.startsAt) return 'skipped';
-      const home = await pro.feedTeam(sportId, provider, feed.home.ref, feed.home.name, feed.home.code);
-      const away = await pro.feedTeam(sportId, provider, feed.away.ref, feed.away.name, feed.away.code);
+      const home = await pro.feedTeam(sportId, provider, feed.home.ref, feed.home.name, feed.home.code, feed.home.logo ?? null);
+      const away = await pro.feedTeam(sportId, provider, feed.away.ref, feed.away.name, feed.away.code, feed.away.logo ?? null);
       if (home.id === away.id) return 'skipped';
       try {
         match = await pro.createMatch(null, {

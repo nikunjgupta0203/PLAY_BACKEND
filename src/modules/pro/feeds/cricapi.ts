@@ -3,8 +3,8 @@
  *
  * One `currentMatches` call refreshes every live match at once; a match that
  * drops off that list is fetched once more by id to read its result. The
- * scorecard costs a call of its own, so it is read for featured matches about
- * every 15 minutes and once at the end. Ball-by-ball is a paid feature: the
+ * scorecard costs a call of its own, so it is read for featured matches every
+ * 30 minutes (5 on a paid plan, see cricCadence) and once at the end. Ball-by-ball is a paid feature: the
  * current over is left to staff. 064 — the toss (match_info) and the squads
  * (match_squad) are read once each, at most one try per half hour.
  *
@@ -12,12 +12,24 @@
  */
 import { config } from '../../../platform/config.js';
 import type { FeedHttp } from '../../../platform/feeds.js';
-import type { Fact, Innings, LivePatch, ProMatch, ProStatus, Squad, Stat, Winner } from '../service/index.js';
-import { arr, codeFor, cut, num, obj, ordinal, str, utcDate, type FeedFollow, type FeedMatch, type ScoreAdapter } from './types.js';
+import { MAX_BALLS, MAX_PROGRESS } from '../service/index.js';
+import type { BallEvent, Fact, Innings, LivePatch, ProgressPoint, ProMatch, ProStatus, Squad, Stat, Winner } from '../service/index.js';
+import { arr, codeFor, cut, logoUrl, num, obj, ordinal, str, utcDate, type FeedFollow, type FeedMatch, type ScoreAdapter } from './types.js';
 
 const BASE = 'https://api.cricapi.com/v1';
 const RESERVE = 10;
-const POLL_MINUTES = 5;
+
+/**
+ * How often the live score and the featured scorecard refresh. The free plan
+ * (100 calls a day, 10 kept back) covers a whole Test day only at a score
+ * every 10 minutes and a scorecard every 30: about 66 calls for ~7.5 hours of
+ * play (every 5 and 15 was ~125, out by mid-afternoon). A paid plan
+ * (CRICAPI_DAILY_LIMIT 1000 or more; S = 2,000) refreshes every minute with
+ * the scorecard every 5: about 550 calls a day. Pure.
+ */
+export function cricCadence(dailyLimit: number): { pollMinutes: number; scorecardMinutes: number } {
+  return dailyLimit >= 1000 ? { pollMinutes: 1, scorecardMinutes: 5 } : { pollMinutes: 10, scorecardMinutes: 30 };
+}
 
 function body(json: unknown): Record<string, unknown> {
   const b = obj(json);
@@ -148,7 +160,10 @@ export function parseCricMatch(raw: unknown, league: string | null): FeedMatch |
   // or "Tbc" becomes a team players can follow and a match nobody can predict.
   if (PLACEHOLDER_TEAM.test(homeName) || PLACEHOLDER_TEAM.test(awayName)) return null;
   const info = arr(m['teamInfo']).map(obj);
-  const codeOf = (name: string) => str(info.find((t) => str(t['name'])?.toLowerCase() === name.toLowerCase())?.['shortname']) ?? codeFor(name);
+  const infoOf = (name: string) => info.find((t) => str(t['name'])?.toLowerCase() === name.toLowerCase());
+  const codeOf = (name: string) => str(infoOf(name)?.['shortname']) ?? codeFor(name);
+  // 065 — teamInfo.img is the badge (icon512.png when CricAPI has none: dropped by logoUrl).
+  const logoOf = (name: string) => logoUrl(infoOf(name)?.['img']);
 
   const status = statusOf(m);
   const scores = scoresOf(m, teams);
@@ -192,11 +207,84 @@ export function parseCricMatch(raw: unknown, league: string | null): FeedMatch |
     stage: cut(str(m['name'])?.split(',')[1]?.trim() ?? null, 60),
     venueName: cut(str(m['venue'])?.split(',')[0]?.trim() ?? null, 80),
     city: cut((str(m['venue'])?.includes(',') ? str(m['venue'])!.split(',').at(-1)!.trim() : null) || null, 60),
-    home: { ref: `name:${homeName.toLowerCase()}`, name: homeName, code: codeOf(homeName) },
-    away: { ref: `name:${awayName.toLowerCase()}`, name: awayName, code: codeOf(awayName) },
+    home: { ref: `name:${homeName.toLowerCase()}`, name: homeName, code: codeOf(homeName), logo: logoOf(homeName) },
+    away: { ref: `name:${awayName.toLowerCase()}`, name: awayName, code: codeOf(awayName), logo: logoOf(awayName) },
     live,
     moments: [],
   };
+}
+
+/** 065 — this payload's innings totals as worm points, innings in batting order. Pure. */
+export function cricProgress(raw: unknown): ProgressPoint[] {
+  const m = obj(raw);
+  const teams = arr(m['teams']).map((t) => str(t)).filter((t): t is string => t !== null);
+  if (teams.length < 2) return [];
+  const info = arr(m['teamInfo']).map(obj);
+  const codeOf = (lower: string) => {
+    const name = teams.find((t) => t.toLowerCase() === lower) ?? lower;
+    return (str(info.find((t) => str(t['name'])?.toLowerCase() === name.toLowerCase())?.['shortname']) ?? codeFor(name)).slice(0, 10);
+  };
+  return scoresOf(m, teams)
+    .slice(0, 4)
+    .map((s, i) => ({ inn: i + 1, team: codeOf(s.team) || 'BAT', b: Math.min(balls(s.o), 3000), r: Math.min(s.r, 2000), w: Math.min(s.w, 10) }))
+    .filter((p) => p.b > 0);
+}
+
+/**
+ * 065 — the worm keeps one point per innings per over: a new reading in the
+ * same over replaces the old one. Oldest points drop off past MAX_PROGRESS.
+ * Pure.
+ */
+export function mergeProgress(had: ProgressPoint[], now: ProgressPoint[]): ProgressPoint[] {
+  const byOver = new Map<string, ProgressPoint>();
+  for (const p of [...had, ...now]) {
+    const key = `${p.inn}:${Math.floor(Math.max(p.b - 1, 0) / 6)}`;
+    const prev = byOver.get(key);
+    if (!prev || p.b >= prev.b) byOver.set(key, p);
+  }
+  return [...byOver.values()].sort((a, b) => a.inn - b.inn || a.b - b.b).slice(-MAX_PROGRESS);
+}
+
+/**
+ * 065 — CricAPI match_bbb → deliveries, oldest first. The shape is from
+ * CricAPI's docs as remembered, not yet checked against a live paid
+ * response, so every field is optional and a ball without an over and ball
+ * number is skipped. `inning` counts from 0 when any ball says 0. Pure.
+ */
+export function parseCricBalls(raw: unknown): BallEvent[] {
+  const list = arr(obj(raw)['bbb']).map(obj);
+  const zeroBased = list.some((b) => num(b['inning']) === 0);
+  const nameOf = (v: unknown) => cut(str(obj(v)['name']) ?? str(v), 60) ?? null;
+  const out: BallEvent[] = [];
+  const seen = new Set<string>();
+  for (const b of list) {
+    const over = num(b['over']);
+    const ball = num(b['ball']);
+    if (over === null || ball === null || over < 0 || ball < 0) continue;
+    const inn = Math.min(Math.max((num(b['inning']) ?? 0) + (zeroBased ? 1 : 0), 1), 4);
+    const key = `${inn}:${over}:${ball}:${num(b['n']) ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const runs = Math.min(Math.max(num(b['runs']) ?? 0, 0), 10);
+    const extras = Math.min(Math.max((num(b['extras']) ?? 0) + (num(b['penalty']) ?? 0), 0), 10);
+    const wicket = Boolean(b['dismissal'] ?? b['wicket'] ?? b['isWicket'] ?? false) && b['dismissal'] !== 'not out';
+    const batter = nameOf(b['batsman'] ?? b['batter']);
+    const bowler = nameOf(b['bowler']);
+    const what = wicket ? 'OUT' : runs === 4 ? 'FOUR' : runs === 6 ? 'SIX' : runs === 1 ? '1 run' : `${runs} runs`;
+    const who = bowler && batter ? `${bowler} to ${batter}, ` : '';
+    out.push({
+      inn,
+      over: Math.min(over, 500),
+      ball: Math.min(ball, 15),
+      runs,
+      extras,
+      wicket,
+      batter,
+      bowler,
+      text: cut(`${who}${what}${extras ? ` (+${extras} extras)` : ''}`, 160) ?? null,
+    });
+  }
+  return out.sort((a, b) => a.inn - b.inn || a.over - b.over || a.ball - b.ball);
 }
 
 /**
@@ -256,7 +344,10 @@ export function parseCricScorecard(raw: unknown): Innings[] {
   return ordered.slice(0, 4);
 }
 
-export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY): ScoreAdapter {
+export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dailyLimit: number = config.CRICAPI_DAILY_LIMIT): ScoreAdapter {
+  const { pollMinutes, scorecardMinutes } = cricCadence(dailyLimit);
+  // 065 — ball by ball costs a call a poll: only a paid plan can afford it.
+  const ballByBall = pollMinutes === 1;
   const url = (path: string, params: Record<string, string>) =>
     `${BASE}/${path}?${new URLSearchParams({ apikey: key(), ...params }).toString()}`;
 
@@ -271,7 +362,7 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY): Sc
   return {
     provider: 'cricapi',
     sportSlug: 'cricket',
-    pollMinutes: POLL_MINUTES,
+    pollMinutes,
     configured: () => key() !== '',
     async fixtures(follow: FeedFollow, http: FeedHttp, now: Date) {
       const data = obj(body(await http.json(url('series_info', { id: follow.ref })))['data']);
@@ -306,11 +397,11 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY): Sc
         const parsed = raw ? parseCricMatch(raw, null) : null;
         if (!parsed) continue;
         const ended = parsed.live.status === 'finished' && w.status !== 'finished';
-        const quarter = now.getUTCMinutes() % 15 < POLL_MINUTES;
+        const cardDue = now.getUTCMinutes() % scorecardMinutes < pollMinutes;
         // 064 — extras cost a call each, so at most one try per half hour until they land.
-        const halfHour = now.getUTCMinutes() % 30 < POLL_MINUTES;
+        const halfHour = now.getUTCMinutes() % 30 < pollMinutes;
         const underWay = parsed.live.status === 'live' || parsed.live.status === 'break';
-        if (ended || (w.featured && parsed.live.status === 'live' && quarter)) {
+        if (ended || (w.featured && parsed.live.status === 'live' && cardDue)) {
           const card = await scorecard(http, w.providerRef);
           if (card && card.length) parsed.live.scorecard = card;
         }
@@ -338,6 +429,21 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY): Sc
             if (squads.length) parsed.live.squads = squads;
           } catch {
             // Not listed yet: the next half hour tries again.
+          }
+        }
+
+        // 065 — the worm (Graphs tab): this poll's innings totals, merged into what the match had.
+        if (raw && underWay) {
+          const merged = mergeProgress(w.progress ?? [], cricProgress(raw));
+          if (merged.length) parsed.live.progress = merged;
+        }
+        // 065 — ball by ball (Overs, Commentary): a paid plan only, featured matches, a call each poll.
+        if (ballByBall && w.featured && parsed.live.status === 'live') {
+          try {
+            const list = parseCricBalls(body(await http.json(url('match_bbb', { id: w.providerRef }), { reserve: RESERVE }))['data']);
+            if (list.length) parsed.live.balls = list.slice(-MAX_BALLS);
+          } catch {
+            // Not offered for this match, or not on this plan: the tabs stay hidden.
           }
         }
         out.push(parsed);

@@ -64,6 +64,8 @@ export type {
   Fact as ProFact,
   Innings,
   Squad as ProSquad,
+  ProgressPoint,
+  BallEvent,
   LivePatch,
   MatchInput,
   Moment as ProMoment,

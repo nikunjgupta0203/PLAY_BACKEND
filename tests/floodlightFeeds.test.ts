@@ -13,13 +13,13 @@ import { createFeedBudget, feedDay, FEED_PROVIDERS, scrubKeys, type FeedBudget, 
 import { CRICKET, FOOTBALL, SNOOKER, seedSport } from '../src/modules/sport/seed.js';
 import { createProService, type ProService } from '../src/modules/pro/service/index.js';
 import { createFeedRunner, feedPatch, type FeedRunner } from '../src/modules/pro/feeds/runner.js';
-import { cricapiAdapter, cricFacts, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
+import { cricapiAdapter, cricCadence, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
 import { apiFootballAdapter, parseFootballFixture } from '../src/modules/pro/feeds/apiFootball.js';
 import { parseSnookerMatch, parseSnookerPlayers, parseSnookerRounds, snookerAdapter } from '../src/modules/pro/feeds/snooker.js';
-import { codeFor } from '../src/modules/pro/feeds/types.js';
+import { codeFor, logoUrl } from '../src/modules/pro/feeds/types.js';
 import { createPredictionsService, suggestAnswer, type PredictionsService } from '../src/modules/predictions/service/index.js';
 import { createContentService, type ContentService } from '../src/modules/content/service/index.js';
-import { createNewsImporter, parseGoogleNews, parseNewsData, parsePexels, parseUnsplash, pickPhoto } from '../src/modules/content/feeds/news.js';
+import { createNewsImporter, parseGoogleNews, plainSummary, parseNewsData, parsePexels, parseUnsplash, pickPhoto } from '../src/modules/content/feeds/news.js';
 
 let prisma: PrismaClient;
 let db: Db;
@@ -131,7 +131,7 @@ beforeEach(async () => {
     db,
     pro,
     budget,
-    adapters: [cricapiAdapter(() => 'k-cric'), apiFootballAdapter(() => 'k-foot'), snookerAdapter(() => 'pl4y')],
+    adapters: [cricapiAdapter(() => 'k-cric', 100), apiFootballAdapter(() => 'k-foot'), snookerAdapter(() => 'pl4y')],
     fetcher,
     now: () => clock,
   });
@@ -161,6 +161,59 @@ describe('adapters (pure)', () => {
     expect(parseCricMatch(cricMatch({ matchStarted: true, matchEnded: true, status: 'Match drawn' }), null)!.live.winner).toBe('draw');
     expect(parseCricMatch(cricMatch({ matchEnded: true, status: 'Match abandoned due to rain' }), null)!.live.status).toBe('abandoned');
     expect(parseCricMatch({ id: 'x', teams: ['Only one'] }, null)).toBeNull();
+  });
+
+  it('CricAPI refresh speed follows the plan: free = 10 min, paid (1000+ a day) = every minute', () => {
+    expect(cricCadence(100)).toEqual({ pollMinutes: 10, scorecardMinutes: 30 });
+    expect(cricCadence(2000)).toEqual({ pollMinutes: 1, scorecardMinutes: 5 });
+    expect(cricapiAdapter(() => 'k', 100).pollMinutes).toBe(10);
+    expect(cricapiAdapter(() => 'k', 2000).pollMinutes).toBe(1);
+  });
+
+  it('065 — team logos: https badges only, never the CricAPI icon512 placeholder; a staff logo is kept', async () => {
+    expect(logoUrl('https://h.cricapi.com/img/teams/9-637877070670541994.webp')).toBe('https://h.cricapi.com/img/teams/9-637877070670541994.webp');
+    expect(logoUrl('https://h.cricapi.com/img/icon512.png')).toBeNull();
+    expect(logoUrl('http://media.api-sports.io/football/teams/33.png')).toBeNull();
+    expect(logoUrl(42)).toBeNull();
+    const m = parseCricMatch(cricMatch({ teamInfo: [{ name: 'India', shortname: 'IND', img: 'https://h.cricapi.com/img/teams/ind.webp' }, { name: 'Australia', shortname: 'AUS', img: 'https://h.cricapi.com/img/icon512.png' }] }), null)!;
+    expect(m.home).toMatchObject({ code: 'IND', logo: 'https://h.cricapi.com/img/teams/ind.webp' });
+    expect(m.away!.logo).toBeNull();
+
+    const made = await pro.feedTeam(cricket, 'cricapi', 'name:india', 'India', 'IND', 'https://x.test/a.png');
+    expect(made.logoUrl).toBe('https://x.test/a.png');
+    await pro.saveTeam(made.id, { sportId: cricket, name: 'India', shortCode: 'IND', logoUrl: 'https://x.test/staff.png' });
+    expect((await pro.feedTeam(cricket, 'cricapi', 'name:india', 'India', 'IND', 'https://x.test/b.png')).logoUrl).toBe('https://x.test/staff.png');
+    expect(await codeOf(() => pro.saveTeam(made.id, { sportId: cricket, name: 'India', shortCode: 'IND', logoUrl: 'ftp://nope' }))).toBe('INVALID_PRO_TEAM');
+    expect((await pro.saveTeam(made.id, { sportId: cricket, name: 'India', shortCode: 'IND', logoUrl: '' })).logoUrl).toBeNull();
+  });
+
+  it('065 — the worm: one point per innings per over; ball by ball parsed defensively', () => {
+    const raw = cricMatch({ matchStarted: true, score: [{ r: 182, w: 4, o: '20', inning: 'India Inning 1' }, { r: 42, w: 1, o: '5.2', inning: 'Australia Inning 1' }] });
+    expect(cricProgress(raw)).toEqual([
+      { inn: 1, team: 'IND', b: 120, r: 182, w: 4 },
+      { inn: 2, team: 'AUS', b: 32, r: 42, w: 1 },
+    ]);
+    // A later reading in the same over replaces the earlier one; a new over adds a point.
+    const had = [{ inn: 2, team: 'AUS', b: 31, r: 40, w: 1 }, { inn: 2, team: 'AUS', b: 24, r: 30, w: 1 }];
+    expect(mergeProgress(had, [{ inn: 2, team: 'AUS', b: 33, r: 44, w: 1 }])).toEqual([
+      { inn: 2, team: 'AUS', b: 24, r: 30, w: 1 },
+      { inn: 2, team: 'AUS', b: 33, r: 44, w: 1 },
+    ]);
+    const balls = parseCricBalls({
+      bbb: [
+        { n: 2, inning: 0, over: 0, ball: 2, batsman: { name: 'Rohit' }, bowler: { name: 'Starc' }, runs: 4, extras: 0 },
+        { n: 1, inning: 0, over: 0, ball: 1, batsman: { name: 'Rohit' }, bowler: { name: 'Starc' }, runs: 0, extras: 1 },
+        { n: 3, inning: 0, over: 0, ball: 3, batsman: { name: 'Rohit' }, bowler: { name: 'Starc' }, runs: 0, dismissal: 'caught' },
+        { inning: 0, runs: 1 },
+      ],
+    });
+    expect(balls.map((b) => [b.inn, b.over, b.ball, b.runs, b.extras, b.wicket])).toEqual([
+      [1, 0, 1, 0, 1, false],
+      [1, 0, 2, 4, 0, false],
+      [1, 0, 3, 0, 0, true],
+    ]);
+    expect(balls[1]!.text).toBe('Starc to Rohit, FOUR');
+    expect(parseCricBalls(null)).toEqual([]);
   });
 
   it('a CricAPI fixture whose sides are not known yet (Tbc) is skipped, not imported', () => {
@@ -259,10 +312,18 @@ describe('adapters (pure)', () => {
     expect(suggestAnswer({ kind: 'player_pick', options }, { homeScore: '2', awayScore: '0', winner: 'home' })).toBeNull();
   });
 
+  it('news descriptions: NewsData sends one; a Google News description is only the headline again', () => {
+    expect(plainSummary('<a href="https://x">India seal the series</a>&nbsp;&nbsp;<font color="#6f6f6f">ESPNcricinfo</font>', 'India seal the series', 'ESPNcricinfo')).toBeNull();
+    const d = 'Rohit Sharma&#39;s side won by 7 wickets in Pune to take an unbeatable 2-0 lead, with Jadeja taking five.';
+    expect(plainSummary(`<p>${d}</p>`, 'India win', 'TOI')).toBe("Rohit Sharma's side won by 7 wickets in Pune to take an unbeatable 2-0 lead, with Jadeja taking five.");
+    expect(plainSummary('x'.repeat(400), 't', null)!.length).toBe(300);
+    expect(parseNewsData({ status: 'success', results: [{ title: 'ISL: Mumbai win', link: 'https://example.com/a', description: d, pubDate: '2026-11-14 09:00:00' }] })[0]!.summary).toMatch(/^Rohit Sharma's side/);
+  });
+
   it('headlines: Google News RSS, NewsData, and credited pictures', () => {
     const rss = `<rss><channel><item><title>India seal the series &amp; top the table - ESPNcricinfo</title><link>https://news.google.com/rss/articles/abc</link><pubDate>Sat, 14 Nov 2026 10:00:00 GMT</pubDate><source url="https://www.espncricinfo.com">ESPNcricinfo</source></item><item><title>No link</title></item></channel></rss>`;
     expect(parseGoogleNews(rss)).toEqual([
-      { title: 'India seal the series & top the table', url: 'https://news.google.com/rss/articles/abc', sourceName: 'ESPNcricinfo', publishedAt: new Date('2026-11-14T10:00:00Z'), imageUrl: null },
+      { title: 'India seal the series & top the table', url: 'https://news.google.com/rss/articles/abc', sourceName: 'ESPNcricinfo', publishedAt: new Date('2026-11-14T10:00:00Z'), imageUrl: null, summary: null },
     ]);
     expect(parseNewsData({ status: 'success', results: [{ title: 'ISL: Mumbai win', link: 'https://example.com/a', source_name: 'Example', pubDate: '2026-11-14 09:00:00', image_url: 'https://img.example.com/a.jpg' }] })[0]).toMatchObject({
       sourceName: 'Example',
@@ -303,7 +364,7 @@ describe('call budget', () => {
       db,
       pro,
       budget: createFeedBudget({ db, limits: { ...limits, cricapi: 1 }, configured, now: () => clock }),
-      adapters: [cricapiAdapter(() => 'k')],
+      adapters: [cricapiAdapter(() => 'k', 100)],
       fetcher,
       now: () => clock,
     });
@@ -355,12 +416,13 @@ describe('feed runner', () => {
     score = [{ r: 60, w: 1, o: '7', inning: 'India Inning 1' }];
     expect((await runner.pollLive()).find((r) => r.provider === 'cricapi')!.skipped).toBe('not due yet');
 
-    clock = new Date(clock.getTime() + 4 * 60_000);
+    // The free plan polls every 10 minutes (cricCadence).
+    clock = new Date(clock.getTime() + 9 * 60_000);
     await runner.pollLive();
     expect(await pro.match(id)).toMatchObject({ homeScore: '60/1', note: 'Rohit retired hurt' });
 
     // A quiet poll writes nothing but the check time (G9).
-    clock = new Date(clock.getTime() + 6 * 60_000);
+    clock = new Date(clock.getTime() + 11 * 60_000);
     const before = (await pro.match(id))!;
     await runner.pollLive();
     const after = (await pro.match(id))!;
@@ -369,7 +431,7 @@ describe('feed runner', () => {
 
     // Handed back, the feed writes it again.
     await pro.releaseFeed(id);
-    clock = new Date(clock.getTime() + 6 * 60_000);
+    clock = new Date(clock.getTime() + 11 * 60_000);
     await runner.pollLive();
     expect((await pro.match(id))!.note).toBe('India opt to bat');
   });

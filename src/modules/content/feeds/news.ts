@@ -26,6 +26,24 @@ export interface Headline {
   sourceName: string;
   publishedAt: Date;
   imageUrl: string | null;
+  /** 2026-11-19 — the publisher's description, plain text; null when the feed sends none (Google News). */
+  summary?: string | null;
+}
+
+/**
+ * A feed's description as a story summary: tags out, entities decoded, the
+ * headline and publisher name taken off (Google News repeats both), and only
+ * if something worth reading is left. Pure.
+ */
+export function plainSummary(raw: unknown, title: string, source: string | null): string | null {
+  if (typeof raw !== 'string') return null;
+  let text = decodeEntities(decodeEntities(raw).replace(/<[^>]*>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+  for (const cut of [title, source]) if (cut) text = text.split(cut).join(' ').replace(/\s+/g, ' ').trim();
+  text = text.replace(/^[\s\-–—|:·]+|[\s\-–—|:·]+$/g, '');
+  if (text.length < 40) return null;
+  return text.length > 300 ? `${text.slice(0, 299).trimEnd()}…` : text;
 }
 
 export interface Photo {
@@ -71,6 +89,7 @@ export function parseGoogleNews(xml: string): Headline[] {
       sourceName: source ?? 'Google News',
       publishedAt: Number.isNaN(at.getTime()) ? new Date() : at,
       imageUrl: media ? decodeEntities(media) : null,
+      summary: plainSummary(tag(item, 'description'), title, source),
     });
   }
   return out;
@@ -93,7 +112,7 @@ export function parseNewsData(json: unknown): Headline[] {
     const at = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(raw) ? raw : `${raw.replace(' ', 'T')}Z`);
     const image = typeof r['image_url'] === 'string' && /^https:\/\//.test(r['image_url']) ? r['image_url'] : null;
     const source = (typeof r['source_name'] === 'string' && r['source_name']) || (typeof r['source_id'] === 'string' && r['source_id']) || 'News';
-    return [{ title, url, sourceName: source, publishedAt: Number.isNaN(at.getTime()) ? new Date() : at, imageUrl: image }];
+    return [{ title, url, sourceName: source, publishedAt: Number.isNaN(at.getTime()) ? new Date() : at, imageUrl: image, summary: plainSummary(r['description'], title, source) }];
   });
 }
 
@@ -233,6 +252,7 @@ export function createNewsImporter(deps: NewsImporterDeps) {
             imageCredit: h.imageUrl ? null : (photo?.credit ?? null),
             imageCreditUrl: h.imageUrl ? null : (photo?.creditUrl ?? null),
             publishedAt: h.publishedAt,
+            summary: h.summary ?? null,
           });
         }
         summary.imported += await deps.content.importLinks(items);

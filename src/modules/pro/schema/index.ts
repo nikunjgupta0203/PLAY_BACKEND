@@ -15,7 +15,7 @@ import { sport } from '../../sport/index.js';
 import { WATCH_SPORT_SLUGS } from '../watchSports.js';
 import { PlayerProfileRef } from '../../profile/schema/index.js';
 import { MOMENT_KINDS, FOLLOW_PROVIDERS, pro, proFeeds, proMatchChannel } from '../index.js';
-import type { Innings, MomentKind, ProChatMessage, ProFact, ProSquad, ProMatch, ProMoment, ProStat, ProStatus, ProTeam, ProWinner, FeedFollow, RunSummary } from '../index.js';
+import type { BallEvent, Innings, MomentKind, ProgressPoint, ProChatMessage, ProFact, ProSquad, ProMatch, ProMoment, ProStat, ProStatus, ProTeam, ProWinner, FeedFollow, RunSummary } from '../index.js';
 import type { FeedProvider, FeedStatus } from '../../../platform/feeds.js';
 
 const ProStatusEnum = builder.enumType('ProMatchStatus', {
@@ -47,6 +47,7 @@ export const ProTeamRef = builder.objectRef<ProTeam>('ProTeam').implement({
     name: t.exposeString('name'),
     shortCode: t.exposeString('shortCode'),
     tint: t.exposeString('tint'),
+    logoUrl: t.exposeString('logoUrl', { nullable: true, description: '065 — the team badge (https); null shows the code circle.' }),
     sport: t.field({
       type: SportRef,
       resolve: async (team) => {
@@ -76,6 +77,32 @@ const SquadPlayerRef = builder.objectRef<ProSquad['players'][number]>('ProSquadP
 const SquadRef = builder.objectRef<ProSquad>('ProSquad').implement({
   description: '064 — one side’s squad, as the feed lists it.',
   fields: (t) => ({ team: t.exposeString('team'), players: t.field({ type: [SquadPlayerRef], resolve: (s) => s.players }) }),
+});
+
+const ProgressRef = builder.objectRef<ProgressPoint>('ProProgressPoint').implement({
+  description: '065 — the worm: after `balls` legal balls of innings `innings`, `team` had `runs` for `wickets`.',
+  fields: (t) => ({
+    innings: t.int({ resolve: (p) => p.inn }),
+    team: t.exposeString('team'),
+    balls: t.int({ resolve: (p) => p.b }),
+    runs: t.int({ resolve: (p) => p.r }),
+    wickets: t.int({ resolve: (p) => p.w }),
+  }),
+});
+
+const BallRef = builder.objectRef<BallEvent>('ProBall').implement({
+  description: '065 — one delivery (ball-by-ball feeds). `over` is 0-based: 14 and ball 3 read "14.3".',
+  fields: (t) => ({
+    innings: t.int({ resolve: (b) => b.inn }),
+    over: t.exposeInt('over'),
+    ball: t.exposeInt('ball'),
+    runs: t.exposeInt('runs'),
+    extras: t.exposeInt('extras'),
+    wicket: t.exposeBoolean('wicket'),
+    batter: t.exposeString('batter', { nullable: true }),
+    bowler: t.exposeString('bowler', { nullable: true }),
+    text: t.exposeString('text', { nullable: true }),
+  }),
 });
 
 const ScoreRowRef = builder.objectRef<Innings['rows'][number]>('ProScoreRow').implement({
@@ -172,6 +199,8 @@ export const ProMatchRef = builder.objectRef<ProMatch>('ProMatch').implement({
     scorecard: t.field({ type: [InningsRef], resolve: (m) => m.scorecard }),
     facts: t.field({ type: [FactRef], description: '064 — the Info tab: format, toss and the like.', resolve: (m) => m.facts }),
     squads: t.field({ type: [SquadRef], description: '064 — the Squads tab, home side first. Empty until the feed lists them.', resolve: (m) => m.squads }),
+    progress: t.field({ type: [ProgressRef], description: '065 — the Graphs tab: one point per innings per over the feed saw.', resolve: (m) => m.progress }),
+    balls: t.field({ type: [BallRef], description: '065 — the Overs and Commentary tabs, oldest first. Empty without a ball-by-ball feed.', resolve: (m) => m.balls }),
     featured: t.exposeBoolean('featured'),
     chatOpen: t.exposeBoolean('chatOpen'),
     provider: t.exposeString('provider', { description: 'manual, or the feed that keeps it current: cricapi, api_football, snooker_org.' }),
@@ -311,6 +340,7 @@ const TeamInput = builder.inputType('ProTeamInput', {
     name: t.string({ required: true }),
     shortCode: t.string({ required: true }),
     tint: t.string(),
+    logoUrl: t.string({ description: '065 — an https image address; empty clears it, left out keeps it.' }),
   }),
 });
 

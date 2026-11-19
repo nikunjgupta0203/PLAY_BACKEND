@@ -18,7 +18,7 @@
 import { config } from '../../../platform/config.js';
 import type { FeedHttp } from '../../../platform/feeds.js';
 import type { LivePatch, MomentKind, ProMatch, ProStatus, Stat, Winner } from '../service/index.js';
-import { arr, codeFor, cut, num, obj, str, type FeedFollow, type FeedMatch, type FeedMoment, type ScoreAdapter } from './types.js';
+import { arr, codeFor, cut, logoUrl, num, obj, str, type FeedFollow, type FeedMatch, type FeedMoment, type ScoreAdapter } from './types.js';
 
 const BASE = 'https://v3.football.api-sports.io';
 /** `date=` with `timezone=UTC` is a UTC calendar day. */
@@ -167,8 +167,8 @@ export function parseFootballFixture(raw: unknown, league: string | null): FeedM
     stage: cut(str(lg['round']), 60),
     venueName: cut(str(venue['name']), 80),
     city: cut(str(venue['city']), 60),
-    home: { ref: homeId, name: homeName, code: codeFor(homeName) },
-    away: { ref: awayId, name: awayName, code: codeFor(awayName) },
+    home: { ref: homeId, name: homeName, code: codeFor(homeName), logo: logoUrl(home['logo']) },
+    away: { ref: awayId, name: awayName, code: codeFor(awayName), logo: logoUrl(away['logo']) },
     live,
     moments: momentsOf(fx),
   };

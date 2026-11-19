@@ -2757,6 +2757,8 @@ model ProTeam {
   /// 060 — manual, or the feed that created or matched it.
   provider    String   @default("manual")
   providerRef String?  @map("provider_ref")
+  /// 065 — the feed's badge, or one staff set; null shows the code circle.
+  logoUrl     String?  @map("logo_url")
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   homeMatches ProMatch[]   @relation("home")
@@ -2792,6 +2794,10 @@ model ProMatch {
   facts         Json      @default("[]")
   /// 064 — the Squads tab: [{ team, players: [{ name, role }] }]. Up to 2.
   squads        Json      @default("[]")
+  /// 065 — the worm: one point per innings per over seen ({ inn, team, b, r, w }).
+  progress      Json      @default("[]")
+  /// 065 — the latest ball-by-ball events (paid CricAPI plans): Overs and Commentary.
+  balls         Json      @default("[]")
   featured      Boolean   @default(false)
   chatOpen      Boolean   @default(true) @map("chat_open")
   provider      String    @default("manual")

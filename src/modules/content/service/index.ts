@@ -64,6 +64,8 @@ export interface LinkInput {
   imageCredit: string | null;
   imageCreditUrl: string | null;
   publishedAt: Date;
+  /** The publisher's description (plain text), when the feed sends one. */
+  summary?: string | null;
 }
 
 export interface ContentInput {
@@ -311,6 +313,7 @@ export function createContentService(deps: ContentDeps) {
             sportId: i.sportId,
             title: title.length > 140 ? `${title.slice(0, 139)}…` : title,
             kicker: i.kicker ? i.kicker.slice(0, 40) : null,
+            summary: i.summary?.trim() ? i.summary.trim().slice(0, 300) : null,
             sourceName: i.sourceName.trim().slice(0, 60) || 'News',
             sourceUrl,
             imageUrl: i.imageUrl && /^https:\/\//.test(i.imageUrl) ? i.imageUrl.slice(0, 1000) : null,

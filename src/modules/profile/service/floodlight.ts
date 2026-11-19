@@ -63,23 +63,44 @@ export function createProfileExtras(deps: { db: Db; now?: () => Date }) {
     return label;
   }
 
-  /** Athletes to follow on Explore: players who call themselves athletes, newest label first. */
-  /** "Athletes to follow" — never the viewer themself. */
+  /**
+   * "Athletes to follow" on Explore — never the viewer themself. Players who
+   * call themselves athletes come first, newest label first; while few have
+   * set a label (prod had none, 2026-11-19, so the row never showed), the list
+   * is topped up with other public players who play a sport, most recently
+   * active first.
+   */
   async function athletes(filter: { sportId?: string | null; q?: string | null; first?: number; excludeUserId?: string | null }): Promise<string[]> {
     const q = filter.q?.trim();
-    const rows = await db.playerProfile.findMany({
+    const take = Math.min(Math.max(filter.first ?? 10, 1), 30);
+    const base = {
+      visibility: { not: 'private' },
+      ...(filter.excludeUserId ? { userId: { not: filter.excludeUserId } } : {}),
+      ...(filter.sportId ? { sports: { some: { sportId: filter.sportId } } } : {}),
+    };
+    const labelled = await db.playerProfile.findMany({
       where: {
+        ...base,
         athleteLabel: { not: null },
-        visibility: { not: 'private' },
-        ...(filter.excludeUserId ? { userId: { not: filter.excludeUserId } } : {}),
-        ...(filter.sportId ? { sports: { some: { sportId: filter.sportId } } } : {}),
         ...(q ? { OR: [{ athleteLabel: { contains: q, mode: 'insensitive' } }, { user: { displayName: { contains: q, mode: 'insensitive' } } }] } : {}),
       },
       orderBy: [{ updatedAt: 'desc' }],
-      take: Math.min(Math.max(filter.first ?? 10, 1), 30),
+      take,
       select: { id: true },
     });
-    return rows.map((r) => r.id);
+    if (labelled.length >= take) return labelled.map((r) => r.id);
+    const others = await db.playerProfile.findMany({
+      where: {
+        ...base,
+        athleteLabel: null,
+        ...(filter.sportId ? {} : { sports: { some: {} } }),
+        ...(q ? { user: { displayName: { contains: q, mode: 'insensitive' } } } : {}),
+      },
+      orderBy: [{ updatedAt: 'desc' }],
+      take: take - labelled.length,
+      select: { id: true },
+    });
+    return [...labelled, ...others].map((r) => r.id);
   }
 
   async function records(profileId: string): Promise<ProfileRecord[]> {

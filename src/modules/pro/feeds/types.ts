@@ -11,6 +11,20 @@ export interface FeedSide {
   ref: string;
   name: string;
   code: string;
+  /** 065 — the provider's badge for the side, when it sends one (https only, see logoUrl). */
+  logo?: string | null;
+}
+
+/**
+ * 065 — a badge address worth showing: https, not too long, and not CricAPI's
+ * generic placeholder (every team without a badge gets icon512.png). Pure.
+ */
+export function logoUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim();
+  if (!/^https:\/\/\S+$/i.test(v) || v.length > 500) return null;
+  if (/\/icon512\.png$/i.test(v)) return null;
+  return v;
 }
 
 export interface FeedMoment {

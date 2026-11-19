@@ -16,7 +16,7 @@
 import { config } from '../../../platform/config.js';
 import type { FeedHttp, FeedProvider } from '../../../platform/feeds.js';
 import type { LivePatch, ProMatch, ProStatus, Winner } from '../service/index.js';
-import { arr, codeFor, cut, num, obj, str, type FeedFollow, type FeedMatch, type ScoreAdapter } from './types.js';
+import { arr, codeFor, cut, logoUrl, num, obj, str, type FeedFollow, type FeedMatch, type ScoreAdapter } from './types.js';
 
 export interface ApiSportsSpec {
   provider: FeedProvider;
@@ -105,8 +105,8 @@ export function parseApiSportsGame(raw: unknown, spec: Pick<ApiSportsSpec, 'path
     const b = obj(f['second']);
     const an = str(a['name']);
     const bn = str(b['name']);
-    if (an && str(a['id'])) home = { ref: `f:${str(a['id'])}`, name: an, code: codeFor(an.split(' ').pop() ?? an) };
-    if (bn && str(b['id'])) away = { ref: `f:${str(b['id'])}`, name: bn, code: codeFor(bn.split(' ').pop() ?? bn) };
+    if (an && str(a['id'])) home = { ref: `f:${str(a['id'])}`, name: an, code: codeFor(an.split(' ').pop() ?? an), logo: logoUrl(a['logo']) };
+    if (bn && str(b['id'])) away = { ref: `f:${str(b['id'])}`, name: bn, code: codeFor(bn.split(' ').pop() ?? bn), logo: logoUrl(b['logo']) };
     homeWon = a['winner'] === true ? true : null;
     awayWon = b['winner'] === true ? true : null;
   } else {
@@ -115,8 +115,8 @@ export function parseApiSportsGame(raw: unknown, spec: Pick<ApiSportsSpec, 'path
     const b = obj(t['away']);
     const an = str(a['name']);
     const bn = str(b['name']);
-    if (an && str(a['id'])) home = { ref: str(a['id'])!, name: an, code: codeFor(an) };
-    if (bn && str(b['id'])) away = { ref: str(b['id'])!, name: bn, code: codeFor(bn) };
+    if (an && str(a['id'])) home = { ref: str(a['id'])!, name: an, code: codeFor(an), logo: logoUrl(a['logo']) };
+    if (bn && str(b['id'])) away = { ref: str(b['id'])!, name: bn, code: codeFor(bn), logo: logoUrl(b['logo']) };
   }
 
   const live: LivePatch = { status, statusDetail: detail };

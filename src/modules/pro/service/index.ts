@@ -79,7 +79,33 @@ export const FactSchema = z.object({ label: short(30), value: short(120) });
 export const SquadPlayerSchema = z.object({ name: short(60), role: z.string().trim().max(40).nullable().optional() });
 export const SquadSchema = z.object({ team: short(40), players: z.array(SquadPlayerSchema).max(40) });
 
+/** 065 — one worm point: after `b` legal balls of innings `inn`, `team` had `r` for `w`. */
+export const ProgressPointSchema = z.object({
+  inn: z.number().int().min(1).max(4),
+  team: short(10),
+  b: z.number().int().min(0).max(3000),
+  r: z.number().int().min(0).max(2000),
+  w: z.number().int().min(0).max(10),
+});
+/** 065 — one delivery from a ball-by-ball feed. `over` is 0-based, as feeds count. */
+export const BallEventSchema = z.object({
+  inn: z.number().int().min(1).max(4),
+  over: z.number().int().min(0).max(500),
+  ball: z.number().int().min(0).max(15),
+  runs: z.number().int().min(0).max(10),
+  extras: z.number().int().min(0).max(10),
+  wicket: z.boolean(),
+  batter: z.string().trim().max(60).nullable(),
+  bowler: z.string().trim().max(60).nullable(),
+  text: z.string().trim().max(160).nullable(),
+});
+/** A Test's four innings at one point an over fit; older balls drop off the end. */
+export const MAX_PROGRESS = 800;
+export const MAX_BALLS = 360;
+
 export type Stat = z.infer<typeof StatSchema>;
+export type ProgressPoint = z.infer<typeof ProgressPointSchema>;
+export type BallEvent = z.infer<typeof BallEventSchema>;
 export type Innings = z.infer<typeof InningsSchema>;
 export type Fact = z.infer<typeof FactSchema>;
 export type Squad = z.infer<typeof SquadSchema>;
@@ -107,6 +133,8 @@ export interface Team {
   shortCode: string;
   tint: string;
   provider: string;
+  /** 065 — null shows the code circle. */
+  logoUrl: string | null;
 }
 
 export interface ProMatch {
@@ -133,6 +161,10 @@ export interface ProMatch {
   facts: Fact[];
   /** 064 — the Squads tab, home side first. */
   squads: Squad[];
+  /** 065 — the Graphs tab. */
+  progress: ProgressPoint[];
+  /** 065 — the Overs and Commentary tabs, oldest first. */
+  balls: BallEvent[];
   featured: boolean;
   chatOpen: boolean;
   provider: string;
@@ -198,6 +230,8 @@ export interface LivePatch {
   scorecard?: unknown;
   facts?: unknown;
   squads?: unknown;
+  progress?: unknown;
+  balls?: unknown;
   featured?: boolean;
   chatOpen?: boolean;
   startsAt?: Date;
@@ -225,7 +259,7 @@ export interface ProDeps {
 type MatchRow = Awaited<ReturnType<Db['proMatch']['findFirstOrThrow']>>;
 type TeamRow = Awaited<ReturnType<Db['proTeam']['findFirstOrThrow']>>;
 
-const toTeam = (r: TeamRow): Team => ({ id: r.id, sportId: r.sportId, name: r.name, shortCode: r.shortCode, tint: r.tint, provider: r.provider });
+const toTeam = (r: TeamRow): Team => ({ id: r.id, sportId: r.sportId, name: r.name, shortCode: r.shortCode, tint: r.tint, provider: r.provider, logoUrl: r.logoUrl ?? null });
 
 const toMatch = (r: MatchRow): ProMatch => ({
   id: r.id,
@@ -249,6 +283,8 @@ const toMatch = (r: MatchRow): ProMatch => ({
   scorecard: readJson(z.array(InningsSchema), r.scorecard, []),
   facts: readJson(z.array(FactSchema), r.facts, []),
   squads: readJson(z.array(SquadSchema), r.squads, []),
+  progress: readJson(z.array(ProgressPointSchema), r.progress, []),
+  balls: readJson(z.array(BallEventSchema), r.balls, []),
   featured: r.featured,
   chatOpen: r.chatOpen,
   provider: r.provider,
@@ -322,17 +358,26 @@ export function createProService(deps: ProDeps) {
     return new Map(rows.map((r) => [r.id, toTeam(r)]));
   }
 
-  function teamFields(input: { name: string; shortCode: string; tint?: string | null }) {
+  function teamFields(input: { name: string; shortCode: string; tint?: string | null; logoUrl?: string | null }) {
     const tint = (input.tint ?? '#2C2C24').trim();
     if (!/^#[0-9A-Fa-f]{6}$/.test(tint)) throw new UserError(ProCode.INVALID_TEAM, 'The colour is a hex code like #1E3A6B.');
+    // 065 — undefined leaves the logo as it is; '' or null clears it.
+    let logo: { logoUrl?: string | null } = {};
+    if (input.logoUrl !== undefined) {
+      const raw = input.logoUrl?.trim() ?? '';
+      if (raw && !/^https:\/\/\S+$/i.test(raw)) throw new UserError(ProCode.INVALID_TEAM, 'The logo is an https:// image address.');
+      if (raw.length > 500) throw new UserError(ProCode.INVALID_TEAM, 'The logo address is too long.');
+      logo = { logoUrl: raw || null };
+    }
     return {
       name: required(input.name, 80, 'A team name', ProCode.INVALID_TEAM),
       shortCode: required(input.shortCode, 5, 'The short code', ProCode.INVALID_TEAM).toUpperCase(),
       tint: tint.toUpperCase(),
+      ...logo,
     };
   }
 
-  async function saveTeam(id: string | null, input: { sportId: string; name: string; shortCode: string; tint?: string | null }): Promise<Team> {
+  async function saveTeam(id: string | null, input: { sportId: string; name: string; shortCode: string; tint?: string | null; logoUrl?: string | null }): Promise<Team> {
     const fields = teamFields(input);
     try {
       const row = id
@@ -512,6 +557,8 @@ export function createProService(deps: ProDeps) {
     if (patch.scorecard !== undefined) data.scorecard = parseJson(z.array(InningsSchema).max(4), patch.scorecard, 'scorecard');
     if (patch.facts !== undefined) data.facts = parseJson(z.array(FactSchema).max(10), patch.facts, 'match info');
     if (patch.squads !== undefined) data.squads = parseJson(z.array(SquadSchema).max(2), patch.squads, 'squads');
+    if (patch.progress !== undefined) data.progress = parseJson(z.array(ProgressPointSchema).max(MAX_PROGRESS), patch.progress, 'score progress');
+    if (patch.balls !== undefined) data.balls = parseJson(z.array(BallEventSchema).max(MAX_BALLS), patch.balls, 'ball by ball');
 
     const after = toMatch(await db.proMatch.update({ where: { id }, data }));
     await publish(id, 'pro.match.updated', { updatedAt: after.updatedAt.toISOString() });
@@ -597,18 +644,21 @@ export function createProService(deps: ProDeps) {
    * The team a feed names: by the feed's own id first, then by name in the
    * sport (a team staff already made is claimed, not duplicated), else new.
    */
-  async function feedTeam(sportId: string, provider: string, providerRef: string, name: string, shortCode: string): Promise<Team> {
+  async function feedTeam(sportId: string, provider: string, providerRef: string, name: string, shortCode: string, logo: string | null = null): Promise<Team> {
+    // 065 — the feed's badge fills a team that has none; a logo staff set is never replaced.
+    const withLogo = async (row: TeamRow): Promise<Team> =>
+      logo && !row.logoUrl ? toTeam(await db.proTeam.update({ where: { id: row.id }, data: { logoUrl: logo } })) : toTeam(row);
     const byRef = await db.proTeam.findFirst({ where: { provider, providerRef } });
-    if (byRef) return toTeam(byRef);
+    if (byRef) return withLogo(byRef);
     const cleanName = name.trim().slice(0, 80) || providerRef.slice(0, 80);
     const byName = await db.proTeam.findFirst({ where: { sportId, name: { equals: cleanName, mode: 'insensitive' } } });
     if (byName) {
-      if (byName.providerRef) return toTeam(byName);
-      return toTeam(await db.proTeam.update({ where: { id: byName.id }, data: { provider, providerRef } }));
+      if (byName.providerRef) return withLogo(byName);
+      return toTeam(await db.proTeam.update({ where: { id: byName.id }, data: { provider, providerRef, ...(logo && !byName.logoUrl ? { logoUrl: logo } : {}) } }));
     }
     const code = shortCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 5) || cleanName.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'TBC';
     try {
-      return toTeam(await db.proTeam.create({ data: { id: newId(), sportId, name: cleanName, shortCode: code, provider, providerRef } }));
+      return toTeam(await db.proTeam.create({ data: { id: newId(), sportId, name: cleanName, shortCode: code, provider, providerRef, logoUrl: logo } }));
     } catch (e) {
       // Two polls raced to make the same team: the other one won.
       const again = await db.proTeam.findFirst({ where: { provider, providerRef } });

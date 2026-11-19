@@ -441,6 +441,23 @@ describe('profile', () => {
     expect(await extras.athletes({ excludeUserId: asha })).toEqual([]);
     expect((await extras.athletes({ excludeUserId: ravi })).length).toBe(1);
   });
+
+  it('athletes to follow are topped up with public players who play a sport, labelled athletes first (2026-11-19)', async () => {
+    const extras = createProfileExtras({ db, now: () => clock });
+    const asha = await user('Asha');
+    const ravi = await user('Ravi');
+    const meera = await user('Meera');
+    await user('Kabir'); // no sport: not listed
+    await extras.setAthleteLabel(asha, 'Club striker');
+    const profile = (u: string) => prisma.playerProfile.findUniqueOrThrow({ where: { userId: u } });
+    for (const u of [ravi, meera]) await prisma.playerSport.create({ data: { playerId: (await profile(u)).id, sportId: football, skillBand: 'beginner' } });
+    await prisma.playerProfile.update({ where: { userId: meera }, data: { visibility: 'private' } });
+    const ids = await extras.athletes({});
+    expect(ids).toEqual([(await profile(asha)).id, (await profile(ravi)).id]);
+    expect(await extras.athletes({ first: 1 })).toEqual([(await profile(asha)).id]);
+    expect(await extras.athletes({ excludeUserId: ravi, q: 'rav' })).toEqual([]);
+    expect(await extras.athletes({ q: 'rav' })).toEqual([(await profile(ravi)).id]);
+  });
 });
 
 // --- predictions R10: the system question -------------------------------------------
