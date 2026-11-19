@@ -15,7 +15,7 @@ import { sport } from '../../sport/index.js';
 import { WATCH_SPORT_SLUGS } from '../watchSports.js';
 import { PlayerProfileRef } from '../../profile/schema/index.js';
 import { MOMENT_KINDS, FOLLOW_PROVIDERS, pro, proFeeds, proMatchChannel } from '../index.js';
-import type { Innings, MomentKind, ProChatMessage, ProMatch, ProMoment, ProStat, ProStatus, ProTeam, ProWinner, FeedFollow, RunSummary } from '../index.js';
+import type { Innings, MomentKind, ProChatMessage, ProFact, ProSquad, ProMatch, ProMoment, ProStat, ProStatus, ProTeam, ProWinner, FeedFollow, RunSummary } from '../index.js';
 import type { FeedProvider, FeedStatus } from '../../../platform/feeds.js';
 
 const ProStatusEnum = builder.enumType('ProMatchStatus', {
@@ -59,6 +59,23 @@ export const ProTeamRef = builder.objectRef<ProTeam>('ProTeam').implement({
 
 const StatRef = builder.objectRef<ProStat>('ProMatchStat').implement({
   fields: (t) => ({ label: t.exposeString('label'), value: t.exposeString('value') }),
+});
+
+const FactRef = builder.objectRef<ProFact>('ProMatchFact').implement({
+  description: '064 — one Info row: "Format" · "T20", "Toss" · "India, chose to bat".',
+  fields: (t) => ({ label: t.exposeString('label'), value: t.exposeString('value') }),
+});
+
+const SquadPlayerRef = builder.objectRef<ProSquad['players'][number]>('ProSquadPlayer').implement({
+  fields: (t) => ({
+    name: t.exposeString('name'),
+    role: t.string({ nullable: true, description: '"Batsman", "WK-Batsman", "Bowling Allrounder".', resolve: (p) => p.role ?? null }),
+  }),
+});
+
+const SquadRef = builder.objectRef<ProSquad>('ProSquad').implement({
+  description: '064 — one side’s squad, as the feed lists it.',
+  fields: (t) => ({ team: t.exposeString('team'), players: t.field({ type: [SquadPlayerRef], resolve: (s) => s.players }) }),
 });
 
 const ScoreRowRef = builder.objectRef<Innings['rows'][number]>('ProScoreRow').implement({
@@ -153,6 +170,8 @@ export const ProMatchRef = builder.objectRef<ProMatch>('ProMatch').implement({
     stats: t.field({ type: [StatRef], resolve: (m) => m.stats }),
     currentOver: t.exposeStringList('currentOver', { description: 'The balls of the over in play: "1", "4", "W", "6".' }),
     scorecard: t.field({ type: [InningsRef], resolve: (m) => m.scorecard }),
+    facts: t.field({ type: [FactRef], description: '064 — the Info tab: format, toss and the like.', resolve: (m) => m.facts }),
+    squads: t.field({ type: [SquadRef], description: '064 — the Squads tab, home side first. Empty until the feed lists them.', resolve: (m) => m.squads }),
     featured: t.exposeBoolean('featured'),
     chatOpen: t.exposeBoolean('chatOpen'),
     provider: t.exposeString('provider', { description: 'manual, or the feed that keeps it current: cricapi, api_football, snooker_org.' }),
@@ -322,6 +341,8 @@ const LiveInput = builder.inputType('ProMatchLiveInput', {
     stats: t.field({ type: ['JSONObject'], description: '[{ label, value }] — up to 6.' }),
     currentOver: t.stringList({ description: 'Up to 12 balls.' }),
     scorecard: t.field({ type: ['JSONObject'], description: '[{ team, title, columns, rows: [{ name, detail, cells }], footer }]' }),
+    facts: t.field({ type: ['JSONObject'], description: '064 — [{ label, value }], up to 10: the Info tab.' }),
+    squads: t.field({ type: ['JSONObject'], description: '064 — [{ team, players: [{ name, role }] }], up to 2.' }),
     featured: t.boolean(),
     chatOpen: t.boolean(),
     startsAt: t.field({ type: 'DateTime' }),
@@ -457,6 +478,8 @@ builder.mutationFields((t) => ({
           stats: keep(i, 'stats') ?? undefined,
           currentOver: keep(i, 'currentOver') ?? undefined,
           scorecard: keep(i, 'scorecard') ?? undefined,
+          facts: keep(i, 'facts') ?? undefined,
+          squads: keep(i, 'squads') ?? undefined,
           featured: keep<boolean | null>(i, 'featured') ?? undefined,
           chatOpen: keep<boolean | null>(i, 'chatOpen') ?? undefined,
           startsAt: keep<Date | null>(i, 'startsAt') ?? undefined,

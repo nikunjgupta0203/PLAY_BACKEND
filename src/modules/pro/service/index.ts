@@ -74,8 +74,15 @@ export const InningsSchema = z.object({
   footer: z.string().trim().max(120).nullable().optional(),
 });
 
+/** 064 — one Info row: "Format" · "T20", "Toss" · "India, chose to bat". */
+export const FactSchema = z.object({ label: short(30), value: short(120) });
+export const SquadPlayerSchema = z.object({ name: short(60), role: z.string().trim().max(40).nullable().optional() });
+export const SquadSchema = z.object({ team: short(40), players: z.array(SquadPlayerSchema).max(40) });
+
 export type Stat = z.infer<typeof StatSchema>;
 export type Innings = z.infer<typeof InningsSchema>;
+export type Fact = z.infer<typeof FactSchema>;
+export type Squad = z.infer<typeof SquadSchema>;
 
 function parseJson<T>(schema: z.ZodType<T>, value: unknown, what: string): T {
   const parsed = schema.safeParse(value);
@@ -122,6 +129,10 @@ export interface ProMatch {
   stats: Stat[];
   currentOver: string[];
   scorecard: Innings[];
+  /** 064 — the Info tab. */
+  facts: Fact[];
+  /** 064 — the Squads tab, home side first. */
+  squads: Squad[];
   featured: boolean;
   chatOpen: boolean;
   provider: string;
@@ -185,6 +196,8 @@ export interface LivePatch {
   stats?: unknown;
   currentOver?: unknown;
   scorecard?: unknown;
+  facts?: unknown;
+  squads?: unknown;
   featured?: boolean;
   chatOpen?: boolean;
   startsAt?: Date;
@@ -234,6 +247,8 @@ const toMatch = (r: MatchRow): ProMatch => ({
   stats: readJson(z.array(StatSchema), r.stats, []),
   currentOver: readJson(z.array(BallSchema), r.currentOver, []),
   scorecard: readJson(z.array(InningsSchema), r.scorecard, []),
+  facts: readJson(z.array(FactSchema), r.facts, []),
+  squads: readJson(z.array(SquadSchema), r.squads, []),
   featured: r.featured,
   chatOpen: r.chatOpen,
   provider: r.provider,
@@ -495,6 +510,8 @@ export function createProService(deps: ProDeps) {
     if (patch.stats !== undefined) data.stats = parseJson(z.array(StatSchema).max(6), patch.stats, 'stats row');
     if (patch.currentOver !== undefined) data.currentOver = parseJson(z.array(BallSchema).max(12), patch.currentOver, 'over');
     if (patch.scorecard !== undefined) data.scorecard = parseJson(z.array(InningsSchema).max(4), patch.scorecard, 'scorecard');
+    if (patch.facts !== undefined) data.facts = parseJson(z.array(FactSchema).max(10), patch.facts, 'match info');
+    if (patch.squads !== undefined) data.squads = parseJson(z.array(SquadSchema).max(2), patch.squads, 'squads');
 
     const after = toMatch(await db.proMatch.update({ where: { id }, data }));
     await publish(id, 'pro.match.updated', { updatedAt: after.updatedAt.toISOString() });

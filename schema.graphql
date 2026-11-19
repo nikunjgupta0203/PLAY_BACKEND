@@ -5972,6 +5972,9 @@ type ProMatch {
 
   """The balls of the over in play: "1", "4", "W", "6"."""
   currentOver: [String!]!
+
+  """064 — the Info tab: format, toss and the like."""
+  facts: [ProMatchFact!]!
   featured: Boolean!
 
   """
@@ -6008,6 +6011,11 @@ type ProMatch {
   scoreCheckedAt: DateTime!
   scorecard: [ProInnings!]!
   sport: Sport!
+
+  """
+  064 — the Squads tab, home side first. Empty until the feed lists them.
+  """
+  squads: [ProSquad!]!
   stage: String
   startsAt: DateTime!
   stats: [ProMatchStat!]!
@@ -6018,6 +6026,12 @@ type ProMatch {
   updatedAt: DateTime!
   venueName: String
   winner: ProMatchWinner
+}
+
+"""064 — one Info row: "Format" · "T20", "Toss" · "India, chose to bat"."""
+type ProMatchFact {
+  label: String!
+  value: String!
 }
 
 input ProMatchInput {
@@ -6043,6 +6057,9 @@ input ProMatchLiveInput {
 
   """Up to 12 balls."""
   currentOver: [String!]
+
+  """064 — [{ label, value }], up to 10: the Info tab."""
+  facts: [JSONObject!]
   featured: Boolean
   homeDetail: String
   homeScore: String
@@ -6051,6 +6068,9 @@ input ProMatchLiveInput {
 
   """[{ team, title, columns, rows: [{ name, detail, cells }], footer }]"""
   scorecard: [JSONObject!]
+
+  """064 — [{ team, players: [{ name, role }] }], up to 2."""
+  squads: [JSONObject!]
   stage: String
   startsAt: DateTime
 
@@ -6131,6 +6151,19 @@ type ProScoreRow {
   cells: [String!]!
   detail: String
   name: String!
+}
+
+"""064 — one side’s squad, as the feed lists it."""
+type ProSquad {
+  players: [ProSquadPlayer!]!
+  team: String!
+}
+
+type ProSquadPlayer {
+  name: String!
+
+  """"Batsman", "WK-Batsman", "Bowling Allrounder"."""
+  role: String
 }
 
 """A professional team. `tint` is the code circle’s colour, from data."""

@@ -2788,6 +2788,10 @@ model ProMatch {
   stats         Json      @default("[]")
   currentOver   Json      @default("[]") @map("current_over")
   scorecard     Json      @default("[]")
+  /// 064 — the Info tab: [{ label, value }] such as Format, Toss. Up to 10.
+  facts         Json      @default("[]")
+  /// 064 — the Squads tab: [{ team, players: [{ name, role }] }]. Up to 2.
+  squads        Json      @default("[]")
   featured      Boolean   @default(false)
   chatOpen      Boolean   @default(true) @map("chat_open")
   provider      String    @default("manual")

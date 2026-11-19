@@ -5,13 +5,14 @@
  * drops off that list is fetched once more by id to read its result. The
  * scorecard costs a call of its own, so it is read for featured matches about
  * every 15 minutes and once at the end. Ball-by-ball is a paid feature: the
- * current over is left to staff.
+ * current over is left to staff. 064 — the toss (match_info) and the squads
+ * (match_squad) are read once each, at most one try per half hour.
  *
  * A follow's `ref` is a CricAPI series id.
  */
 import { config } from '../../../platform/config.js';
 import type { FeedHttp } from '../../../platform/feeds.js';
-import type { Innings, LivePatch, ProMatch, ProStatus, Stat, Winner } from '../service/index.js';
+import type { Fact, Innings, LivePatch, ProMatch, ProStatus, Squad, Stat, Winner } from '../service/index.js';
 import { arr, codeFor, cut, num, obj, ordinal, str, utcDate, type FeedFollow, type FeedMatch, type ScoreAdapter } from './types.js';
 
 const BASE = 'https://api.cricapi.com/v1';
@@ -93,6 +94,49 @@ function statusOf(m: Record<string, unknown>): ProStatus {
 
 const PLACEHOLDER_TEAM = /^\s*(tbc|tba|tbd|to be (confirmed|announced|decided))\s*$/i;
 
+const FORMATS: Record<string, string> = { t20: 'T20', odi: 'ODI', test: 'Test', t10: 'T10' };
+
+/** "India won the toss and chose to bat" as an Info row, when the payload says (match_info, scorecard). Pure. */
+export function cricToss(raw: unknown): Fact | null {
+  const m = obj(raw);
+  const winner = str(m['tossWinner']);
+  if (!winner) return null;
+  const choice = (str(m['tossChoice']) ?? '').toLowerCase();
+  const chose = /bat/.test(choice) ? 'chose to bat' : /bowl|field/.test(choice) ? 'chose to bowl' : null;
+  const name = winner.replace(/\b\w/g, (c) => c.toUpperCase());
+  return { label: 'Toss', value: cut(chose ? `${name}, ${chose}` : `${name} won`, 120)! };
+}
+
+/** 064 — the Info rows a CricAPI match carries: format, then the toss if known. Pure. */
+export function cricFacts(raw: unknown): Fact[] {
+  const m = obj(raw);
+  const out: Fact[] = [];
+  const type = (str(m['matchType']) ?? '').toLowerCase();
+  if (FORMATS[type]) out.push({ label: 'Format', value: FORMATS[type]! });
+  const toss = cricToss(m);
+  if (toss) out.push(toss);
+  return out;
+}
+
+/** 064 — match_squad → two squads, home side first. Pure. */
+export function parseCricSquads(raw: unknown, home: string, away: string): Squad[] {
+  const sides = arr(raw).map(obj);
+  const pick = (name: string) => sides.find((s) => (str(s['teamName']) ?? '').toLowerCase() === name.toLowerCase());
+  const ordered = [pick(home), pick(away)];
+  // Names that differ ("India" vs "India Women"): fall back to the feed's own order.
+  const list = ordered.every(Boolean) ? (ordered as Record<string, unknown>[]) : sides.slice(0, 2);
+  return list
+    .map((s) => ({
+      team: cut(str(s['teamName']) ?? '', 40) ?? '',
+      players: arr(s['players'])
+        .map(obj)
+        .slice(0, 40)
+        .map((p) => ({ name: cut(str(p['name']) ?? '', 60) ?? '', role: cut(str(p['role']) ?? null, 40) }))
+        .filter((p) => p.name !== ''),
+    }))
+    .filter((s) => s.team !== '' && s.players.length > 0);
+}
+
 /** Converts one CricAPI match (series_info matchList, currentMatches or match_info). Pure. */
 export function parseCricMatch(raw: unknown, league: string | null): FeedMatch | null {
   const m = obj(raw);
@@ -115,6 +159,8 @@ export function parseCricMatch(raw: unknown, league: string | null): FeedMatch |
   const matchType = (str(m['matchType']) ?? '').toLowerCase();
 
   const live: LivePatch = { status };
+  const facts = cricFacts(m);
+  if (facts.length) live.facts = facts;
   if (status !== 'scheduled') {
     live.homeScore = home.length ? home.map(scoreText).join(' & ') : null;
     live.awayScore = away.length ? away.map(scoreText).join(' & ') : null;
@@ -261,9 +307,38 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY): Sc
         if (!parsed) continue;
         const ended = parsed.live.status === 'finished' && w.status !== 'finished';
         const quarter = now.getUTCMinutes() % 15 < POLL_MINUTES;
+        // 064 — extras cost a call each, so at most one try per half hour until they land.
+        const halfHour = now.getUTCMinutes() % 30 < POLL_MINUTES;
+        const underWay = parsed.live.status === 'live' || parsed.live.status === 'break';
         if (ended || (w.featured && parsed.live.status === 'live' && quarter)) {
           const card = await scorecard(http, w.providerRef);
           if (card && card.length) parsed.live.scorecard = card;
+        }
+
+        // The toss: currentMatches leaves it out; match_info has it. Once known, keep it.
+        const facts = (parsed.live.facts as Fact[] | undefined) ?? [];
+        if (!facts.some((f) => f.label === 'Toss')) {
+          let toss = w.facts.find((f) => f.label === 'Toss') ?? null;
+          if (!toss && underWay && halfHour) {
+            try {
+              toss = cricToss(body(await http.json(url('match_info', { id: w.providerRef }), { reserve: RESERVE }))['data']);
+            } catch {
+              toss = null;
+            }
+          }
+          if (toss) facts.push(toss);
+        }
+        if (facts.length) parsed.live.facts = facts;
+
+        // Squads: read once, around the toss.
+        const listed = obj(raw)['hasSquad'] !== false;
+        if (!w.squads.length && listed && (underWay || parsed.live.status === 'scheduled') && halfHour && parsed.home && parsed.away) {
+          try {
+            const squads = parseCricSquads(body(await http.json(url('match_squad', { id: w.providerRef }), { reserve: RESERVE }))['data'], parsed.home.name, parsed.away.name);
+            if (squads.length) parsed.live.squads = squads;
+          } catch {
+            // Not listed yet: the next half hour tries again.
+          }
         }
         out.push(parsed);
       }

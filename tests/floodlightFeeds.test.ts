@@ -13,7 +13,7 @@ import { createFeedBudget, feedDay, FEED_PROVIDERS, scrubKeys, type FeedBudget, 
 import { CRICKET, FOOTBALL, SNOOKER, seedSport } from '../src/modules/sport/seed.js';
 import { createProService, type ProService } from '../src/modules/pro/service/index.js';
 import { createFeedRunner, feedPatch, type FeedRunner } from '../src/modules/pro/feeds/runner.js';
-import { cricapiAdapter, inningsTeams, parseCricMatch, parseCricScorecard } from '../src/modules/pro/feeds/cricapi.js';
+import { cricapiAdapter, cricFacts, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
 import { apiFootballAdapter, parseFootballFixture } from '../src/modules/pro/feeds/apiFootball.js';
 import { parseSnookerMatch, parseSnookerPlayers, parseSnookerRounds, snookerAdapter } from '../src/modules/pro/feeds/snooker.js';
 import { codeFor } from '../src/modules/pro/feeds/types.js';
@@ -372,6 +372,49 @@ describe('feed runner', () => {
     clock = new Date(clock.getTime() + 6 * 60_000);
     await runner.pollLive();
     expect((await pro.match(id))!.note).toBe('India opt to bat');
+  });
+
+  it('064 — Info and Squads: format from the fixture, the toss and squads read once each', async () => {
+    await runner.saveFollow(null, { provider: 'cricapi', ref: 'series-1', sportId: cricket, name: 'India tour' });
+    routes = [[/series_info/, ok({ matchList: [cricMatch()] })]];
+    await runner.importFixtures();
+    const id = (await prisma.proMatch.findFirstOrThrow()).id;
+    expect((await pro.match(id))!.facts).toEqual([{ label: 'Format', value: 'T20' }]);
+
+    clock = new Date('2026-11-14T13:31:00.000Z'); // a half hour: the extras are due
+    const live = () => ok([cricMatch({ matchStarted: true, status: 'India opt to bat', score: [{ r: 12, w: 0, o: '1.4', inning: 'India Inning 1' }] })]);
+    const squad = (team: string, names: string[]) => ({ teamName: team, shortname: team.slice(0, 3).toUpperCase(), players: names.map((name) => ({ name, role: 'Batsman' })) });
+    routes = [
+      [/currentMatches/, live],
+      [/match_info/, ok(cricMatch({ matchStarted: true, tossWinner: 'india', tossChoice: 'batting' }))],
+      // The feed lists the away side first: Squads still lead with the home side.
+      [/match_squad/, ok([squad('Australia', ['S Smith']), squad('India', ['R Sharma', 'V Kohli'])])],
+    ];
+    calls = [];
+    await runner.pollLive();
+    const m = (await pro.match(id))!;
+    expect(m.facts).toEqual([
+      { label: 'Format', value: 'T20' },
+      { label: 'Toss', value: 'India, chose to bat' },
+    ]);
+    expect(m.squads.map((s) => `${s.team}:${s.players.length}`)).toEqual(['India:2', 'Australia:1']);
+    expect(m.squads[0]!.players[0]).toEqual({ name: 'R Sharma', role: 'Batsman' });
+
+    // The next half hour: the toss is kept without asking again, the squads are not read twice.
+    clock = new Date('2026-11-14T14:01:00.000Z');
+    calls = [];
+    await runner.pollLive();
+    expect(calls.some((c) => /match_info|match_squad/.test(c))).toBe(false);
+    expect((await pro.match(id))!.facts.map((f) => f.label)).toEqual(['Format', 'Toss']);
+  });
+
+  it('064 — a match CricAPI has no squad for is not asked about', async () => {
+    expect(parseCricSquads([{ teamName: 'India', players: [] }], 'India', 'Australia')).toEqual([]);
+    expect(cricFacts({ matchType: 'odi', tossWinner: 'Australia', tossChoice: 'bowl' })).toEqual([
+      { label: 'Format', value: 'ODI' },
+      { label: 'Toss', value: 'Australia, chose to bowl' },
+    ]);
+    expect(cricFacts({ matchType: 'hundred' })).toEqual([]);
   });
 
   it('a fixtures import never touches a match under way (feeds R6)', async () => {

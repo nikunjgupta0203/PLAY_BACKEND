@@ -61,7 +61,9 @@ export {
 } from './service/index.js';
 export type {
   ChatMessage as ProChatMessage,
+  Fact as ProFact,
   Innings,
+  Squad as ProSquad,
   LivePatch,
   MatchInput,
   Moment as ProMoment,

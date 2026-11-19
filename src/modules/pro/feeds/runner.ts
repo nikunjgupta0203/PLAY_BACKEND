@@ -86,7 +86,10 @@ export function scheduleView(current: ProMatch, feed: FeedMatch): FeedMatch {
   return {
     ...feed,
     startsAt: current.status === 'scheduled' ? feed.startsAt : null,
-    live: stillScheduled ? { status: feed.live.status, statusDetail: feed.live.statusDetail } : {},
+    // 064 — the Info rows (format) too, so a fixture shows them before it is polled.
+    live: stillScheduled
+      ? { status: feed.live.status, statusDetail: feed.live.statusDetail, ...(feed.live.facts !== undefined ? { facts: feed.live.facts } : {}) }
+      : {},
     moments: [],
   };
 }
