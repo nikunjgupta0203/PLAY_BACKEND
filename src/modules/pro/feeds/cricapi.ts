@@ -31,6 +31,31 @@ export function cricCadence(dailyLimit: number): { pollMinutes: number; scorecar
   return dailyLimit >= 1000 ? { pollMinutes: 1, scorecardMinutes: 5 } : { pollMinutes: 10, scorecardMinutes: 30 };
 }
 
+/**
+ * 2026-11-20 — whether a live poll is due. A Test stays "live" for five days,
+ * so polling at stumps every 10 minutes spent ~80 of the free plan's 90 calls
+ * overnight and the score froze before lunch on day 5. When every watched
+ * match is at stumps, poll once an hour (15 min on a paid plan), except from
+ * 15 minutes before to 45 minutes after the hour of day the match first
+ * started, when the next day's play usually begins. Pure.
+ */
+export function cricPollDue(watch: Pick<ProMatch, 'status' | 'statusDetail' | 'startsAt'>[], last: Date | null, now: Date, pollMinutes: number): boolean {
+  if (!last) return true;
+  const since = now.getTime() - last.getTime();
+  const every = (minutes: number) => since >= minutes * 60_000 - 5_000;
+  const atStumps = (w: (typeof watch)[number]) => w.status === 'break' && /stumps/i.test(w.statusDetail ?? '');
+  if (!watch.length || !watch.every(atStumps)) return every(pollMinutes);
+  const DAY = 86_400_000;
+  const nearDailyStart = watch.some((w) => {
+    const offset = (((now.getTime() - w.startsAt.getTime()) % DAY) + DAY) % DAY;
+    return offset >= DAY - 15 * 60_000 || offset <= 45 * 60_000;
+  });
+  return every(nearDailyStart ? pollMinutes : pollMinutes === 1 ? 15 : 60);
+}
+
+/** 2026-11-20 — the toss and squads are read only this close to the start (a Test seen on day 5 never asks). */
+const EXTRAS_WINDOW_MS = 6 * 3_600_000;
+
 function body(json: unknown): Record<string, unknown> {
   const b = obj(json);
   if (b['status'] !== 'success') throw new Error(`cricapi: ${str(b['reason']) ?? str(b['status']) ?? 'request failed'}`);
@@ -363,6 +388,7 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
     provider: 'cricapi',
     sportSlug: 'cricket',
     pollMinutes,
+    due: (watch, last, now) => cricPollDue(watch, last, now, pollMinutes),
     configured: () => key() !== '',
     async fixtures(follow: FeedFollow, http: FeedHttp, now: Date) {
       const data = obj(body(await http.json(url('series_info', { id: follow.ref })))['data']);
@@ -401,6 +427,9 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
         // 064 — extras cost a call each, so at most one try per half hour until they land.
         const halfHour = now.getUTCMinutes() % 30 < pollMinutes;
         const underWay = parsed.live.status === 'live' || parsed.live.status === 'break';
+        // Toss and squads: only around the start. Without this a match that never lists them
+        // (or one first seen mid-Test) spent two calls every half hour, day and night.
+        const nearStart = now.getTime() - w.startsAt.getTime() <= EXTRAS_WINDOW_MS;
         if (ended || (w.featured && parsed.live.status === 'live' && cardDue)) {
           const card = await scorecard(http, w.providerRef);
           if (card && card.length) parsed.live.scorecard = card;
@@ -410,7 +439,7 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
         const facts = (parsed.live.facts as Fact[] | undefined) ?? [];
         if (!facts.some((f) => f.label === 'Toss')) {
           let toss = w.facts.find((f) => f.label === 'Toss') ?? null;
-          if (!toss && underWay && halfHour) {
+          if (!toss && underWay && halfHour && nearStart) {
             try {
               toss = cricToss(body(await http.json(url('match_info', { id: w.providerRef }), { reserve: RESERVE }))['data']);
             } catch {
@@ -423,7 +452,7 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
 
         // Squads: read once, around the toss.
         const listed = obj(raw)['hasSquad'] !== false;
-        if (!w.squads.length && listed && (underWay || parsed.live.status === 'scheduled') && halfHour && parsed.home && parsed.away) {
+        if (!w.squads.length && listed && (underWay || parsed.live.status === 'scheduled') && halfHour && nearStart && parsed.home && parsed.away) {
           try {
             const squads = parseCricSquads(body(await http.json(url('match_squad', { id: w.providerRef }), { reserve: RESERVE }))['data'], parsed.home.name, parsed.away.name);
             if (squads.length) parsed.live.squads = squads;

@@ -13,7 +13,7 @@ import { createFeedBudget, feedDay, FEED_PROVIDERS, scrubKeys, type FeedBudget, 
 import { CRICKET, FOOTBALL, SNOOKER, seedSport } from '../src/modules/sport/seed.js';
 import { createProService, type ProService } from '../src/modules/pro/service/index.js';
 import { createFeedRunner, feedPatch, type FeedRunner } from '../src/modules/pro/feeds/runner.js';
-import { cricapiAdapter, cricCadence, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
+import { cricapiAdapter, cricCadence, cricPollDue, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
 import { apiFootballAdapter, parseFootballFixture } from '../src/modules/pro/feeds/apiFootball.js';
 import { parseSnookerMatch, parseSnookerPlayers, parseSnookerRounds, snookerAdapter } from '../src/modules/pro/feeds/snooker.js';
 import { codeFor, logoUrl } from '../src/modules/pro/feeds/types.js';
@@ -681,5 +681,80 @@ describe('watch sports (founder list, 2026-11-17)', () => {
     const dir = readdirSync('prisma/migrations').find((d) => d.endsWith('_061_watch_sports'))!;
     const sql = readFileSync(`prisma/migrations/${dir}/migration.sql`, 'utf8');
     for (const slug of ['american-football', 'baseball', 'ice-hockey', 'rugby', 'formula-1']) expect(sql).toContain(`'${slug}'`);
+  });
+});
+
+describe('CricAPI call budget at stumps + late logos (2026-11-20)', () => {
+  // The free plan's 90 calls ran out at 12:32 IST on day 5 of SA v BAN: a Test at stumps
+  // was polled every 10 minutes all night, with the toss and squads asked every half hour.
+  const start = new Date('2026-11-15T07:30:00.000Z');
+  const at = (iso: string) => new Date(iso);
+  const stumps = { status: 'break' as const, statusDetail: 'Stumps', startsAt: start };
+
+  it('at stumps polls hourly, but every 10 min around the hour play began; live keeps 10 min', () => {
+    const last = at('2026-11-19T20:00:00.000Z');
+    expect(cricPollDue([stumps], last, at('2026-11-19T20:11:00.000Z'), 10)).toBe(false);
+    expect(cricPollDue([stumps], last, at('2026-11-19T21:00:00.000Z'), 10)).toBe(true);
+    // 07:15–08:15 UTC is near the daily start (07:30): back to 10 minutes.
+    expect(cricPollDue([stumps], at('2026-11-20T07:10:00.000Z'), at('2026-11-20T07:20:00.000Z'), 10)).toBe(true);
+    expect(cricPollDue([stumps], at('2026-11-20T08:00:00.000Z'), at('2026-11-20T08:10:00.000Z'), 10)).toBe(true);
+    // Lunch, tea, rain or live play: the plain cadence.
+    expect(cricPollDue([{ ...stumps, statusDetail: 'Lunch' }], last, at('2026-11-19T20:10:00.000Z'), 10)).toBe(true);
+    expect(cricPollDue([stumps, { ...stumps, status: 'live', statusDetail: '1st innings' }], last, at('2026-11-19T20:10:00.000Z'), 10)).toBe(true);
+    // A paid plan waits 15 minutes at stumps; a first poll is always due.
+    expect(cricPollDue([stumps], last, at('2026-11-19T20:14:00.000Z'), 1)).toBe(false);
+    expect(cricPollDue([stumps], last, at('2026-11-19T20:15:00.000Z'), 1)).toBe(true);
+    expect(cricPollDue([stumps], null, at('2026-11-19T20:01:00.000Z'), 10)).toBe(true);
+  });
+
+  it('a whole day of a Test at stumps overnight fits the free plan', () => {
+    // Stumps 15:30 UTC → play 07:30 UTC next day, then a day's play to stumps again.
+    let last: Date | null = null;
+    let polls = 0;
+    for (let t = at('2026-11-18T18:30:00.000Z').getTime(); t < at('2026-11-19T18:30:00.000Z').getTime(); t += 60_000) {
+      const now = new Date(t);
+      const live = now >= at('2026-11-19T07:30:00.000Z') && now < at('2026-11-19T15:30:00.000Z');
+      if (cricPollDue([live ? { ...stumps, status: 'live', statusDetail: '3rd innings' } : stumps], last, now, 10)) {
+        polls += 1;
+        last = now;
+      }
+    }
+    // ~48 polls of play + ~16 overnight, leaving room for scorecards and fixtures inside 90.
+    expect(polls).toBeLessThanOrEqual(66);
+  });
+
+  it('a Test first seen mid-match never asks for the toss or squads', async () => {
+    await runner.saveFollow(null, { provider: 'cricapi', ref: 'series-1', sportId: cricket, name: 'SA v BAN' });
+    clock = at('2026-11-19T09:31:00.000Z');
+    const test = (over: Record<string, unknown>) => cricMatch({ matchType: 'test', dateTimeGMT: '2026-11-15T07:30:00', teams: ['South Africa', 'Bangladesh'], teamInfo: [], ...over });
+    routes = [[/series_info/, ok({ matchList: [test({ matchStarted: true, status: 'Day 5: 1st Session', score: [{ r: 557, w: 10, o: '150', inning: 'South Africa Inning 1' }] })] })]];
+    await runner.importFixtures();
+    routes = [
+      [/currentMatches/, ok([test({ matchStarted: true, status: 'Day 5: 1st Session', score: [{ r: 557, w: 10, o: '150', inning: 'South Africa Inning 1' }] })])],
+      [/match_info/, ok(test({ matchStarted: true }))],
+      [/match_squad/, ok([])],
+    ];
+    calls = [];
+    await runner.pollLive();
+    expect(calls.filter((c) => /currentMatches/.test(c))).toHaveLength(1);
+    expect(calls.some((c) => /match_info|match_squad/.test(c))).toBe(false);
+  });
+
+  it('a fixtures import fills badges on teams of matches made before 065, never over a staff logo', async () => {
+    await runner.saveFollow(null, { provider: 'cricapi', ref: 'series-1', sportId: cricket, name: 'India tour' });
+    routes = [[/series_info/, ok({ matchList: [cricMatch()] })]];
+    await runner.importFixtures();
+    const m = await prisma.proMatch.findFirstOrThrow();
+    expect((await prisma.proTeam.findUniqueOrThrow({ where: { id: m.homeTeamId } })).logoUrl).toBeNull();
+    await prisma.proTeam.update({ where: { id: m.awayTeamId }, data: { logoUrl: 'https://x.test/staff.png' } });
+
+    const badges = [
+      { name: 'India', shortname: 'IND', img: 'https://h.cricapi.com/img/teams/ind.webp' },
+      { name: 'Australia', shortname: 'AUS', img: 'https://h.cricapi.com/img/teams/aus.webp' },
+    ];
+    routes = [[/series_info/, ok({ matchList: [cricMatch({ teamInfo: badges })] })]];
+    await runner.importFixtures();
+    expect((await prisma.proTeam.findUniqueOrThrow({ where: { id: m.homeTeamId } })).logoUrl).toBe('https://h.cricapi.com/img/teams/ind.webp');
+    expect((await prisma.proTeam.findUniqueOrThrow({ where: { id: m.awayTeamId } })).logoUrl).toBe('https://x.test/staff.png');
   });
 });

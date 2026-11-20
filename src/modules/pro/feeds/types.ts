@@ -70,6 +70,11 @@ export interface ScoreAdapter {
   sportSlug: string;
   /** How often a live match is refreshed (§4 call budgets). */
   pollMinutes: number;
+  /**
+   * 2026-11-20 — when given, decides if a live poll is due instead of the plain
+   * `pollMinutes` gap (`last` is the previous poll, null if never).
+   */
+  due?(watch: ProMatch[], last: Date | null, now: Date): boolean;
   configured(): boolean;
   /** One follow's fixtures for the next fortnight (and anything already under way). */
   fixtures(follow: FeedFollow, http: FeedHttp, now: Date): Promise<FeedMatch[]>;

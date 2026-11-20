@@ -177,6 +177,12 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
         if (!match) throw e;
       }
     }
+    // 2026-11-20 — badges arrived in 065, after most matches were made: a fixtures import
+    // fills a side that still has none (staff-set logos are never replaced).
+    if (!created && follow) {
+      if (feed.home?.logo) await pro.fillTeamLogo(match.homeTeamId, feed.home.logo);
+      if (feed.away?.logo) await pro.fillTeamLogo(match.awayTeamId, feed.away.logo);
+    }
     // feeds R6 — a fixtures import never touches a match already under way: schedule lists are
     // staler than live polls (CricAPI's has no scores at all). Live state comes from polls only.
     const view = !created && follow ? scheduleView(match, feed) : feed;
@@ -260,7 +266,8 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
         continue;
       }
       const last = await budget.lastLivePoll(a.provider);
-      if (!opts.force && last && t.getTime() - last.getTime() < a.pollMinutes * 60_000 - 5_000) {
+      const due = a.due ? a.due(watch, last, t) : !last || t.getTime() - last.getTime() >= a.pollMinutes * 60_000 - 5_000;
+      if (!opts.force && !due) {
         summary.skipped = 'not due yet';
         continue;
       }

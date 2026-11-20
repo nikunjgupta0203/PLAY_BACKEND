@@ -667,6 +667,11 @@ export function createProService(deps: ProDeps) {
     }
   }
 
+  /** 2026-11-20 — a feed badge for a team that has none (a logo staff set is never replaced). */
+  async function fillTeamLogo(teamId: string, logo: string): Promise<void> {
+    await db.proTeam.updateMany({ where: { id: teamId, logoUrl: null }, data: { logoUrl: logo } });
+  }
+
   /** A feed's moment, written once (unique on match + the feed's id for it). */
   async function addFeedMoment(matchId: string, providerRef: string, input: { atLabel?: string | null; kind: MomentKind; title: string; detail?: string | null }): Promise<boolean> {
     const title = input.title.trim().slice(0, 80);
@@ -818,6 +823,7 @@ export function createProService(deps: ProDeps) {
     feedWatchList,
     touchFeedChecked,
     feedTeam,
+    fillTeamLogo,
     addFeedMoment,
     deleteMatch,
     moments,
