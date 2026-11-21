@@ -61,6 +61,12 @@ export interface FeedFollow {
   enabled: boolean;
 }
 
+/** 2026-11-21 — today's calls so far against the daily limit (IST day), so a feed can pace itself. */
+export interface FeedPace {
+  used: number;
+  limit: number;
+}
+
 /** A match being polled, with its sides' ids at the provider (F1 reads its two drivers' places). */
 export type WatchedMatch = ProMatch & { homeRef: string | null; awayRef: string | null };
 
@@ -74,12 +80,15 @@ export interface ScoreAdapter {
    * 2026-11-20 — when given, decides if a live poll is due instead of the plain
    * `pollMinutes` gap (`last` is the previous poll, null if never).
    */
-  due?(watch: ProMatch[], last: Date | null, now: Date): boolean;
+  due?(watch: ProMatch[], last: Date | null, now: Date, pace?: FeedPace): boolean;
   configured(): boolean;
-  /** One follow's fixtures for the next fortnight (and anything already under way). */
-  fixtures(follow: FeedFollow, http: FeedHttp, now: Date): Promise<FeedMatch[]>;
+  /**
+   * One follow's fixtures for the next fortnight (and anything already under way).
+   * `followed` = the refs this provider's other follows name (a catch-all follow skips them).
+   */
+  fixtures(follow: FeedFollow, http: FeedHttp, now: Date, followed?: ReadonlySet<string>): Promise<FeedMatch[]>;
   /** Fresh state for the watched matches. Returns only those it found. */
-  live(watch: WatchedMatch[], http: FeedHttp, now: Date): Promise<FeedMatch[]>;
+  live(watch: WatchedMatch[], http: FeedHttp, now: Date, pace?: FeedPace): Promise<FeedMatch[]>;
   /**
    * 2026-11-21 — after a full fixtures import: fresh state for matches the
    * polls missed (stuck at scheduled after their start, a result with no score

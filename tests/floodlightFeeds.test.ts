@@ -13,7 +13,8 @@ import { createFeedBudget, feedDay, FEED_PROVIDERS, scrubKeys, type FeedBudget, 
 import { CRICKET, FOOTBALL, SNOOKER, seedSport } from '../src/modules/sport/seed.js';
 import { createProService, type ProService } from '../src/modules/pro/service/index.js';
 import { createFeedRunner, feedPatch, type FeedRunner } from '../src/modules/pro/feeds/runner.js';
-import { cricapiAdapter, cricCadence, cricPollDue, cricRecheck, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
+import { cricSeriesDates, cricSeriesWanted, moreSeries, pickCricSeries } from '../src/modules/pro/feeds/cricSeries.js';
+import { cricapiAdapter, cricBehind, cricCadence, cricEvery, cricPollDue, cricRecheck, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
 import { apiFootballAdapter, parseFootballFixture } from '../src/modules/pro/feeds/apiFootball.js';
 import { parseSnookerMatch, parseSnookerPlayers, parseSnookerRounds, snookerAdapter } from '../src/modules/pro/feeds/snooker.js';
 import { codeFor, logoUrl } from '../src/modules/pro/feeds/types.js';
@@ -904,5 +905,154 @@ describe('CricAPI matches the poll missed (2026-11-21)', () => {
     calls = [];
     await runner.importFixtures();
     expect(calls.some((c) => /match_scorecard|match_info/.test(c))).toBe(false);
+  });
+});
+
+describe('CricAPI paid plan + all cricket (2026-11-21)', () => {
+  const paidRunner = () =>
+    createFeedRunner({ db, pro, budget, adapters: [cricapiAdapter(() => 'k-cric', 2000)], fetcher, now: () => clock });
+
+  it('the founder list, by series name (real CricAPI names)', () => {
+    const wanted = [
+      "ICC Men's Cricket World Cup 2027",
+      'ICC Under 19 Women\'s T20 World Cup 2027',
+      'ICC World Test Championship Final 2027',
+      "ACC Men's Asia Cup Rising Stars 2026",
+      'The Ashes 2027',
+      'Womens Ashes, 2027',
+      'Australia tour of India, 2027',
+      'India Women tour of South Africa, 2026',
+      'India A tour of Nepal, 2026',
+      'England Women U19 tour of India 2026',
+      'Bangladesh Women tour of England, 2027',
+      'Sri Lanka tour of New Zealand 2027',
+      'Bangladesh tour of Nepal, 2027',
+      'Australia vs England, 150th Anniversary One-off Test Match, 2027',
+      'Malaysia Womens T20I Tri-Series 2026',
+      'Indian Premier League 2027',
+      'Big Bash League 2026-27',
+      'Womens Big Bash League 2026',
+      'SA20, 2027',
+      'International League T20 2026',
+      'Super Smash 2026-27',
+      "Women's Premier League 2027",
+      'Nepal Premier League 2026',
+      'Abu Dhabi T10 League 2026',
+      'Ranji Trophy Elite 2026-27',
+      'Vijay Hazare Trophy Plate 2026',
+      'Syed Mushtaq Ali Trophy Elite 2026',
+      'Col C K Nayudu Trophy 2026-27',
+      'Cooch Behar Trophy 2026-27',
+      "Senior Women's One Day Trophy 2026-27",
+      'Tamil Nadu Premier League 2026',
+      'Maharaja Trophy KSCA T20 2026',
+      'Sheffield Shield 2026-27',
+      'Plunket Shield 2026-27',
+      'CSA Provincial One-Day Challenge Division One 2027',
+      'County Championship Division One 2026',
+      'World Championship of Legends 2026',
+    ];
+    for (const name of wanted) expect([name, cricSeriesWanted(name)]).toEqual([name, true]);
+    for (const name of ['Ireland A tour of Zimbabwe, 2026', 'England Lions tour of West Indies, 2026', 'Hong Kong Sixes 2026', 'Pakistan Shaheens tour of Australia 2026', 'Western Australia vs England 2026']) {
+      expect([name, cricSeriesWanted(name)]).toEqual([name, false]);
+    }
+  });
+
+  it('series dates: an end with no year is the first on or after the start; a start with no year is a stale row', () => {
+    expect(cricSeriesDates('2026-12-12', 'Jan 26')!.end.toISOString().slice(0, 10)).toBe('2027-01-26');
+    expect(cricSeriesDates('2026-11-14', 'Dec 06')!.end.toISOString().slice(0, 10)).toBe('2026-12-06');
+    expect(cricSeriesDates('Mar 11', 'Mar 15')).toBeNull();
+    const now = new Date('2026-11-21T12:00:00Z');
+    const row = (id: string, name: string, startDate: string, endDate: string, matches = 5) => ({ id, name, startDate, endDate, matches });
+    const picked = pickCricSeries(
+      [
+        row('a', 'Big Bash League 2026-27', '2026-12-12', 'Jan 26'), // starts in 21 days: not yet
+        row('b', 'Sri Lanka tour of New Zealand 2027', '2026-11-25', 'Dec 06'),
+        row('b2', 'Sri Lanka tour of New Zealand 2027', '2026-11-25', 'Dec 06'), // listed twice
+        row('c', 'Plunket Shield 2026-27', '2026-11-18', 'Mar 29'),
+        row('d', 'Syed Mushtaq Ali Trophy Elite 2026', '2026-11-14', 'Dec 06', 0), // no matches
+        row('e', 'Abu Dhabi T10 League 2026', '2026-11-07', 'Nov 18'), // ended 3 days ago
+        row('f', 'Womens Big Bash League 2026', '2026-10-29', 'Dec 05'), // followed by name already
+      ],
+      now,
+      new Set(['f']),
+    );
+    expect(picked.map((s) => s.id)).toEqual(['b', 'c']);
+    expect(moreSeries(Array.from({ length: 25 }, () => row('x', 'x', '2026-09-01', 'Sep 30')), now)).toBe(true);
+    expect(moreSeries(Array.from({ length: 25 }, () => row('x', 'x', '2026-03-01', 'Mar 30')), now)).toBe(false);
+  });
+
+  it('a `*` follow imports every wanted series under its own name, minus series followed by name', async () => {
+    await runner.saveFollow(null, { provider: 'cricapi', ref: '*', sportId: cricket, name: 'All cricket' });
+    await runner.saveFollow(null, { provider: 'cricapi', ref: 'series-wbbl', sportId: cricket, name: "Women's Big Bash League" });
+    const series = (id: string, name: string, startDate: string) => ({ id, name, startDate, endDate: 'Dec 20', matches: 10 });
+    // CricAPI lists some series twice under two ids: the second WBBL listing must not come in by `*`.
+    const page1 = Array.from({ length: 25 }, (_, i) => series(`s${i}`, i === 0 ? 'Syed Mushtaq Ali Trophy Elite 2026' : i === 1 ? 'Hong Kong Sixes 2026' : 'Womens Big Bash League 2026', '2026-11-10'));
+    page1[2] = series('series-wbbl', 'Womens Big Bash League 2026', '2026-10-29');
+    routes = [
+      [/series\?.*offset=0/, ok(page1)],
+      [/series\?.*offset=25/, ok([series('old', 'Ranji Trophy Elite 2025-26', '2025-10-15')])],
+      [/series_info.*id=s0/, ok({ matchList: [cricMatch({ id: 'smat-1', teams: ['Mumbai', 'Delhi'], teamInfo: [] })] })],
+      [/series_info.*id=series-wbbl/, ok({ matchList: [cricMatch({ id: 'wbbl-1', teams: ['Perth Scorchers Women', 'Sydney Sixers Women'], teamInfo: [] })] })],
+    ];
+    calls = [];
+    const runs = await runner.importFixtures();
+    expect(runs.find((r) => r.provider === 'cricapi')).toMatchObject({ created: 2, errors: [] });
+    expect(await pro.matchByProvider('cricapi', 'smat-1')).toMatchObject({ league: 'Syed Mushtaq Ali Trophy Elite 2026' });
+    expect(await pro.matchByProvider('cricapi', 'wbbl-1')).toMatchObject({ league: "Women's Big Bash League" });
+    // Two list pages, then the wanted series once each: the WBBL only through its own follow.
+    expect(calls.filter((c) => /\/series\?/.test(c))).toHaveLength(2);
+    expect(calls.filter((c) => /series_info.*id=series-wbbl/.test(c))).toHaveLength(1);
+    expect(calls.filter((c) => /series_info.*id=s0\b/.test(c))).toHaveLength(1);
+    expect(calls.filter((c) => /series_info/.test(c))).toHaveLength(2);
+  });
+
+  it('pace: behind by more than 15% of the limit slows the poll to 10 minutes', () => {
+    // 18:30 UTC = midnight IST; 06:30 UTC = noon IST, half the day gone.
+    const noon = new Date('2026-11-21T06:30:00.000Z');
+    expect(cricBehind({ used: 1200, limit: 2000 }, noon)).toBe(false); // 60% < 50% + 15%
+    expect(cricBehind({ used: 1400, limit: 2000 }, noon)).toBe(true);
+    expect(cricBehind(undefined, noon)).toBe(false);
+    const live = (n: number) => Array.from({ length: n }, (_, i) => ({ status: 'live' as const, startsAt: new Date('2026-11-21T04:00:00Z'), providerRef: `m${i}` }));
+    expect(cricEvery(live(3), noon, { used: 100, limit: 2000 }, 1)).toBe(1);
+    expect(cricEvery(live(4), noon, { used: 100, limit: 2000 }, 1)).toBe(5);
+    expect(cricEvery(live(2), noon, { used: 1400, limit: 2000 }, 1)).toBe(10);
+    expect(cricEvery(live(5), noon, { used: 100, limit: 100 }, 10)).toBe(10);
+  });
+
+  it('paid: a few live matches are read by id (score and toss in one), nothing started costs nothing, ball by ball only where offered', async () => {
+    const paid = paidRunner();
+    await paid.saveFollow(null, { provider: 'cricapi', ref: 'series-1', sportId: cricket, name: 'India tour' });
+    routes = [[/series_info/, ok({ matchList: [cricMatch()] })]];
+    await paid.importFixtures();
+
+    // 13:20, ten minutes before the start: watched, but no call.
+    calls = [];
+    await paid.pollLive();
+    expect(calls).toEqual([]);
+
+    let bbbEnabled = false;
+    routes = [
+      [/match_info/, () => ok(cricMatch({ matchStarted: true, status: 'India opt to bat', tossWinner: 'india', tossChoice: 'bat', bbbEnabled, score: [{ r: 8, w: 0, o: '1', inning: 'India Inning 1' }] }))],
+      [/match_scorecard/, ok({ ...cricMatch({ matchStarted: true }), scorecard: [] })],
+      [/match_squad/, ok([])],
+      [/match_bbb/, ok({ bbb: [{ inning: 0, over: 0, ball: 1, runs: 4, batsman: { name: 'R Sharma' }, bowler: { name: 'M Starc' } }] })],
+    ];
+    const id = (await pro.matchByProvider('cricapi', 'cric-1'))!.id;
+    await prisma.proMatch.update({ where: { id }, data: { featured: true } });
+    clock = new Date('2026-11-14T13:32:00.000Z');
+    calls = [];
+    await paid.pollLive();
+    expect(calls.some((c) => /currentMatches/.test(c))).toBe(false);
+    expect(calls.some((c) => /match_bbb/.test(c))).toBe(false);
+    expect(await pro.match(id)).toMatchObject({ status: 'live', homeScore: '8/0' });
+    expect((await pro.match(id))!.facts.map((f) => f.label)).toEqual(['Format', 'Toss']);
+
+    bbbEnabled = true;
+    clock = new Date('2026-11-14T13:33:00.000Z');
+    calls = [];
+    await paid.pollLive();
+    expect(calls.filter((c) => /match_bbb/.test(c))).toHaveLength(1);
+    expect((await pro.match(id))!.balls).toHaveLength(1);
   });
 });

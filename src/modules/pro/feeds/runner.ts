@@ -219,15 +219,18 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
         summary.skipped = 'no key set';
         continue;
       }
-      const list = (await follows(a.provider)).filter((f) => f.enabled && (!opts.followId || f.id === opts.followId));
+      const all = (await follows(a.provider)).filter((f) => f.enabled);
+      const list = all.filter((f) => !opts.followId || f.id === opts.followId);
       if (!list.length) {
         summary.skipped = 'nothing followed';
         continue;
       }
       const http = feedHttp(budget, a.provider, deps.fetcher);
+      // 2026-11-21 — a catch-all follow (CricAPI `*`) leaves alone what is followed by name.
+      const followed = new Set(all.map((f) => f.ref));
       for (const follow of list) {
         try {
-          const matches = await a.fixtures(follow, http, now());
+          const matches = await a.fixtures(follow, http, now(), followed);
           for (const m of matches) {
             try {
               const r = await apply(a.provider, m, follow.sportId, follow);
@@ -285,7 +288,10 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
         continue;
       }
       const last = await budget.lastLivePoll(a.provider);
-      const due = a.due ? a.due(watch, last, t) : !last || t.getTime() - last.getTime() >= a.pollMinutes * 60_000 - 5_000;
+      // 2026-11-21 — today's spend so far, so an adapter can slow down before the limit.
+      const spent = (await budget.status()).find((s) => s.provider === a.provider);
+      const pace = spent ? { used: spent.callsToday, limit: spent.dailyLimit } : undefined;
+      const due = a.due ? a.due(watch, last, t, pace) : !last || t.getTime() - last.getTime() >= a.pollMinutes * 60_000 - 5_000;
       if (!opts.force && !due) {
         summary.skipped = 'not due yet';
         continue;
@@ -297,7 +303,7 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
       const http = feedHttp(budget, a.provider, deps.fetcher);
       try {
         const sportId = await sportIdOf(a.sportSlug);
-        for (const m of await a.live(watched, http, t)) {
+        for (const m of await a.live(watched, http, t, pace)) {
           try {
             const r = await apply(a.provider, m, sportId, null);
             if (r === 'updated') summary.updated += 1;

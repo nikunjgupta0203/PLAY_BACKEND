@@ -14,7 +14,8 @@ import { config } from '../../../platform/config.js';
 import { FeedBudgetSpent, type FeedHttp } from '../../../platform/feeds.js';
 import { MAX_BALLS, MAX_PROGRESS } from '../service/index.js';
 import type { BallEvent, Fact, Innings, LivePatch, ProgressPoint, ProMatch, ProStatus, Squad, Stat, Winner } from '../service/index.js';
-import { arr, codeFor, cut, logoUrl, num, obj, ordinal, str, utcDate, type FeedFollow, type FeedMatch, type ScoreAdapter } from './types.js';
+import { arr, codeFor, cut, logoUrl, num, obj, ordinal, str, utcDate, type FeedFollow, type FeedMatch, type FeedPace, type ScoreAdapter } from './types.js';
+import { ALL_CRICKET, MAX_SERIES, MAX_SERIES_PAGES, SERIES_PAGE_ROWS, moreSeries, pickCricSeries } from './cricSeries.js';
 
 const BASE = 'https://api.cricapi.com/v1';
 const RESERVE = 10;
@@ -35,9 +36,29 @@ export function cricCadence(dailyLimit: number): { pollMinutes: number; scorecar
     : { pollMinutes: 10, scorecardMinutes: 30, otherScorecardMinutes: 60 };
 }
 
-/** currentMatches pages: CricAPI sends 25 rows a page. A poll reads at most this many pages. */
+/**
+ * currentMatches pages: CricAPI sends 25 rows a page (seen 2026-11-21: 84 rows,
+ * so 4 pages). A poll reads at most this many pages.
+ */
 const PAGE_ROWS = 25;
-const MAX_PAGES = 3;
+const MAX_PAGES = 4;
+/**
+ * 2026-11-21 — on a paid plan (a poll a minute), up to this many matches under
+ * way are read one by one with match_info (it carries the score and the toss):
+ * a call per match instead of up to four pages of currentMatches. With more,
+ * the pages are read, every PAGED_MINUTES, and matches that are not featured
+ * get their scorecard hourly (PAGED_CARD_MINUTES), so a busy day still fits
+ * 2,000 calls: a dry run of "all cricket" on 21 Nov found 18 matches on at once
+ * (~4 pages + 18 cards every 15 min would be ~150 calls an hour; this is ~90).
+ */
+const BY_ID_MAX = 3;
+const PAGED_MINUTES = 5;
+const PAGED_CARD_MINUTES = 60;
+/** A fixture past its start that has not gone live is read on every poll for this long, then half-hourly. */
+const FRESH_START_MS = 30 * 60_000;
+
+/** Under way, or past its start: CricAPI should list it. A fixture still to come may not be yet. */
+const started = (w: Pick<ProMatch, 'status' | 'startsAt'>, now: Date) => w.status === 'live' || w.status === 'break' || w.startsAt.getTime() <= now.getTime();
 /** A fixtures import repairs at most this many matches (one or two calls each). */
 const RECHECK_MAX = 6;
 
@@ -84,6 +105,49 @@ export function cricPollDue(watch: Pick<ProMatch, 'status' | 'statusDetail' | 's
     return offset >= DAY - 15 * 60_000 || offset <= 45 * 60_000;
   });
   return every(nearDailyStart ? pollMinutes : pollMinutes === 1 ? 15 : 60);
+}
+
+const IST_MS = 330 * 60_000;
+const DAY_MS = 86_400_000;
+/** Behind pace, the live poll waits this long (the free plan's cadence). */
+const BEHIND_MINUTES = 10;
+
+/**
+ * 2026-11-21 — whether today's calls are ahead of pace: more spent than the
+ * share of the IST day gone by, plus 15% of the limit to spare for the busy
+ * hours (Australian and Indian cricket bunch up in the IST daytime). With "all
+ * cricket" followed, a Ranji round alone is 19 matches at once. Pure.
+ */
+export function cricBehind(pace: FeedPace | undefined, now: Date): boolean {
+  if (!pace || pace.limit <= 0) return false;
+  const gone = ((((now.getTime() + IST_MS) % DAY_MS) + DAY_MS) % DAY_MS) / DAY_MS;
+  return pace.used > pace.limit * Math.min(1, gone + 0.15);
+}
+
+/**
+ * 2026-11-21 — minutes between live polls: the plan's cadence; on a paid plan
+ * with more than BY_ID_MAX matches under way (list pages), PAGED_MINUTES; and
+ * never less than BEHIND_MINUTES while behind pace. Pure.
+ */
+export function cricEvery(watch: Pick<ProMatch, 'status' | 'startsAt' | 'providerRef'>[], now: Date, pace: FeedPace | undefined, pollMinutes: number): number {
+  const paged = pollMinutes === 1 && watch.filter((w) => w.providerRef && started(w, now)).length > BY_ID_MAX;
+  const every = paged ? PAGED_MINUTES : pollMinutes;
+  return cricBehind(pace, now) ? Math.max(every, BEHIND_MINUTES) : every;
+}
+
+/** One series_info's matches for the next fortnight, and anything still under way. Pure. */
+function seriesMatches(data: Record<string, unknown>, league: string | null, now: Date): FeedMatch[] {
+  const horizon = now.getTime() + 14 * DAY_MS;
+  return arr(data['matchList'])
+    .map((m) => parseCricMatch(m, league))
+    .filter(
+      (m): m is FeedMatch =>
+        m !== null &&
+        m.startsAt !== null &&
+        m.startsAt.getTime() <= horizon &&
+        // A Test on day 3 started three days ago and is still on: keep what is under way.
+        (m.startsAt.getTime() >= now.getTime() - 2 * DAY_MS || m.live.status === 'live' || m.live.status === 'break'),
+    );
 }
 
 /** 2026-11-20 — the toss and squads are read only this close to the start (a Test seen on day 5 never asks). */
@@ -449,44 +513,54 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
     provider: 'cricapi',
     sportSlug: 'cricket',
     pollMinutes,
-    due: (watch, last, now) => cricPollDue(watch, last, now, pollMinutes),
+    due: (watch, last, now, pace) => cricPollDue(watch, last, now, cricEvery(watch, now, pace, pollMinutes)),
     configured: () => key() !== '',
-    async fixtures(follow: FeedFollow, http: FeedHttp, now: Date) {
+    async fixtures(follow: FeedFollow, http: FeedHttp, now: Date, followed: ReadonlySet<string> = new Set()) {
+      // 2026-11-21 — `*`: every series on the founder's list (cricSeries.ts).
+      if (follow.ref === ALL_CRICKET) {
+        const rows: unknown[] = [];
+        for (let page = 0; page < MAX_SERIES_PAGES; page += 1) {
+          const list = arr(body(await http.json(url('series', { offset: String(page * SERIES_PAGE_ROWS) })))['data']);
+          rows.push(...list);
+          if (!moreSeries(list, now)) break;
+        }
+        const out: FeedMatch[] = [];
+        for (const s of pickCricSeries(rows, now, followed).slice(0, MAX_SERIES)) {
+          try {
+            out.push(...seriesMatches(obj(body(await http.json(url('series_info', { id: s.id })))['data']), s.name, now));
+          } catch (e) {
+            if (e instanceof FeedBudgetSpent) throw e;
+            // One series CricAPI can't answer for: the rest still import.
+          }
+        }
+        return out;
+      }
       const data = obj(body(await http.json(url('series_info', { id: follow.ref })))['data']);
-      const league = follow.name || str(obj(data['info'])['name']);
-      const horizon = now.getTime() + 14 * 86_400_000;
-      return arr(data['matchList'])
-        .map((m) => parseCricMatch(m, league))
-        .filter(
-          (m): m is FeedMatch =>
-            m !== null &&
-            m.startsAt !== null &&
-            m.startsAt.getTime() <= horizon &&
-            // A Test on day 3 started three days ago and is still on: keep what is under way.
-            (m.startsAt.getTime() >= now.getTime() - 2 * 86_400_000 || m.live.status === 'live' || m.live.status === 'break'),
-        );
+      return seriesMatches(data, follow.name || str(obj(data['info'])['name']), now);
     },
-    async live(watch: ProMatch[], http: FeedHttp, now: Date) {
-      // Under way, or past its start: it should be on the list. A fixture still to come may not be yet.
-      const started = (w: ProMatch) => w.status === 'live' || w.status === 'break' || w.startsAt.getTime() <= now.getTime();
-      const byRef = await current(
-        http,
-        watch.filter((w) => w.providerRef && started(w)).map((w) => w.providerRef!),
-      );
+    async live(watch: ProMatch[], http: FeedHttp, now: Date, pace?: FeedPace) {
+      const underWayNow = watch.filter((w) => w.providerRef && started(w, now));
+      // 2026-11-21 — a paid plan reads a few matches by id; otherwise the list, page by page.
+      const byId = ballByBall && underWayNow.length <= BY_ID_MAX;
+      const byRef = byId ? new Map<string | null, unknown>() : await current(http, underWayNow.map((w) => w.providerRef!));
+      // Behind today's pace: no hourly scorecards for other matches, no ball by ball.
+      const behind = cricBehind(pace, now);
+      const step = cricEvery(watch, now, pace, pollMinutes);
       const out: FeedMatch[] = [];
       // 064 — extras cost a call each, so at most one try per half hour until they land.
-      const halfHour = now.getUTCMinutes() % 30 < pollMinutes;
+      const halfHour = now.getUTCMinutes() % 30 < step;
       for (const w of watch) {
         if (!w.providerRef) continue;
         let raw = byRef.get(w.providerRef);
         // Off the list while we had it live: it ended. One call reads the result.
-        // 2026-11-21 — and a fixture past its start that no page lists: read it by id,
-        // at most once a half hour for its first 6 hours (a postponed match must not spend the
-        // day's calls; the next fixtures import's recover picks up anything later).
+        // 2026-11-21 — and a fixture past its start that no page lists: read it by id, every
+        // poll for half an hour, then half-hourly up to 6 hours (a postponed match must not
+        // spend the day's calls; the next fixtures import's recover picks up anything later).
+        const sinceStart = now.getTime() - w.startsAt.getTime();
         const lookUp =
           w.status === 'live' ||
           w.status === 'break' ||
-          (w.status === 'scheduled' && started(w) && halfHour && now.getTime() - w.startsAt.getTime() <= EXTRAS_WINDOW_MS);
+          (w.status === 'scheduled' && started(w, now) && sinceStart <= EXTRAS_WINDOW_MS && (sinceStart <= FRESH_START_MS || halfHour));
         if (!raw && lookUp) {
           try {
             raw = body(await http.json(url('match_info', { id: w.providerRef }), { reserve: RESERVE }))['data'];
@@ -498,12 +572,13 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
         if (!parsed) continue;
         const ended = parsed.live.status === 'finished' && w.status !== 'finished';
         // 2026-11-21 — every live match gets a scorecard; featured ones more often.
-        const cardDue = now.getUTCMinutes() % (w.featured ? scorecardMinutes : otherScorecardMinutes) < pollMinutes;
+        const cardEvery = w.featured ? scorecardMinutes : byId ? otherScorecardMinutes : Math.max(otherScorecardMinutes, PAGED_CARD_MINUTES);
+        const cardDue = now.getUTCMinutes() % cardEvery < step;
         const underWay = parsed.live.status === 'live' || parsed.live.status === 'break';
         // Toss and squads: only around the start. Without this a match that never lists them
         // (or one first seen mid-Test) spent two calls every half hour, day and night.
         const nearStart = now.getTime() - w.startsAt.getTime() <= EXTRAS_WINDOW_MS;
-        if (ended || (parsed.live.status === 'live' && cardDue)) {
+        if (ended || (parsed.live.status === 'live' && cardDue && (w.featured || !behind))) {
           const card = await scorecard(http, w.providerRef);
           if (card && card.length) parsed.live.scorecard = card;
         }
@@ -540,7 +615,9 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
           if (merged.length) parsed.live.progress = merged;
         }
         // 065 — ball by ball (Overs, Commentary): a paid plan only, featured matches, a call each poll.
-        if (ballByBall && w.featured && parsed.live.status === 'live') {
+        // 2026-11-21 — and only where CricAPI says it has it: most matches (even AUS v ENG
+        // T20Is) say bbbEnabled false and answer "Not able to get BBB", a wasted call a minute.
+        if (ballByBall && !behind && w.featured && parsed.live.status === 'live' && obj(raw)['bbbEnabled'] === true) {
           try {
             const list = parseCricBalls(body(await http.json(url('match_bbb', { id: w.providerRef }), { reserve: RESERVE }))['data']);
             if (list.length) parsed.live.balls = list.slice(-MAX_BALLS);
