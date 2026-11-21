@@ -59,8 +59,24 @@ const FRESH_START_MS = 30 * 60_000;
 
 /** Under way, or past its start: CricAPI should list it. A fixture still to come may not be yet. */
 const started = (w: Pick<ProMatch, 'status' | 'startsAt'>, now: Date) => w.status === 'live' || w.status === 'break' || w.startsAt.getTime() <= now.getTime();
-/** A fixtures import repairs at most this many matches (one or two calls each). */
-const RECHECK_MAX = 6;
+/**
+ * A repair run fixes at most this many matches (one or two calls each). 2026-11-21 —
+ * "all cricket" made ~20 finished matches without a card in one import; at 6 a run,
+ * twice a day, the last waited two days. A paid plan takes 40, and also repairs every
+ * RECOVER_MINUTES from the live poll (ScoreAdapter.recoverMinutes).
+ */
+const RECHECK_MAX_FREE = 6;
+const RECHECK_MAX_PAID = 40;
+const RECOVER_MINUTES = 30;
+
+/**
+ * 2026-11-21 — after a repair try, a match waits before the next: two hours, or a
+ * quarter of its age if longer (a week-old match waits ~2 days), so one CricAPI has
+ * no card for does not spend calls every half hour. Pure.
+ */
+export function recheckWait(startsAt: Date, now: Date): number {
+  return Math.max(2 * 3_600_000, (now.getTime() - startsAt.getTime()) / 4);
+}
 
 /** Batting cards a scorecard holds, and innings a score line shows ("557 & 12/1" = 2). Pure. */
 const battingCards = (m: Pick<ProMatch, 'scorecard'>) => m.scorecard.filter((t) => /^batting/i.test(t.title ?? '')).length;
@@ -71,8 +87,8 @@ const inningsPlayed = (m: Pick<ProMatch, 'homeScore' | 'awayScore'>) =>
  * 2026-11-21 — whether a fixtures import should look at this match again:
  * - still scheduled 3 hours after its start (the live poll never found it: it
  *   was off the first page of currentMatches, or the day's calls were spent);
- * - a result of the last 14 days with no score at all (made from the schedule
- *   list after it was played: that list carries no scores);
+ * - a result of the last 14 days with no score or no scorecard at all (made
+ *   from the schedule list after it was played: that list carries neither);
  * - a result of the last 3 days whose scorecard has fewer batting cards than
  *   innings played (CricAPI's card lagged when the match ended).
  * Pure.
@@ -81,7 +97,7 @@ export function cricRecheck(m: Pick<ProMatch, 'status' | 'startsAt' | 'homeScore
   const age = now.getTime() - m.startsAt.getTime();
   if (m.status === 'scheduled') return age >= 3 * 3_600_000 && age <= 3 * 86_400_000;
   if (m.status !== 'finished' || age < 0 || age > 14 * 86_400_000) return false;
-  if (!m.homeScore && !m.awayScore) return true;
+  if ((!m.homeScore && !m.awayScore) || battingCards(m) === 0) return true;
   return age <= 3 * 86_400_000 && battingCards(m) < Math.min(inningsPlayed(m), 4);
 }
 
@@ -475,6 +491,9 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
   const ballByBall = pollMinutes === 1;
   const url = (path: string, params: Record<string, string>) =>
     `${BASE}/${path}?${new URLSearchParams({ apikey: key(), ...params }).toString()}`;
+  // 2026-11-21 — when each match was last tried by `recover` (recheckWait). In memory: a
+  // worker restart only means one early try.
+  const tried = new Map<string, number>();
 
   async function scorecard(http: FeedHttp, ref: string): Promise<Innings[] | undefined> {
     try {
@@ -581,7 +600,12 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
         // Toss and squads: only around the start. Without this a match that never lists them
         // (or one first seen mid-Test) spent two calls every half hour, day and night.
         const nearStart = now.getTime() - w.startsAt.getTime() <= EXTRAS_WINDOW_MS;
-        if (ended || (parsed.live.status === 'live' && cardDue && (w.featured || !behind))) {
+        // 2026-11-21 — and an under-way match with no card yet gets one now (at most a try a half
+        // hour): "all cricket" brought in NZ v India and a dozen others at stumps, and they had
+        // none until play restarted. Play stopping (stumps, innings break) reads one too.
+        const firstCard = underWay && !w.scorecard.length && halfHour;
+        const paused = w.status === 'live' && parsed.live.status === 'break';
+        if (ended || paused || firstCard || (parsed.live.status === 'live' && cardDue && (w.featured || !behind))) {
           const card = await scorecard(http, w.providerRef);
           if (card && card.length) parsed.live.scorecard = card;
         }
@@ -638,9 +662,16 @@ export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dai
      * the cards, so one call usually does; match_info only when it says
      * nothing about the state (or has no card yet: a match not played).
      */
+    recoverMinutes: ballByBall ? RECOVER_MINUTES : undefined,
     async recover(candidates: ProMatch[], http: FeedHttp, now: Date) {
       const out: FeedMatch[] = [];
-      for (const w of candidates.filter((m) => m.providerRef && cricRecheck(m, now)).slice(0, RECHECK_MAX)) {
+      const due = candidates.filter((m) => {
+        if (!m.providerRef || !cricRecheck(m, now)) return false;
+        const last = tried.get(m.providerRef);
+        return last === undefined || now.getTime() - last >= recheckWait(m.startsAt, now);
+      });
+      for (const w of due.slice(0, ballByBall ? RECHECK_MAX_PAID : RECHECK_MAX_FREE)) {
+        tried.set(w.providerRef!, now.getTime());
         try {
           let card: Record<string, unknown> | null = null;
           try {

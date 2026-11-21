@@ -95,6 +95,8 @@ export interface ScoreAdapter {
    * or a short scorecard). Gets pro.feedRecheckCandidates and picks from them.
    */
   recover?(candidates: ProMatch[], http: FeedHttp, now: Date): Promise<FeedMatch[]>;
+  /** 2026-11-21 — when set, the live poll also runs `recover` this often (a paid plan can afford it). */
+  recoverMinutes?: number;
 }
 
 /** A short code from a name: "Manchester City" → MCI, "FC Goa" → GOA, "India" → IND. */

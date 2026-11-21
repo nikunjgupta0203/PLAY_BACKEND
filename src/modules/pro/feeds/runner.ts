@@ -209,6 +209,29 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
 
   // --- jobs ------------------------------------------------------------------------
 
+  /** When each provider last ran `recover` from the live poll (ScoreAdapter.recoverMinutes). */
+  const lastRepair = new Map<FeedProvider, number>();
+
+  /** 2026-11-21 — ScoreAdapter.recover over pro.feedRecheckCandidates, written like a live poll. */
+  async function repair(a: ScoreAdapter, http: ReturnType<typeof feedHttp>, summary: RunSummary): Promise<void> {
+    if (!a.recover) return;
+    lastRepair.set(a.provider, now().getTime());
+    try {
+      const candidates = await pro.feedRecheckCandidates(a.provider);
+      if (!candidates.length) return;
+      const sportId = await sportIdOf(a.sportSlug);
+      for (const m of await a.recover(candidates, http, now())) {
+        try {
+          if ((await apply(a.provider, m, sportId, null)) === 'updated') summary.updated += 1;
+        } catch (err) {
+          await fail(summary, err);
+        }
+      }
+    } catch (err) {
+      await fail(summary, err);
+    }
+  }
+
   /** Daily, and from the portal: fixtures for every enabled follow (or one). */
   async function importFixtures(opts: { followId?: string | null } = {}): Promise<RunSummary[]> {
     const out: RunSummary[] = [];
@@ -249,23 +272,7 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
       }
       // 2026-11-21 — a full import also repairs what the polls missed: a fixture stuck at
       // scheduled after it was played, a result with no score or half a scorecard.
-      if (!opts.followId && a.recover) {
-        try {
-          const candidates = await pro.feedRecheckCandidates(a.provider);
-          if (candidates.length) {
-            const sportId = await sportIdOf(a.sportSlug);
-            for (const m of await a.recover(candidates, http, now())) {
-              try {
-                if ((await apply(a.provider, m, sportId, null)) === 'updated') summary.updated += 1;
-              } catch (err) {
-                await fail(summary, err);
-              }
-            }
-          }
-        } catch (err) {
-          await fail(summary, err);
-        }
-      }
+      if (!opts.followId) await repair(a, http, summary);
       log.info({ ...summary }, 'feed fixtures imported');
     }
     return out;
@@ -281,6 +288,12 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
       if (!a.configured()) {
         summary.skipped = 'no key set';
         continue;
+      }
+      // 2026-11-21 — a paid plan repairs missing results and scorecards every half hour too,
+      // not only at the twice-daily fixtures import.
+      if (a.recover && a.recoverMinutes) {
+        const lastRun = lastRepair.get(a.provider);
+        if (lastRun === undefined || t.getTime() - lastRun >= a.recoverMinutes * 60_000 - 5_000) await repair(a, feedHttp(budget, a.provider, deps.fetcher), summary);
       }
       const watch = await pro.feedWatchList(a.provider, AHEAD_MS);
       if (!watch.length) {

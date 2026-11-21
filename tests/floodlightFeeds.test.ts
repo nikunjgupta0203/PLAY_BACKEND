@@ -14,7 +14,7 @@ import { CRICKET, FOOTBALL, SNOOKER, seedSport } from '../src/modules/sport/seed
 import { createProService, leagueTier, type ProService } from '../src/modules/pro/service/index.js';
 import { createFeedRunner, feedPatch, type FeedRunner } from '../src/modules/pro/feeds/runner.js';
 import { cricSeriesDates, cricSeriesWanted, moreSeries, pickCricSeries } from '../src/modules/pro/feeds/cricSeries.js';
-import { cricapiAdapter, cricBehind, cricCadence, cricEvery, cricPollDue, cricRecheck, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
+import { cricapiAdapter, cricBehind, cricCadence, cricEvery, cricPollDue, cricRecheck, recheckWait, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
 import { apiFootballAdapter, parseFootballFixture } from '../src/modules/pro/feeds/apiFootball.js';
 import { parseSnookerMatch, parseSnookerPlayers, parseSnookerRounds, snookerAdapter } from '../src/modules/pro/feeds/snooker.js';
 import { codeFor, logoUrl } from '../src/modules/pro/feeds/types.js';
@@ -1100,5 +1100,99 @@ describe('the board with all cricket followed (2026-11-21)', () => {
     // Featured leads.
     await prisma.proMatch.update({ where: { id: old!.id }, data: { featured: true } });
     expect(await order()).toEqual(['csa', 'nzind', 'eng']);
+  });
+});
+
+describe('scorecards for matches first seen mid-match (2026-11-21)', () => {
+  // Prod, 21 Nov 13:05 UTC: 10 of 13 under-way matches (NZ v India at stumps among them) and
+  // 21 of 37 results had no scorecard after the first "all cricket" import.
+  const nzInd = (over: Record<string, unknown> = {}) =>
+    cricMatch({ id: 'nzind', matchType: 'test', teams: ['New Zealand', 'India'], teamInfo: [], dateTimeGMT: '2026-11-19T22:00:00', matchStarted: true, status: 'Day 3: Stumps', score: [{ r: 368, w: 10, o: '110', inning: 'New Zealand Inning 1' }, { r: 486, w: 4, o: '120', inning: 'India Inning 1' }], ...over });
+  const card = () => ({ ...nzInd(), scorecard: [{ inning: 'New Zealand Inning 1', batting: [{ batsman: { name: 'K Williamson' }, r: 120 }], bowling: [] }, { inning: 'India Inning 1', batting: [{ batsman: { name: 'S Gill' }, r: 150 }], bowling: [] }] });
+
+  it('a match at stumps with no scorecard gets one on the next half hour, once', async () => {
+    await runner.saveFollow(null, { provider: 'cricapi', ref: 'series-1', sportId: cricket, name: 'India tour of New Zealand 2026' });
+    clock = new Date('2026-11-21T13:05:00.000Z');
+    routes = [[/series_info/, ok({ matchList: [nzInd()] })]];
+    await runner.importFixtures();
+    expect((await pro.matchByProvider('cricapi', 'nzind'))!).toMatchObject({ status: 'break', scorecard: [] });
+
+    routes = [
+      [/currentMatches/, ok([nzInd()])],
+      [/match_scorecard/, ok(card())],
+    ];
+    clock = new Date('2026-11-21T13:31:00.000Z');
+    calls = [];
+    await runner.pollLive({ force: true });
+    expect(calls.filter((c) => /match_scorecard/.test(c))).toHaveLength(1);
+    expect((await pro.matchByProvider('cricapi', 'nzind'))!.scorecard.length).toBeGreaterThan(0);
+    // Has one now: stumps does not ask again.
+    clock = new Date('2026-11-21T14:31:00.000Z');
+    calls = [];
+    await runner.pollLive({ force: true });
+    expect(calls.some((c) => /match_scorecard/.test(c))).toBe(false);
+  });
+
+  it('a result with a score but no card is repaired; a try that finds none waits before the next', async () => {
+    await runner.saveFollow(null, { provider: 'cricapi', ref: 'series-1', sportId: cricket, name: 'x' });
+    const done = cricMatch({ id: 'smat', teams: ['Punjab', 'Tamil Nadu'], teamInfo: [], dateTimeGMT: '2026-11-16T08:00:00', matchStarted: true, matchEnded: true, status: 'Punjab won by 5 wkts' });
+    // Imported the day it was played, finished, with a score but no card (what prod had).
+    clock = new Date('2026-11-16T12:00:00.000Z');
+    routes = [[/series_info/, ok({ matchList: [done] })]];
+    await runner.importFixtures();
+    const made = (await pro.matchByProvider('cricapi', 'smat'))!;
+    expect(made).toMatchObject({ status: 'finished', scorecard: [] });
+    await prisma.proMatch.update({ where: { id: made.id }, data: { homeScore: '180/5', awayScore: '176/9' } });
+    clock = new Date('2026-11-21T12:00:00.000Z');
+    expect(cricRecheck({ ...made, homeScore: '180/5', awayScore: '176/9' }, clock)).toBe(true);
+
+    // CricAPI has no card for it yet: one try, then it waits (5 days old → ~1.3 days).
+    routes = [
+      [/series_info/, ok({ matchList: [] })],
+      [/match_scorecard/, ok({ ...done, scorecard: [] })],
+    ];
+    calls = [];
+    await runner.importFixtures();
+    expect(calls.filter((c) => /match_scorecard/.test(c))).toHaveLength(1);
+    clock = new Date('2026-11-21T18:00:00.000Z');
+    calls = [];
+    await runner.importFixtures();
+    expect(calls.some((c) => /match_scorecard/.test(c))).toBe(false);
+  });
+
+  it('cricRecheck: no card at all is repaired for 14 days; the wait grows with age', () => {
+    const now = new Date('2026-11-21T12:00:00.000Z');
+    const base = { status: 'finished' as const, homeScore: '180/5' as string | null, awayScore: '176/9' as string | null, scorecard: [] as never[] };
+    expect(cricRecheck({ ...base, startsAt: new Date('2026-11-14T08:00:00Z') }, now)).toBe(true);
+    expect(cricRecheck({ ...base, startsAt: new Date('2026-11-05T08:00:00Z') }, now)).toBe(false);
+    expect(recheckWait(new Date('2026-11-21T08:00:00Z'), now)).toBe(2 * 3_600_000);
+    expect(recheckWait(new Date('2026-11-13T12:00:00Z'), now)).toBe(2 * 86_400_000);
+  });
+
+  it('paid: the live poll repairs every half hour, not only at the fixtures import', async () => {
+    const paid = createFeedRunner({ db, pro, budget, adapters: [cricapiAdapter(() => 'k-cric', 2000)], fetcher, now: () => clock });
+    await paid.saveFollow(null, { provider: 'cricapi', ref: 'series-1', sportId: cricket, name: 'x' });
+    clock = new Date('2026-11-21T10:00:00.000Z');
+    routes = [[/series_info/, ok({ matchList: [nzInd({ id: 'blank', dateTimeGMT: '2026-11-20T08:00:00', matchEnded: true, status: 'India won by 10 wkts' })] })]];
+    await paid.importFixtures();
+    const blank = (await pro.matchByProvider('cricapi', 'blank'))!;
+    // Made finished; then a card-less score from the series list, as prod had.
+    await prisma.proMatch.update({ where: { id: blank.id }, data: { scorecard: [] } });
+    routes = [[/match_scorecard/, ok({ ...card(), id: 'blank', matchEnded: true, status: 'India won by 10 wkts' })]];
+    // The import at 10:00 already tried it (CricAPI had no card then): it waits (a day old → ~9 h).
+    clock = new Date('2026-11-21T10:40:00.000Z');
+    calls = [];
+    await paid.pollLive();
+    expect(calls.some((c) => /match_scorecard/.test(c))).toBe(false);
+    clock = new Date('2026-11-21T19:00:00.000Z');
+    calls = [];
+    await paid.pollLive();
+    expect(calls.filter((c) => /match_scorecard/.test(c))).toHaveLength(1);
+    expect((await pro.matchByProvider('cricapi', 'blank'))!.scorecard.length).toBeGreaterThan(0);
+    // Ten minutes later: not again.
+    clock = new Date('2026-11-21T19:10:00.000Z');
+    calls = [];
+    await paid.pollLive();
+    expect(calls.some((c) => /match_scorecard/.test(c))).toBe(false);
   });
 });
