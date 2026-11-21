@@ -310,15 +310,38 @@ const olderThan = (c: { createdAt: Date; id: string } | null) =>
 
 const LIVE: ProStatus[] = ['live', 'break'];
 
-/** pro R3 — live first, then upcoming soonest, then latest results. Pure. */
+/**
+ * 2026-11-21 — how much a league leads the board, by its name: India's matches
+ * (India tours, IPL, WPL, ISL) 0, other internationals 1, the big franchise
+ * leagues 2, everything else (domestic) 3. With "all cricket" followed, 17
+ * matches were live at once and NZ v India came 14th behind CSA and Plunket
+ * Shield games, off the Home shelf (8). Pure.
+ */
+export function leagueTier(league: string): number {
+  if (/\bindia/i.test(league)) return 0;
+  if (/\btour of\b|\bICC\b|world cup|champions trophy|asia cup|\bashes\b|\bT20Is?\b|\bODIs?\b|test championship|tri-?series|asian games|commonwealth games/i.test(league)) return 1;
+  if (/big bash|\bSA20\b|international league t20|pakistan super league|caribbean premier league|the hundred|major league cricket|premier league|super smash|champions league/i.test(league)) return 2;
+  return 3;
+}
+
+/**
+ * pro R3 — live first, then upcoming soonest, then latest results. 2026-11-21 —
+ * inside each, featured matches lead, then leagueTier. Pure.
+ */
 export function boardOrder(a: ProMatch, b: ProMatch): number {
   const rank = (m: ProMatch) => (LIVE.includes(m.status) ? 0 : m.status === 'scheduled' ? 1 : 2);
   const ra = rank(a);
   const rb = rank(b);
   if (ra !== rb) return ra - rb;
+  if (a.featured !== b.featured) return a.featured ? -1 : 1;
+  const tier = leagueTier(a.league) - leagueTier(b.league);
+  if (tier !== 0) return tier;
   const t = a.startsAt.getTime() - b.startsAt.getTime();
   return ra === 2 ? -t : t;
 }
+
+/** A match "live" for longer than the longest Test (plus a day) is a feed that never said it ended. */
+export const STALE_LIVE_MS = 6 * 86_400_000;
 
 function clean(raw: string | null | undefined, max: number, what: string): string | null {
   if (raw === undefined || raw === null) return null;
@@ -425,16 +448,18 @@ export function createProService(deps: ProDeps) {
     const ahead = new Date(t.getTime() + 14 * 86_400_000);
     // A fixture 12 hours past its start that nobody moved to live is not "upcoming": hide it.
     const stale = new Date(t.getTime() - 12 * 3_600_000);
+    // 2026-11-21 — CricAPI still lists some October matches as under way: never "live" on the board.
+    const live = { status: { in: LIVE }, startsAt: { gte: new Date(t.getTime() - STALE_LIVE_MS) } };
     const status =
       filter.status === 'live'
-        ? { status: { in: LIVE } }
+        ? live
         : filter.status === 'upcoming'
           ? { status: 'scheduled', startsAt: { lte: ahead, gte: stale } }
           : filter.status === 'finished'
             ? { status: { in: ['finished', 'abandoned'] }, startsAt: { gte: resultsSince } }
             : {
                 OR: [
-                  { status: { in: LIVE } },
+                  live,
                   { status: 'scheduled', startsAt: { lte: ahead, gte: stale } },
                   { status: { in: ['finished', 'abandoned'] }, startsAt: { gte: past } },
                 ],

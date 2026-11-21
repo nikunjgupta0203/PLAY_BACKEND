@@ -11,7 +11,7 @@ import { isUserError } from '../src/platform/errors/index.js';
 import { newId } from '../src/platform/ids.js';
 import { createFeedBudget, feedDay, FEED_PROVIDERS, scrubKeys, type FeedBudget, type FeedProvider, type Fetcher } from '../src/platform/feeds.js';
 import { CRICKET, FOOTBALL, SNOOKER, seedSport } from '../src/modules/sport/seed.js';
-import { createProService, type ProService } from '../src/modules/pro/service/index.js';
+import { createProService, leagueTier, type ProService } from '../src/modules/pro/service/index.js';
 import { createFeedRunner, feedPatch, type FeedRunner } from '../src/modules/pro/feeds/runner.js';
 import { cricSeriesDates, cricSeriesWanted, moreSeries, pickCricSeries } from '../src/modules/pro/feeds/cricSeries.js';
 import { cricapiAdapter, cricBehind, cricCadence, cricEvery, cricPollDue, cricRecheck, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
@@ -1054,5 +1054,51 @@ describe('CricAPI paid plan + all cricket (2026-11-21)', () => {
     await paid.pollLive();
     expect(calls.filter((c) => /match_bbb/.test(c))).toHaveLength(1);
     expect((await pro.match(id))!.balls).toHaveLength(1);
+  });
+});
+
+describe('the board with all cricket followed (2026-11-21)', () => {
+  // Prod, 21 Nov: 17 cricket matches live; NZ v India was 14th (Home shows 8), behind four
+  // October matches CricAPI still lists as under way and a run of CSA / Plunket Shield games.
+  it('leagues by tier: India first, then internationals, big leagues, domestic', () => {
+    expect(leagueTier('India tour of New Zealand 2026')).toBe(0);
+    expect(leagueTier('Indian Premier League 2027')).toBe(0);
+    expect(leagueTier('England tour of Australia, 2026')).toBe(1);
+    expect(leagueTier("ICC Women's Emerging Nations Trophy, 2026")).toBe(1);
+    expect(leagueTier('Big Bash League 2026-27')).toBe(2);
+    expect(leagueTier('CSA Four-Day Series Division One 2026-27')).toBe(3);
+    expect(leagueTier('Plunket Shield 2026-27')).toBe(3);
+  });
+
+  it('live: featured first, then tier, then start; stale "live" matches are not on the board', async () => {
+    await runner.saveFollow(null, { provider: 'cricapi', ref: 'series-1', sportId: cricket, name: 'x' });
+    clock = new Date('2026-11-21T12:00:00.000Z');
+    const mk = (id: string, league: string, start: string, teams: [string, string]) =>
+      cricMatch({ id, teams, teamInfo: [], dateTimeGMT: start, matchStarted: true, status: 'Day 2: Stumps', score: [{ r: 100, w: 2, o: '30', inning: `${teams[0]} Inning 1` }] });
+    const list = [
+      mk('csa', 'CSA', '2026-11-19T08:00:00', ['Titans', 'Warriors']),
+      mk('nzind', 'NZ', '2026-11-19T22:00:00', ['New Zealand', 'India']),
+      mk('eng', 'ENG', '2026-11-21T08:15:00', ['Australia', 'England']),
+      mk('october', 'Ranji', '2026-10-11T04:00:00', ['Arunachal Pradesh', 'Nagaland']),
+    ];
+    const names: Record<string, string> = { csa: 'CSA Four-Day Series Division One 2026-27', nzind: 'India tour of New Zealand 2026', eng: 'England tour of Australia, 2026', october: 'Ranji Trophy Plate 2026-27' };
+    routes = [[/series_info/, ok({ matchList: list })]];
+    await runner.importFixtures();
+    // The October match is not imported as live any more.
+    expect(await pro.matchByProvider('cricapi', 'october')).toBeNull();
+    for (const [ref, league] of Object.entries(names)) {
+      const m = await pro.matchByProvider('cricapi', ref);
+      if (m) await prisma.proMatch.update({ where: { id: m.id }, data: { league } });
+    }
+    // One made before this fix, live since October: hidden from the board.
+    const old = await pro.matchByProvider('cricapi', 'csa');
+    await prisma.proMatch.create({
+      data: { ...(await prisma.proMatch.findUniqueOrThrow({ where: { id: old!.id } })), id: newId(), providerRef: 'october', league: 'Ranji Trophy Plate 2026-27', startsAt: new Date('2026-10-11T04:00:00Z'), status: 'live' } as never,
+    });
+    const order = async () => (await pro.board({ sportId: cricket, status: 'live' })).map((m) => m.providerRef);
+    expect(await order()).toEqual(['nzind', 'eng', 'csa']);
+    // Featured leads.
+    await prisma.proMatch.update({ where: { id: old!.id }, data: { featured: true } });
+    expect(await order()).toEqual(['csa', 'nzind', 'eng']);
   });
 });

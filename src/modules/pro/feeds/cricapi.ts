@@ -12,7 +12,7 @@
  */
 import { config } from '../../../platform/config.js';
 import { FeedBudgetSpent, type FeedHttp } from '../../../platform/feeds.js';
-import { MAX_BALLS, MAX_PROGRESS } from '../service/index.js';
+import { MAX_BALLS, MAX_PROGRESS, STALE_LIVE_MS } from '../service/index.js';
 import type { BallEvent, Fact, Innings, LivePatch, ProgressPoint, ProMatch, ProStatus, Squad, Stat, Winner } from '../service/index.js';
 import { arr, codeFor, cut, logoUrl, num, obj, ordinal, str, utcDate, type FeedFollow, type FeedMatch, type FeedPace, type ScoreAdapter } from './types.js';
 import { ALL_CRICKET, MAX_SERIES, MAX_SERIES_PAGES, SERIES_PAGE_ROWS, moreSeries, pickCricSeries } from './cricSeries.js';
@@ -146,7 +146,10 @@ function seriesMatches(data: Record<string, unknown>, league: string | null, now
         m.startsAt !== null &&
         m.startsAt.getTime() <= horizon &&
         // A Test on day 3 started three days ago and is still on: keep what is under way.
-        (m.startsAt.getTime() >= now.getTime() - 2 * DAY_MS || m.live.status === 'live' || m.live.status === 'break'),
+        // 2026-11-21 — but not for ever: CricAPI's series lists still call some October
+        // matches started-not-ended, and `*` imported them as live.
+        (m.startsAt.getTime() >= now.getTime() - 2 * DAY_MS ||
+          ((m.live.status === 'live' || m.live.status === 'break') && m.startsAt.getTime() >= now.getTime() - STALE_LIVE_MS)),
     );
 }
 
