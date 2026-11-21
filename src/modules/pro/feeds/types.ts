@@ -80,6 +80,12 @@ export interface ScoreAdapter {
   fixtures(follow: FeedFollow, http: FeedHttp, now: Date): Promise<FeedMatch[]>;
   /** Fresh state for the watched matches. Returns only those it found. */
   live(watch: WatchedMatch[], http: FeedHttp, now: Date): Promise<FeedMatch[]>;
+  /**
+   * 2026-11-21 — after a full fixtures import: fresh state for matches the
+   * polls missed (stuck at scheduled after their start, a result with no score
+   * or a short scorecard). Gets pro.feedRecheckCandidates and picks from them.
+   */
+  recover?(candidates: ProMatch[], http: FeedHttp, now: Date): Promise<FeedMatch[]>;
 }
 
 /** A short code from a name: "Manchester City" → MCI, "FC Goa" → GOA, "India" → IND. */

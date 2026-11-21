@@ -244,6 +244,25 @@ export function createFeedRunner(deps: FeedRunnerDeps) {
           await db.proFeedFollow.update({ where: { id: follow.id }, data: { lastError: scrubKeys(String((err as Error).message ?? err)).slice(0, 300) } });
         }
       }
+      // 2026-11-21 — a full import also repairs what the polls missed: a fixture stuck at
+      // scheduled after it was played, a result with no score or half a scorecard.
+      if (!opts.followId && a.recover) {
+        try {
+          const candidates = await pro.feedRecheckCandidates(a.provider);
+          if (candidates.length) {
+            const sportId = await sportIdOf(a.sportSlug);
+            for (const m of await a.recover(candidates, http, now())) {
+              try {
+                if ((await apply(a.provider, m, sportId, null)) === 'updated') summary.updated += 1;
+              } catch (err) {
+                await fail(summary, err);
+              }
+            }
+          }
+        } catch (err) {
+          await fail(summary, err);
+        }
+      }
       log.info({ ...summary }, 'feed fixtures imported');
     }
     return out;

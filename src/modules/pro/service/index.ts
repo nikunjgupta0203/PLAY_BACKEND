@@ -635,6 +635,29 @@ export function createProService(deps: ProDeps) {
     return rows.map(toMatch);
   }
 
+  /**
+   * 2026-11-21 — what a fixtures import may look at again (ScoreAdapter.recover):
+   * a fixture 3 hours to 3 days past its start that never went live (a poll
+   * missed it), and the results of the last 14 days. The adapter decides which
+   * of these really need a call. Newest first.
+   */
+  async function feedRecheckCandidates(provider: string): Promise<ProMatch[]> {
+    const t = now().getTime();
+    const rows = await db.proMatch.findMany({
+      where: {
+        provider,
+        providerRef: { not: null },
+        OR: [
+          { status: 'scheduled', startsAt: { lte: new Date(t - 3 * 3_600_000), gte: new Date(t - 3 * 86_400_000) } },
+          { status: 'finished', startsAt: { gte: new Date(t - 14 * 86_400_000) } },
+        ],
+      },
+      orderBy: [{ startsAt: 'desc' }],
+      take: 100,
+    });
+    return rows.map(toMatch);
+  }
+
   /** A poll that found nothing new still says the score is current (G9). */
   async function touchFeedChecked(ids: string[]): Promise<void> {
     if (ids.length) await db.proMatch.updateMany({ where: { id: { in: ids } }, data: { feedCheckedAt: now() } });
@@ -821,6 +844,7 @@ export function createProService(deps: ProDeps) {
     releaseFeed,
     matchByProvider,
     feedWatchList,
+    feedRecheckCandidates,
     touchFeedChecked,
     feedTeam,
     fillTeamLogo,
