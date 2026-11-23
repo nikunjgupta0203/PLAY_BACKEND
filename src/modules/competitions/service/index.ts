@@ -104,6 +104,13 @@ export interface Competition {
   prizes: Prize[];
   scoring: ScoringLine[];
   finePrint: string | null;
+  /** 067 — crowd scoring settings, copied onto each question when it is made. */
+  crowdBase: number;
+  crowdPrior: number;
+  crowdMinPct: number;
+  crowdMaxPct: number;
+  /** A specialist title needs this many picks in the sport. */
+  specialistMinPicks: number;
   createdAt: Date;
 }
 
@@ -176,6 +183,15 @@ export interface Question {
   settledAt: Date | null;
   createdAt: Date;
   options: Option[];
+  /** 067 — the crowd settings this question scores with (a copy of the competition's at creation). */
+  crowd: CrowdSettings;
+}
+
+export interface CrowdSettings {
+  base: number;
+  prior: number;
+  minPct: number;
+  maxPct: number;
 }
 
 export interface Pick {
@@ -187,6 +203,10 @@ export interface Pick {
   away: number | null;
   correct: boolean | null;
   pointsAwarded: number | null;
+  /** 067 — the crowd share of the picked answer when the pick was made (choice only). */
+  crowdShare: number | null;
+  /** 067 — what a right answer earns before any multiplier, locked at the pick. */
+  basePoints: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -274,6 +294,11 @@ export interface CompetitionInput {
   prizes?: Prize[] | null;
   scoring?: ScoringLine[] | null;
   finePrint?: string | null;
+  crowdBase?: number | null;
+  crowdPrior?: number | null;
+  crowdMinPct?: number | null;
+  crowdMaxPct?: number | null;
+  specialistMinPicks?: number | null;
 }
 
 export interface GroupInput {
@@ -327,6 +352,8 @@ export interface FinalResult {
   homeScore: string | null;
   awayScore: string | null;
   winner: Outcome | null;
+  /** 067 — football that went to extra time or penalties: results count after 90 minutes, so staff settle it. */
+  afterExtraTime?: boolean;
 }
 
 export interface Reminder {
@@ -353,9 +380,10 @@ type Pick_<T, K extends keyof T> = { [P in K]: T[P] };
 /** competitions R5 — what one pick earns. Pure. */
 export function scorePick(
   q: Pick_<Question, 'kind' | 'points' | 'multiplier' | 'correctOptionId' | 'correctHome' | 'correctAway'>,
-  p: Pick_<Pick, 'optionId' | 'home' | 'away'>,
+  p: Pick_<Pick, 'optionId' | 'home' | 'away'> & { basePoints?: number | null },
 ): { correct: boolean; points: number } {
   const times = (base: number) => Math.round(base * q.multiplier);
+  // 067 — a choice pick earns what was locked when it was made; an older pick without one, the flat points.
   if (q.kind === 'exact_score') {
     if (q.correctHome === null || q.correctAway === null || p.home === null || p.away === null) return { correct: false, points: 0 };
     if (p.home === q.correctHome && p.away === q.correctAway) return { correct: true, points: times(q.points) };
@@ -363,15 +391,68 @@ export function scorePick(
     return { correct: false, points: sameResult ? times(Math.floor(q.points / 3)) : 0 };
   }
   const correct = p.optionId !== null && p.optionId === q.correctOptionId;
-  return { correct, points: correct ? times(q.points) : 0 };
+  return { correct, points: correct ? times(p.basePoints ?? q.points) : 0 };
 }
 
+/**
+ * 067 competitions R5 — the crowd share of one answer: its picks plus an even
+ * share of `prior` starting picks, over all picks plus `prior`, clamped to
+ * [minPct, maxPct] %. Every question starts even (50/50, 33% each). Pure.
+ */
+export function crowdShare(onAnswer: number, total: number, answers: number, s: CrowdSettings): number {
+  const raw = (onAnswer + s.prior / Math.max(1, answers)) / Math.max(1e-9, total + s.prior);
+  return Math.min(s.maxPct / 100, Math.max(s.minPct / 100, raw));
+}
+
+/** 067 — what a right pick on an answer with crowd share `share` earns, before any multiplier. Pure. */
+export const crowdPoints = (share: number, base: number): number => Math.round(base * (1 - share));
+
 /** What the question pays for a right answer, multiplier included. */
-export const earnable = (q: Pick_<Question, 'points' | 'multiplier'>): number => Math.round(q.points * q.multiplier);
+export const earnable = (q: Pick_<Question, 'kind' | 'points' | 'multiplier' | 'crowd'>): number =>
+  // A choice question: the most a pick can earn (the boldest call, at the crowd floor).
+  Math.round((q.kind === 'choice' ? crowdPoints(q.crowd.minPct / 100, q.crowd.base) : q.points) * q.multiplier);
 
 /** Dense ranks, highest first: equal scores share a rank and the next rank skips. Pure. */
 export function denseRanks<T extends { key: string; score: number }>(rows: T[]): (T & { rank: number })[] {
   const sorted = [...rows].sort((a, b) => b.score - a.score || (a.key < b.key ? -1 : 1));
+  let rank = 0;
+  let last: number | null = null;
+  return sorted.map((r, i) => {
+    if (r.score !== last) {
+      rank = i + 1;
+      last = r.score;
+    }
+    return { ...r, rank };
+  });
+}
+
+/** Tie-break facts for one player (067): exact scores hit, accuracy, their first pick. */
+export interface TieStats {
+  exact: number;
+  settled: number;
+  correct: number;
+  firstPick: Date | null;
+}
+
+/**
+ * 067 competitions R7 — players ranked by points; equal points share a rank.
+ * Inside a tie the order is the prize order: more exact scores, then higher
+ * accuracy, then the earlier first pick. Pure.
+ */
+export function prizeRanks<T extends { key: string; score: number }>(rows: T[], stats: Map<string, TieStats>): (T & { rank: number })[] {
+  const acc = (k: string) => {
+    const x = stats.get(k);
+    return x && x.settled ? x.correct / x.settled : 0;
+  };
+  const first = (k: string) => stats.get(k)?.firstPick?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  const sorted = [...rows].sort(
+    (a, b) =>
+      b.score - a.score ||
+      (stats.get(b.key)?.exact ?? 0) - (stats.get(a.key)?.exact ?? 0) ||
+      acc(b.key) - acc(a.key) ||
+      first(a.key) - first(b.key) ||
+      (a.key < b.key ? -1 : 1),
+  );
   let rank = 0;
   let last: number | null = null;
   return sorted.map((r, i) => {
@@ -508,6 +589,11 @@ const toCompetition = (r: CompetitionRow): Competition => ({
   prizes: asPrizes(r.prizes),
   scoring: asScoring(r.scoring),
   finePrint: r.finePrint,
+  crowdBase: r.crowdBase,
+  crowdPrior: r.crowdPrior,
+  crowdMinPct: r.crowdMinPct,
+  crowdMaxPct: r.crowdMaxPct,
+  specialistMinPicks: r.specialistMinPicks,
   createdAt: r.createdAt,
 });
 
@@ -576,6 +662,7 @@ const toQuestion = (r: QuestionRow): Question => ({
   options: [...r.options]
     .sort((a, b) => a.position - b.position)
     .map((o) => ({ id: o.id, label: o.label, position: o.position, outcome: (OUTCOMES as readonly string[]).includes(o.outcome ?? '') ? (o.outcome as Outcome) : null })),
+  crowd: { base: r.crowdBase, prior: r.crowdPrior, minPct: r.crowdMinPct, maxPct: r.crowdMaxPct },
 });
 
 type PickRow = Awaited<ReturnType<Db['competitionPick']['findFirstOrThrow']>>;
@@ -588,6 +675,8 @@ const toPick = (r: PickRow): Pick => ({
   away: r.away,
   correct: r.correct,
   pointsAwarded: r.pointsAwarded,
+  crowdShare: r.crowdShare === null ? null : Number(r.crowdShare),
+  basePoints: r.basePoints,
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
 });
@@ -686,6 +775,11 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
       prizes,
       scoring,
       finePrint: trimOrNull(input.finePrint),
+      crowdBase: int(input.crowdBase, 1, 500, 'Crowd base points', 20),
+      crowdPrior: int(input.crowdPrior, 0, 1000, 'Starting picks', 10),
+      crowdMinPct: int(input.crowdMinPct, 1, 49, 'Crowd floor %', 5),
+      crowdMaxPct: int(input.crowdMaxPct, 51, 99, 'Crowd cap %', 95),
+      specialistMinPicks: int(input.specialistMinPicks, 0, 500, 'Specialist minimum picks', 10),
     };
   }
 
@@ -970,6 +1064,32 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
     return out;
   }
 
+  /**
+   * 067 — the crowd as `viewerId` would price it right now: per question, per
+   * option, its share (their own pick left out, as when they pick). Active
+   * players' picks only.
+   */
+  async function crowdFor(questionIds: readonly string[], viewerId: string | null): Promise<Map<string, Map<string, number>>> {
+    const out = new Map<string, Map<string, number>>();
+    if (!questionIds.length) return out;
+    const [qs, rows] = await Promise.all([
+      questionsByIds(questionIds),
+      db.$queryRaw<{ question_id: string; option_id: string; n: number }[]>`
+        SELECT pk.question_id, pk.option_id, COUNT(*)::int AS n
+          FROM competition_picks pk
+          JOIN users u ON u.id = pk.user_id AND u.status = 'active'
+         WHERE pk.question_id = ANY(${[...questionIds]}::uuid[]) AND pk.option_id IS NOT NULL
+           AND (${viewerId}::uuid IS NULL OR pk.user_id <> ${viewerId}::uuid)
+         GROUP BY pk.question_id, pk.option_id`,
+    ]);
+    for (const [id, q] of qs) {
+      const counts = rows.filter((r) => r.question_id === id);
+      const total = counts.reduce((sum, r) => sum + r.n, 0);
+      out.set(id, new Map(q.options.map((o) => [o.id, crowdShare(counts.find((r) => r.option_id === o.id)?.n ?? 0, total, q.options.length, q.crowd)])));
+    }
+    return out;
+  }
+
   async function picksFor(userId: string, questionIds: readonly string[]): Promise<Map<string, Pick>> {
     if (!questionIds.length) return new Map();
     const rows = await db.competitionPick.findMany({ where: { userId, questionId: { in: [...questionIds] } } });
@@ -1018,7 +1138,13 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
       if (options.some((o) => o.outcome !== null && !OUTCOMES.includes(o.outcome))) throw invalid('An option’s result is home, draw or away.');
       if (options.some((o) => o.outcome !== null) && !match) throw invalid('Only a question on a match can tie options to the result.');
     }
-    const points = input.points ?? (input.kind === 'exact_score' ? 25 : 10);
+    if (input.kind === 'exact_score') {
+      // 067 — exact scores are football only (results count after 90 minutes plus stoppage time).
+      const sport = await db.sport.findUnique({ where: { id: sportId }, select: { slug: true } });
+      if (sport?.slug !== 'football') throw invalid('Exact-score questions are football only.');
+    }
+    // A choice question scores from the crowd (067); `points` only pays an exact score.
+    const points = input.points ?? (input.kind === 'exact_score' ? 25 : c.crowdBase);
     if (!Number.isInteger(points) || points < 1 || points > 500) throw invalid('Points are 1 to 500.');
     const multiplier = validMultiplier(input.multiplier, m?.multiplier ?? 1);
 
@@ -1038,6 +1164,11 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
         startsAt,
         opensAt,
         locksAt,
+        // 067 — a copy: a settings change mid-season only affects questions made after it.
+        crowdBase: c.crowdBase,
+        crowdPrior: c.crowdPrior,
+        crowdMinPct: c.crowdMinPct,
+        crowdMaxPct: c.crowdMaxPct,
         createdBy: staffUserId,
         options: { create: options.map((o, i) => ({ id: newId(), label: o.label, position: i, outcome: o.outcome })) },
       },
@@ -1133,10 +1264,30 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
       const current = locked[0];
       if (!current) throw new UserError(CompetitionCode.QUESTION_NOT_FOUND, 'That question is no longer there.');
       if (current.status !== 'open' || current.locks_at.getTime() <= now().getTime()) throw new UserError(CompetitionCode.LOCKED, 'Picks are locked for this question.');
+      const previous = await tx.competitionPick.findUnique({ where: { questionId_userId: { questionId, userId } } });
+      let lock: { crowdShare: number | null; basePoints: number };
+      if (q.kind === 'exact_score') {
+        lock = { crowdShare: null, basePoints: q.points };
+      } else if (previous && previous.optionId === data.optionId && previous.basePoints !== null) {
+        // The same answer again keeps its lock: re-tapping never re-prices a pick.
+        return previous;
+      } else {
+        // 067 R5 — the share is read BEFORE this pick counts: other active players' picks only.
+        const counts = await tx.$queryRaw<{ option_id: string; n: number }[]>`
+          SELECT pk.option_id, COUNT(*)::int AS n
+            FROM competition_picks pk
+            JOIN users u ON u.id = pk.user_id AND u.status = 'active'
+           WHERE pk.question_id = ${questionId}::uuid AND pk.user_id <> ${userId}::uuid AND pk.option_id IS NOT NULL
+           GROUP BY pk.option_id`;
+        const total = counts.reduce((sum, r) => sum + r.n, 0);
+        const on = counts.find((r) => r.option_id === data.optionId)?.n ?? 0;
+        const share = crowdShare(on, total, q.options.length, q.crowd);
+        lock = { crowdShare: Math.round(share * 10_000) / 10_000, basePoints: crowdPoints(share, q.crowd.base) };
+      }
       return tx.competitionPick.upsert({
         where: { questionId_userId: { questionId, userId } },
-        create: { id: newId(), questionId, competitionId: c.id, userId, ...data, createdAt: now(), updatedAt: now() },
-        update: { ...data, updatedAt: now() },
+        create: { id: newId(), questionId, competitionId: c.id, userId, ...data, ...lock, createdAt: now(), updatedAt: now() },
+        update: { ...data, ...lock, updatedAt: now() },
       });
     });
     return toPick(row);
@@ -1194,6 +1345,9 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
 
   /** competitions R6 — on a finished match: suggest every open question's answer and settle those it can tell. */
   async function settleFromMatch(matchId: string, result: FinalResult): Promise<{ suggested: number; settled: number }> {
+    // 067 — football results count after 90 minutes plus stoppage: a match that went to extra
+    // time or penalties is settled by staff, from the 90-minute score.
+    if (result.afterExtraTime) return { suggested: 0, settled: 0 };
     const open = await db.competitionQuestion.findMany({ where: { matchId, status: 'open' }, include });
     let suggested = 0;
     let settled = 0;
@@ -1243,7 +1397,9 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
   }
 
   async function activeCounts(c: Competition): Promise<Map<string, number>> {
-    const since = new Date(now().getTime() - c.activeDays * DAY);
+    // 067 — qualification is checked when the season ends: after it, "active" means active at the end.
+    const at = Math.min(now().getTime(), c.endsAt.getTime());
+    const since = new Date(at - c.activeDays * DAY);
     const rows = await db.$queryRaw<{ group_id: string; active: number }[]>`
       SELECT m.group_id, COUNT(DISTINCT m.user_id)::int AS active
         FROM competition_members m
@@ -1291,6 +1447,21 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
       .sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
   }
 
+  /** 067 — per player since `since`: exact scores hit, settled and right picks, and their first pick. */
+  async function tieStats(competitionId: string, since: Date): Promise<Map<string, TieStats>> {
+    const rows = await db.$queryRaw<{ user_id: string; exact: number; settled: number; correct: number; first_pick: Date | null }[]>`
+      SELECT pk.user_id,
+             COUNT(*) FILTER (WHERE pk.correct AND q.kind = 'exact_score')::int AS exact,
+             COUNT(*) FILTER (WHERE pk.correct IS NOT NULL)::int AS settled,
+             COUNT(*) FILTER (WHERE pk.correct)::int AS correct,
+             MIN(pk.created_at) AS first_pick
+        FROM competition_picks pk
+        JOIN competition_questions q ON q.id = pk.question_id
+       WHERE pk.competition_id = ${competitionId}::uuid AND pk.created_at >= ${since}
+       GROUP BY pk.user_id`;
+    return new Map(rows.map((r) => [r.user_id, { exact: r.exact, settled: r.settled, correct: r.correct, firstPick: r.first_pick }]));
+  }
+
   async function namesOf(userIds: readonly string[]): Promise<Map<string, string>> {
     if (!userIds.length) return new Map();
     const rows = await db.user.findMany({ where: { id: { in: [...userIds] } }, select: { id: true, displayName: true } });
@@ -1298,18 +1469,24 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
   }
 
   /** Per group and sport, the top two members by Cup points in that sport. */
-  async function sportLeaders(competitionId: string, groupId: string | null): Promise<{ groupId: string; sportId: string; userId: string; points: number; place: number }[]> {
+  /**
+   * Per group and sport, the top two members by Cup points in that sport, among
+   * those with at least `specialistMinPicks` picks there (067). Void questions don't count.
+   */
+  async function sportLeaders(c: Competition, groupId: string | null): Promise<{ groupId: string; sportId: string; userId: string; points: number; place: number }[]> {
     const rows = await db.$queryRaw<{ group_id: string; sport_id: string; user_id: string; points: number; place: number }[]>`
       WITH s AS (
-        SELECT m.group_id, p.sport_id, p.user_id, SUM(p.points)::int AS points
-          FROM competition_points p
-          JOIN competition_members m ON m.competition_id = p.competition_id AND m.user_id = p.user_id
-         WHERE p.competition_id = ${competitionId}::uuid AND p.sport_id IS NOT NULL
+        SELECT m.group_id, q.sport_id, pk.user_id, COALESCE(SUM(pk.points_awarded), 0)::int AS points
+          FROM competition_picks pk
+          JOIN competition_questions q ON q.id = pk.question_id AND q.status <> 'void'
+          JOIN competition_members m ON m.competition_id = pk.competition_id AND m.user_id = pk.user_id
+         WHERE pk.competition_id = ${c.id}::uuid
            AND (${groupId}::uuid IS NULL OR m.group_id = ${groupId}::uuid)
-         GROUP BY m.group_id, p.sport_id, p.user_id
+         GROUP BY m.group_id, q.sport_id, pk.user_id
+        HAVING COUNT(*) >= ${c.specialistMinPicks}
       )
       SELECT group_id, sport_id, user_id, points, place::int FROM (
-        SELECT s.*, row_number() OVER (PARTITION BY group_id, sport_id ORDER BY points DESC, user_id) AS place FROM s
+        SELECT s.*, row_number() OVER (PARTITION BY group_id, sport_id ORDER BY points DESC, user_id) AS place FROM s WHERE points > 0
       ) x WHERE place <= 2`;
     return rows.map((r) => ({ groupId: r.group_id, sportId: r.sport_id, userId: r.user_id, points: r.points, place: r.place }));
   }
@@ -1321,8 +1498,8 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
   }
 
   /** userId → the specialist titles they hold in their group. */
-  async function titlesOf(competitionId: string): Promise<Map<string, string>> {
-    const leaders = (await sportLeaders(competitionId, null)).filter((l) => l.place === 1);
+  async function titlesOf(c: Competition): Promise<Map<string, string>> {
+    const leaders = (await sportLeaders(c, null)).filter((l) => l.place === 1);
     const sports = await sportsById([...new Set(leaders.map((l) => l.sportId))]);
     const out = new Map<string, string>();
     for (const l of leaders.sort((a, b) => b.points - a.points)) {
@@ -1357,7 +1534,7 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
 
     if (kind === 'specialists') {
       if (!me) return { kind, rows: [], me: null, size: 0 };
-      const [leaders, sportIds] = await Promise.all([sportLeaders(c.id, me.groupId), db.competitionQuestion.findMany({ where: { competitionId: c.id }, distinct: ['sportId'], select: { sportId: true } })]);
+      const [leaders, sportIds] = await Promise.all([sportLeaders(c, me.groupId), db.competitionQuestion.findMany({ where: { competitionId: c.id }, distinct: ['sportId'], select: { sportId: true } })]);
       const ids = [...new Set([...sportIds.map((s) => s.sportId), ...leaders.map((l) => l.sportId)])];
       const [sports, names] = await Promise.all([sportsById(ids), namesOf([...new Set(leaders.map((l) => l.userId))])]);
       const groupName = (await group(me.groupId))?.name ?? '';
@@ -1365,13 +1542,15 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
       const myPlaces = userId
         ? await db.$queryRaw<{ sport_id: string; place: number }[]>`
             WITH s AS (
-              SELECT p.sport_id, p.user_id, SUM(p.points)::int AS points
-                FROM competition_points p
-                JOIN competition_members m ON m.competition_id = p.competition_id AND m.user_id = p.user_id
-               WHERE p.competition_id = ${c.id}::uuid AND m.group_id = ${me.groupId}::uuid AND p.sport_id IS NOT NULL
-               GROUP BY p.sport_id, p.user_id
+              SELECT q.sport_id, pk.user_id, COALESCE(SUM(pk.points_awarded), 0)::int AS points
+                FROM competition_picks pk
+                JOIN competition_questions q ON q.id = pk.question_id AND q.status <> 'void'
+                JOIN competition_members m ON m.competition_id = pk.competition_id AND m.user_id = pk.user_id
+               WHERE pk.competition_id = ${c.id}::uuid AND m.group_id = ${me.groupId}::uuid
+               GROUP BY q.sport_id, pk.user_id
+              HAVING COUNT(*) >= ${c.specialistMinPicks}
             )
-            SELECT sport_id, place::int FROM (SELECT s.*, rank() OVER (PARTITION BY sport_id ORDER BY points DESC) AS place FROM s) x WHERE user_id = ${userId}::uuid`
+            SELECT sport_id, place::int FROM (SELECT s.*, rank() OVER (PARTITION BY sport_id ORDER BY points DESC) AS place FROM s WHERE points > 0) x WHERE user_id = ${userId}::uuid`
         : [];
       const placeOf = new Map(myPlaces.map((p) => [p.sport_id, p.place]));
       const rows: BoardRow[] = ids
@@ -1385,7 +1564,7 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
             rank: null,
             key: sportId,
             title,
-            subtitle: holder ? `${mine ? 'You' : names.get(holder.userId) ?? 'Player'} · ${groupName}${!mine && myPlace ? ` (you are #${myPlace})` : ''}` : 'No points yet: up for grabs',
+            subtitle: holder ? `${mine ? 'You' : names.get(holder.userId) ?? 'Player'} · ${groupName}${!mine && myPlace ? ` (you are #${myPlace})` : ''}` : `No one with ${c.specialistMinPicks}+ picks yet`,
             score: holder?.points ?? 0,
             move: null,
             isNew: false,
@@ -1402,15 +1581,22 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
     const since = periodStart(c, period);
     const weekAgo = new Date(t.getTime() - 7 * DAY);
     const scope = (xs: { userId: string; groupId: string; points: number; joinedAt: Date }[]) => (kind === 'my_group' ? xs.filter((x) => x.groupId === me!.groupId) : xs);
-    const [current, before] = await Promise.all([memberTotals(c.id, since, t), period === 'season' ? memberTotals(c.id, since, weekAgo) : Promise.resolve(null)]);
-    const ranked = denseRanks(scope(current).map((x) => ({ key: x.userId, score: x.points, groupId: x.groupId, joinedAt: x.joinedAt })));
+    const [current, before, ties] = await Promise.all([
+      memberTotals(c.id, since, t),
+      period === 'season' ? memberTotals(c.id, since, weekAgo) : Promise.resolve(null),
+      tieStats(c.id, since),
+    ]);
+    const ranked = prizeRanks(
+      scope(current).map((x) => ({ key: x.userId, score: x.points, groupId: x.groupId, joinedAt: x.joinedAt })),
+      ties,
+    );
     const was = before ? new Map(denseRanks(scope(before).map((x) => ({ key: x.userId, score: x.points }))).map((r) => [r.key, r.rank])) : null;
     const shown = ranked.slice(0, first);
     const myRow = userId ? ranked.find((r) => r.key === userId) : undefined;
     const extra = myRow && !shown.includes(myRow) ? [myRow] : [];
     const [names, titles, groupNames] = await Promise.all([
       namesOf([...shown, ...extra].map((r) => r.key)),
-      titlesOf(c.id),
+      titlesOf(c),
       db.competitionGroup.findMany({ where: { competitionId: c.id }, select: { id: true, name: true } }).then((gs) => new Map(gs.map((g) => [g.id, g.name]))),
     ]);
     const toRow = (r: (typeof ranked)[number]): BoardRow => {
@@ -1637,6 +1823,7 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
     staffQuestions,
     splits,
     picksFor,
+    crowdFor,
     createQuestion,
     updateQuestion,
     addWinnerQuestions,

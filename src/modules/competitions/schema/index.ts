@@ -12,7 +12,7 @@ import { audited, requirePlatformStaff } from '../../../graphql/staff.js';
 import { attempt, requireActor, UserErrorRef, type UserErrorShape } from '../../../graphql/userError.js';
 import { ProMatchRef } from '../../pro/schema/index.js';
 import { SportRef } from '../../sport/schema/index.js';
-import { competitions, earnable } from '../index.js';
+import { competitions, crowdPoints, earnable } from '../index.js';
 import type {
   Competition,
   CompetitionBoard,
@@ -105,6 +105,18 @@ const sportOf = async (id: string) => {
 
 const percent = (n: number, total: number) => (total ? Math.round((n / total) * 100) : 0);
 
+/**
+ * 067 — the crowd. `forPricing`: as this viewer would be priced now (their own
+ * pick left out, as when they pick). Otherwise everyone's picks: the % shown.
+ */
+const crowdOf = (ctx: Ctx, questionId: string, forPricing = false) => {
+  const viewer = forPricing ? (ctx.actor?.userId ?? null) : null;
+  return requestLoader<string, Map<string, number>>(ctx, `competitionCrowd:${viewer ?? '-'}`, async (ids) => {
+    const found = await competitions.crowdFor(ids, viewer);
+    return ids.map((id) => found.get(id) ?? new Map());
+  }).load(questionId);
+};
+
 // --- types ---
 
 const PrizeRef = builder.objectRef<CompetitionPrize>('CompetitionPrize').implement({
@@ -163,7 +175,7 @@ const MomentRef = builder.objectRef<CompetitionMoment>('CompetitionMoment').impl
   }),
 });
 
-type OptionView = CompetitionOption & { questionId: string; correctOptionId: string | null; settled: boolean };
+type OptionView = CompetitionOption & { questionId: string; correctOptionId: string | null; settled: boolean; multiplier: number; crowdBase: number };
 const OptionRef = builder.objectRef<OptionView>('CompetitionOption').implement({
   fields: (t) => ({
     id: t.exposeID('id'),
@@ -175,6 +187,17 @@ const OptionRef = builder.objectRef<OptionView>('CompetitionOption').implement({
       return percent(s.byOption.get(o.id) ?? 0, s.total);
     } }),
     isCorrect: t.boolean({ nullable: true, resolve: (o) => (o.settled ? o.id === o.correctOptionId : null) }),
+    crowdPercent: t.int({
+      description: '067 — the crowd share (all picks plus the starting picks, 5–95% cap), 0–100.',
+      resolve: async (o, _a, ctx) => Math.round(((await crowdOf(ctx, o.questionId)).get(o.id) ?? 0) * 100),
+    }),
+    pays: t.int({
+      description: '067 — what a right pick on this option earns if made now, multiplier included.',
+      resolve: async (o, _a, ctx) => {
+        const share = (await crowdOf(ctx, o.questionId, true)).get(o.id) ?? 0.5;
+        return Math.round(crowdPoints(share, o.crowdBase) * o.multiplier);
+      },
+    }),
   }),
 });
 
@@ -186,6 +209,8 @@ const PickRef = builder.objectRef<CompetitionPick>('CompetitionPick').implement(
     away: t.exposeInt('away', { nullable: true }),
     correct: t.exposeBoolean('correct', { nullable: true }),
     pointsAwarded: t.exposeInt('pointsAwarded', { nullable: true }),
+    crowdPercent: t.int({ nullable: true, description: '067 — the crowd share locked when you picked, 0–100.', resolve: (p) => (p.crowdShare === null ? null : Math.round(p.crowdShare * 100)) }),
+    basePoints: t.exposeInt('basePoints', { nullable: true, description: '067 — what a right answer earns, before any bonus multiplier.' }),
     updatedAt: t.field({ type: 'DateTime', resolve: (p) => p.updatedAt }),
   }),
 });
@@ -208,7 +233,7 @@ export const CompetitionQuestionRef = builder.objectRef<CompetitionQuestion>('Co
     status: t.field({ type: QStatusEnum, resolve: (q) => q.status }),
     options: t.field({
       type: [OptionRef],
-      resolve: (q) => q.options.map((o) => ({ ...o, questionId: q.id, correctOptionId: q.correctOptionId, settled: q.status === 'settled' })),
+      resolve: (q) => q.options.map((o) => ({ ...o, questionId: q.id, correctOptionId: q.correctOptionId, settled: q.status === 'settled', multiplier: q.multiplier, crowdBase: q.crowd.base })),
     }),
     totalPicks: t.int({ resolve: async (q, _a, ctx) => (await splitOf(ctx, q.id)).total }),
     correctHome: t.exposeInt('correctHome', { nullable: true }),
@@ -339,6 +364,11 @@ export const CompetitionRef = builder.objectRef<Competition>('Competition').impl
     prizes: t.field({ type: [PrizeRef], resolve: (c) => c.prizes }),
     scoring: t.field({ type: [ScoringRef], resolve: (c) => c.scoring }),
     finePrint: t.exposeString('finePrint', { nullable: true }),
+    crowdBase: t.exposeInt('crowdBase', { description: '067 — a right pick earns round(crowdBase × (1 − crowd share)).' }),
+    crowdPrior: t.exposeInt('crowdPrior', { description: '067 — starting picks, spread evenly, so every question starts even.' }),
+    crowdMinPct: t.exposeInt('crowdMinPct'),
+    crowdMaxPct: t.exposeInt('crowdMaxPct'),
+    specialistMinPicks: t.exposeInt('specialistMinPicks'),
     groupsPlaying: t.int({ resolve: async (c) => (await competitions.counts(c.id)).groupsPlaying }),
     players: t.int({ resolve: async (c) => (await competitions.counts(c.id)).players }),
     openQuestionCount: t.int({ resolve: async (c) => (await competitions.openSummary(c.id)).questions }),
@@ -511,6 +541,11 @@ const CompetitionInputRef = builder.inputType('CompetitionInput', {
     prizes: t.field({ type: [PrizeInput] }),
     scoring: t.field({ type: [ScoringInput] }),
     finePrint: t.string(),
+    crowdBase: t.int(),
+    crowdPrior: t.int(),
+    crowdMinPct: t.int(),
+    crowdMaxPct: t.int(),
+    specialistMinPicks: t.int(),
   }),
 });
 const GroupInputRef = builder.inputType('CompetitionGroupInput', {
@@ -690,6 +725,11 @@ builder.mutationFields((t) => ({
           prizes: i.prizes ?? null,
           scoring: i.scoring ?? null,
           finePrint: i.finePrint ?? null,
+          crowdBase: i.crowdBase ?? null,
+          crowdPrior: i.crowdPrior ?? null,
+          crowdMinPct: i.crowdMinPct ?? null,
+          crowdMaxPct: i.crowdMaxPct ?? null,
+          specialistMinPicks: i.specialistMinPicks ?? null,
         }),
       );
       return { competition: data, userError };

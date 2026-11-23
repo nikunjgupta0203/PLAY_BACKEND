@@ -1347,6 +1347,14 @@ type Competition {
   adminQuestions(first: Int = 200, status: CompetitionQuestionStatus): [CompetitionQuestion!]!
   board(first: Int = 50, kind: CompetitionBoardKind!, period: CompetitionBoardPeriod): CompetitionBoard!
   codeRequired: Boolean!
+
+  """067 — a right pick earns round(crowdBase × (1 − crowd share))."""
+  crowdBase: Int!
+  crowdMaxPct: Int!
+  crowdMinPct: Int!
+
+  """067 — starting picks, spread evenly, so every question starts even."""
+  crowdPrior: Int!
   endsAt: DateTime!
   finePrint: String
   groupNoun: String!
@@ -1379,6 +1387,7 @@ type Competition {
   seasonLabel: String!
   segment: CompetitionSegment!
   slug: String!
+  specialistMinPicks: Int!
 
   """Sports with open or upcoming questions."""
   sports: [Sport!]!
@@ -1507,6 +1516,10 @@ type CompetitionGroupStanding {
 input CompetitionInput {
   activeDays: Int
   codeRequired: Boolean
+  crowdBase: Int
+  crowdMaxPct: Int
+  crowdMinPct: Int
+  crowdPrior: Int
   endsAt: DateTime!
   finePrint: String
 
@@ -1522,6 +1535,7 @@ input CompetitionInput {
   seasonLabel: String!
   segment: CompetitionSegment!
   slug: String!
+  specialistMinPicks: Int
   startsAt: DateTime!
   status: CompetitionStatus
   tagline: String
@@ -1569,10 +1583,19 @@ type CompetitionMomentPayload {
 }
 
 type CompetitionOption {
+  """
+  067 — the crowd share (all picks plus the starting picks, 5–95% cap), 0–100.
+  """
+  crowdPercent: Int!
   id: ID!
   isCorrect: Boolean
   label: String!
   outcome: CompetitionOutcome
+
+  """
+  067 — what a right pick on this option earns if made now, multiplier included.
+  """
+  pays: Int!
   percent: Int!
   picks: Int!
 }
@@ -1595,7 +1618,13 @@ type CompetitionPayload {
 
 type CompetitionPick {
   away: Int
+
+  """067 — what a right answer earns, before any bonus multiplier."""
+  basePoints: Int
   correct: Boolean
+
+  """067 — the crowd share locked when you picked, 0–100."""
+  crowdPercent: Int
   home: Int
   id: ID!
   optionId: ID

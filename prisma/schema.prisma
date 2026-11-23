@@ -3064,6 +3064,12 @@ model Competition {
   prizes          Json     @default("[]")
   scoring         Json     @default("[]")
   finePrint       String?  @map("fine_print")
+  /// 067 — crowd scoring: a right pick earns round(crowdBase × (1 − share)).
+  crowdBase          Int      @default(20) @map("crowd_base")
+  crowdPrior         Int      @default(10) @map("crowd_prior")
+  crowdMinPct        Int      @default(5) @map("crowd_min_pct") @db.SmallInt
+  crowdMaxPct        Int      @default(95) @map("crowd_max_pct") @db.SmallInt
+  specialistMinPicks Int      @default(10) @map("specialist_min_picks")
   createdBy       String?  @map("created_by") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
@@ -3176,6 +3182,11 @@ model CompetitionQuestion {
   settledBy         String?   @map("settled_by") @db.Uuid
   openNotifiedAt    DateTime? @map("open_notified_at") @db.Timestamptz(6)
   lockNotifiedAt    DateTime? @map("lock_notified_at") @db.Timestamptz(6)
+  /// 067 — the competition's crowd settings when the question was made.
+  crowdBase         Int       @default(20) @map("crowd_base")
+  crowdPrior        Int       @default(10) @map("crowd_prior")
+  crowdMinPct       Int       @default(5) @map("crowd_min_pct") @db.SmallInt
+  crowdMaxPct       Int       @default(95) @map("crowd_max_pct") @db.SmallInt
   createdBy         String?   @map("created_by") @db.Uuid
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
@@ -3214,6 +3225,9 @@ model CompetitionPick {
   away          Int?
   correct       Boolean?
   pointsAwarded Int?     @map("points_awarded")
+  /// 067 — the crowd share locked at the pick, and what a right answer earns before any multiplier.
+  crowdShare    Decimal? @map("crowd_share") @db.Decimal(5, 4)
+  basePoints    Int?     @map("base_points")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 

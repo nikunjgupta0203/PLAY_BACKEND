@@ -39,7 +39,13 @@ export const pro = createProService({
     if (settled > 0) logger.info({ matchId: match.id, settled }, 'system questions settled');
     // 066 competitions R6 — Cup questions on the match settle from the same result.
     const { competitions } = await import('../competitions/index.js');
-    const cup = await competitions.settleFromMatch(match.id, { homeScore: match.homeScore, awayScore: match.awayScore, winner: match.winner });
+    const cup = await competitions.settleFromMatch(match.id, {
+      homeScore: match.homeScore,
+      awayScore: match.awayScore,
+      winner: match.winner,
+      // API-Football's AET / PEN (feeds/apiFootball.ts STATUS): the final score includes extra time.
+      afterExtraTime: /extra time|penalt/i.test(match.statusDetail ?? ''),
+    });
     if (cup.suggested > 0) logger.info({ matchId: match.id, ...cup }, 'cup questions settled from the result');
   },
   async abandoned(match) {

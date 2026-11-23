@@ -12,6 +12,9 @@ import { createProService, type ProService } from '../src/modules/pro/service/in
 import {
   CompetitionCode,
   createCompetitionsService,
+  crowdPoints,
+  crowdShare,
+  prizeRanks,
   denseRanks,
   groupScore,
   istMonthStart,
@@ -115,14 +118,45 @@ beforeEach(async () => {
 });
 
 describe('competitions: pure rules', () => {
-  it('R5: right choice × multiplier; exact score in full, right result a third', () => {
+  it('R5: a right choice earns its locked points × multiplier; exact score in full, right result a third', () => {
     const q = { kind: 'choice' as const, points: 10, multiplier: 1.5, correctOptionId: 'a', correctHome: null, correctAway: null };
+    expect(scorePick(q, { optionId: 'a', home: null, away: null, basePoints: 14 })).toEqual({ correct: true, points: 21 });
+    expect(scorePick(q, { optionId: 'b', home: null, away: null, basePoints: 6 })).toEqual({ correct: false, points: 0 });
+    // A pick made before 067 (no lock) falls back to the flat points.
     expect(scorePick(q, { optionId: 'a', home: null, away: null })).toEqual({ correct: true, points: 15 });
-    expect(scorePick(q, { optionId: 'b', home: null, away: null })).toEqual({ correct: false, points: 0 });
     const e = { kind: 'exact_score' as const, points: 25, multiplier: 2, correctOptionId: null, correctHome: 2, correctAway: 1 };
     expect(scorePick(e, { optionId: null, home: 2, away: 1 })).toEqual({ correct: true, points: 50 });
     expect(scorePick(e, { optionId: null, home: 3, away: 0 })).toEqual({ correct: false, points: 16 });
     expect(scorePick(e, { optionId: null, home: 0, away: 0 })).toEqual({ correct: false, points: 0 });
+  });
+
+  it('067 R5: crowd odds: the founder examples, the even start and the 5–95% cap', () => {
+    const s = { base: 20, prior: 10, minPct: 5, maxPct: 95 };
+    expect(crowdPoints(0.5, 20)).toBe(10);
+    expect(crowdPoints(0.32, 20)).toBe(14);
+    expect(crowdPoints(0.68, 20)).toBe(6);
+    // Nobody has picked: 50/50 for two answers, a third each for three.
+    expect(crowdShare(0, 0, 2, s)).toBe(0.5);
+    expect(crowdShare(0, 0, 3, s)).toBeCloseTo(1 / 3);
+    // (picks on it + 10 / answers) / (all picks + 10): 2 of 5 picks, two answers -> 7/15.
+    expect(crowdShare(2, 5, 2, s)).toBeCloseTo(7 / 15);
+    // The cap keeps every right pick between 1 and 19 points.
+    expect(crowdShare(0, 1000, 2, s)).toBe(0.05);
+    expect(crowdShare(1000, 1000, 2, s)).toBe(0.95);
+    expect(crowdPoints(0.05, 20)).toBe(19);
+    expect(crowdPoints(0.95, 20)).toBe(1);
+  });
+
+  it('067 R7: equal points share a rank; prize order is exact scores, then accuracy, then the earlier pick', () => {
+    const t = (min: number) => new Date(Date.UTC(2026, 11, 1, 10, min));
+    const stats = new Map([
+      ['a', { exact: 0, settled: 10, correct: 5, firstPick: t(1) }],
+      ['b', { exact: 1, settled: 10, correct: 2, firstPick: t(9) }],
+      ['c', { exact: 0, settled: 10, correct: 8, firstPick: t(5) }],
+      ['d', { exact: 0, settled: 10, correct: 8, firstPick: t(2) }],
+    ]);
+    const rows = prizeRanks(['a', 'b', 'c', 'd', 'e'].map((key) => ({ key, score: key === 'e' ? 5 : 50 })), stats);
+    expect(rows.map((r) => `${r.key}${r.rank}`)).toEqual(['b1', 'd1', 'c1', 'a1', 'e5']);
   });
 
   it('R7: a group scores the average of its top N, a missing slot counting 0', () => {
@@ -264,18 +298,108 @@ describe('competitions: questions and picks (R4, R5)', () => {
     expect(r).toEqual({ suggested: 2, settled: 2 });
     expect((await cups.question(free.id))?.status).toBe('open'); // untagged: waits for staff
     const pts = await prisma.competitionPoint.findMany({ orderBy: { points: 'desc' } });
+    // a backed the home side first (a third of the crowd): round(20 x 2/3) = 13, x 2 for the moment.
     expect(pts.map((p) => [p.userId, p.points])).toEqual([
+      [a, 26],
       [a, 25],
-      [a, 20],
       [b, 8],
     ]);
     expect(await cups.voidOpenForMatch(m.id)).toBe(1);
   });
 });
 
+describe('competitions: crowd scoring (067)', () => {
+  async function twoWay(c: Competition) {
+    return cups.createQuestion(null, {
+      competitionId: c.id,
+      sportId: cricket,
+      eventLabel: 'T20 · MI v CSK',
+      kind: 'choice',
+      prompt: 'Who wins?',
+      startsAt: new Date(clock.getTime() + 2 * H),
+      options: [{ label: 'MI' }, { label: 'CSK' }],
+    });
+  }
+
+  it('locks the share at the pick (own pick not counted); the same answer again keeps the lock; a switch re-prices', async () => {
+    const c = await cup();
+    await college(c, 'DTU', 'AMB-002');
+    const [a, b, d] = [await user('Aarav M'), await user('Ishita K'), await user('Dev T')];
+    for (const u of [a, b, d]) await cups.join(u, { code: 'AMB-002' });
+    const q = await twoWay(c);
+    const [mi, csk] = q.options.map((o) => o.id) as [string, string];
+    const first = await cups.pick(a, q.id, { optionId: mi });
+    expect([first.crowdShare, first.basePoints]).toEqual([0.5, 10]);
+    await cups.pick(b, q.id, { optionId: mi });
+    await cups.pick(d, q.id, { optionId: mi });
+    // Re-tapping MI never re-prices a's pick, though MI is now the favourite.
+    expect((await cups.pick(a, q.id, { optionId: mi })).basePoints).toBe(10);
+    // Switching to CSK does: the others are 2 on MI, 0 on CSK -> (0 + 5) / 12.
+    const switched = await cups.pick(a, q.id, { optionId: csk });
+    expect(switched.crowdShare).toBeCloseTo(0.4167, 3);
+    expect(switched.basePoints).toBe(12);
+    // The crowd a viewer sees leaves their own pick out.
+    const crowd = (await cups.crowdFor([q.id], d)).get(q.id)!;
+    expect(crowd.get(mi)).toBeCloseTo((1 + 5) / 12);
+  });
+
+  it("a deactivated player's picks do not move the crowd", async () => {
+    const c = await cup();
+    await college(c, 'DTU', 'AMB-002');
+    const [a, gone] = [await user('Aarav M'), await user('Gone G')];
+    for (const u of [a, gone]) await cups.join(u, { code: 'AMB-002' });
+    const q = await twoWay(c);
+    await cups.pick(gone, q.id, { optionId: q.options[0]!.id });
+    await prisma.user.update({ where: { id: gone }, data: { status: 'deactivated' } });
+    expect((await cups.pick(a, q.id, { optionId: q.options[0]!.id })).crowdShare).toBe(0.5);
+  });
+
+  it('settings are copied onto each question, so a change mid-season only affects new ones', async () => {
+    const c = await cup();
+    const before = await twoWay(c);
+    await cups.saveCompetition(null, c.id, { ...c, crowdBase: 30, crowdPrior: 4 });
+    const after = await twoWay(c);
+    expect(before.crowd).toMatchObject({ base: 20, prior: 10 });
+    expect(after.crowd).toMatchObject({ base: 30, prior: 4 });
+  });
+
+  it('exact scores are football only; extra time and penalties wait for staff', async () => {
+    const c = await cup();
+    await college(c, 'DTU', 'AMB-002');
+    expect(
+      await codeOf(() =>
+        cups.createQuestion(null, { competitionId: c.id, sportId: cricket, eventLabel: 'Test', kind: 'exact_score', startsAt: new Date(clock.getTime() + 2 * H) }),
+      ),
+    ).toBe(CompetitionCode.INVALID);
+    const me = await user('Aarav M');
+    await cups.join(me, { code: 'AMB-002' });
+    const m = await proMatch();
+    const exact = await cups.createQuestion(null, { competitionId: c.id, matchId: m.id, kind: 'exact_score' });
+    await cups.pick(me, exact.id, { home: 1, away: 1 });
+    expect(await cups.settleFromMatch(m.id, { homeScore: '2', awayScore: '1', winner: 'home', afterExtraTime: true })).toEqual({ suggested: 0, settled: 0 });
+    expect((await cups.question(exact.id))?.status).toBe('open');
+  });
+
+  it('a specialist title needs the minimum picks in that sport', async () => {
+    const c = await cup({ specialistMinPicks: 2 });
+    await college(c, 'DTU', 'AMB-002');
+    const me = await user('Aarav M');
+    await cups.join(me, { code: 'AMB-002' });
+    const q = await twoWay(c);
+    await cups.pick(me, q.id, { optionId: q.options[0]!.id });
+    await cups.settle(null, q.id, { optionId: q.options[0]!.id });
+    const one = await cups.board(c.id, me, 'specialists');
+    expect(one.rows[0]?.subtitle).toBe('No one with 2+ picks yet');
+    const q2 = await twoWay(c);
+    await cups.pick(me, q2.id, { optionId: q2.options[0]!.id });
+    await cups.settle(null, q2.id, { optionId: q2.options[0]!.id });
+    expect((await cups.board(c.id, me, 'specialists')).rows[0]?.subtitle).toMatch(/^You · DTU/);
+  });
+});
+
 describe('competitions: boards and standing (R7)', () => {
   async function setup() {
-    const c = await cup();
+    const c = await cup({ specialistMinPicks: 1 });
     await college(c, 'DTU', 'AMB-002');
     await college(c, 'NSUT', 'AMB-003');
     const [a, b, x, y] = [await user('Aarav Mehta'), await user('Ishita Kapoor'), await user('Tanvi Kaur'), await user('Shlok Dutta')];
@@ -288,7 +412,6 @@ describe('competitions: boards and standing (R7)', () => {
       kind: 'choice',
       prompt: 'What is the result?',
       startsAt: new Date(clock.getTime() + 2 * H),
-      points: 40,
       options: [{ label: 'India' }, { label: 'NZ' }],
     });
     await cups.pick(a, q.id, { optionId: q.options[0]!.id });
@@ -302,21 +425,28 @@ describe('competitions: boards and standing (R7)', () => {
   it('groups: average of the top N; players: everyone; my group; specialists', async () => {
     const { c, a, y } = await setup();
     const groups = await cups.board(c.id, y, 'groups');
+    // Crowd odds as the picks came in: a 50% -> 10, b 55% -> 9, x 58% -> 8; y backed NZ and missed.
+    // DTU (10 + 9) / 2 = 9.5 -> 10; NSUT (8 + 0) / 2 = 4.
     expect(groups.rows.map((r) => [r.title, r.rank, r.score, r.isMe])).toEqual([
-      ['DTU', 1, 40, false],
-      ['NSUT', 2, 20, true],
+      ['DTU', 1, 10, false],
+      ['NSUT', 2, 4, true],
     ]);
     expect(groups.rows[0]!.subtitle).toBe('2 active');
     const players = await cups.board(c.id, y, 'players');
     expect(players.size).toBe(4);
-    expect(players.rows.map((r) => r.rank)).toEqual([1, 1, 1, 4]);
+    expect(players.rows.map((r) => [r.rank, r.score])).toEqual([
+      [1, 10],
+      [2, 9],
+      [3, 8],
+      [4, 0],
+    ]);
     expect(players.rows.find((r) => r.isMe)?.title).toBe('You · Shlok D.');
     const mine = await cups.board(c.id, a, 'my_group');
     expect(mine.rows).toHaveLength(2);
     expect(mine.rows.find((r) => r.isMe)?.key).toBe(a);
     const specialists = await cups.board(c.id, a, 'specialists');
     expect(specialists.rows[0]?.title).toBe('Cricket Guru');
-    expect(specialists.rows[0]?.score).toBe(40);
+    expect(specialists.rows[0]?.score).toBe(10);
   });
 
   it('standing: group rank, the group ahead, my ranks, accuracy and share code', async () => {
@@ -324,7 +454,7 @@ describe('competitions: boards and standing (R7)', () => {
     const s = await cups.standing(c.id, y);
     expect(s).not.toBeNull();
     expect(s!.group.rank).toBe(2);
-    expect(s!.ahead).toEqual({ name: 'DTU', by: 20 });
+    expect(s!.ahead).toEqual({ name: 'DTU', by: 6 });
     expect(s!.groups).toBe(2);
     expect(s!.rank).toBe(4);
     expect(s!.players).toBe(4);
