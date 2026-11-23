@@ -44,6 +44,8 @@ export const DEEP_LINK_ROUTES = [
   'pro_match',
   /** Floodlight — the Predict screen (points, open questions, results). */
   'predictions',
+  /** 066 — a prediction competition's space (Campus Cup); `id` is its slug. */
+  'competition',
 ] as const;
 export type DeepLinkRoute = (typeof DEEP_LINK_ROUTES)[number];
 
@@ -221,6 +223,10 @@ export interface TemplatePayloads {
   'pro.match_live': { home: string; away: string; league: string };
   /** Floodlight — a pick was settled. Points have no cash value. */
   'prediction.settled': { prompt: string; correct: boolean; points: number };
+  /** 066 competitions R8 — a sport's Cup questions opened. `bonus`: a bonus moment is among them. */
+  'cup.questions_open': { competitionName: string; sports: string[]; count: number; bonus: boolean };
+  /** 066 competitions R8 — Cup questions the member hasn't picked lock within the hour. */
+  'cup.locking_soon': { competitionName: string; count: number };
 }
 
 export type TemplateKey = keyof TemplatePayloads;
@@ -771,7 +777,25 @@ export const TEMPLATES: { [K in TemplateKey]: Template<TemplatePayloads[K]> } = 
       body: p.points > 0 ? `${p.prompt} Your points are on the leaderboard.` : `${p.prompt} New questions are open now.`,
     }),
   },
+  'cup.questions_open': {
+    render: (p) => ({
+      title: p.bonus ? `Bonus moment · ${listOf(p.sports)} questions are open` : `${listOf(p.sports)} Cup questions are open`,
+      body: `${p.count === 1 ? 'A new question' : `${p.count} new questions`} in the ${p.competitionName}. Pick before the event starts.`,
+    }),
+  },
+  'cup.locking_soon': {
+    render: (p) => ({
+      title: p.count === 1 ? 'A Cup question locks within the hour' : `${p.count} Cup questions lock within the hour`,
+      body: `Make your picks in the ${p.competitionName} before they lock.`,
+    }),
+  },
 };
+
+/** "Cricket", "Cricket and Football", "Cricket, Football and F1". */
+function listOf(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? 'New';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
 
 /** "1 hr 30 min". */
 function minutesText(minutes: number): string {
@@ -845,7 +869,7 @@ export type NotificationTag = 'live' | 'pts' | 'club' | 'chat' | 'game' | 'tix' 
 /** Template-key prefixes for each filter. Prefix match keeps new templates in their family. */
 export const CATEGORY_PREFIXES: Record<Exclude<NotificationCategory, 'other'>, string[]> = {
   matches: ['pro.', 'match.', 'draw.'],
-  predictions: ['prediction.'],
+  predictions: ['prediction.', 'cup.'],
   community: ['community.', 'chat.'],
   games: ['game.'],
 };
@@ -859,7 +883,7 @@ export function categoryOf(template: string): NotificationCategory {
 
 export function tagOf(template: string): NotificationTag {
   if (template.startsWith('pro.') || template === 'match.starting_soon' || template === 'match.ready') return 'live';
-  if (template.startsWith('prediction.')) return 'pts';
+  if (template.startsWith('prediction.') || template.startsWith('cup.')) return 'pts';
   if (template.startsWith('community.')) return 'club';
   if (template.startsWith('chat.')) return 'chat';
   if (template.startsWith('game.') || template.startsWith('match.') || template.startsWith('draw.')) return 'game';

@@ -661,6 +661,8 @@ const SCHEDULES: [string, string, string][] = [
   [QUEUES.maintenance, 'close-stale-tickets', '40 * * * *'],
   // careers R8 — applications 12 months past their last status change, nightly.
   [QUEUES.maintenance, 'purge-career-applications', '50 4 * * *'],
+  // 066 competitions R8 — Cup questions that opened, and those locking within the hour.
+  [QUEUES.maintenance, 'cup-reminders', '*/5 * * * *'],
   // 060 G1 — every minute each score feed checks whether it is due (feeds R4); most
   // minutes cost nothing. Fixtures at 06:00 and 18:00 IST; headlines every two hours.
   [QUEUES.feeds, 'feeds-live', '* * * * *'],
@@ -1094,6 +1096,12 @@ export async function startWorkers(): Promise<() => void> {
 
   startWorker(QUEUES.maintenance, async (job) => {
     switch (job.name) {
+      case 'cup-reminders': {
+        const { competitions } = await import('./modules/competitions/index.js');
+        const sent = await competitions.sendReminders();
+        if (sent.opened || sent.locking) logger.info(sent, 'cup: reminders sent');
+        return;
+      }
       case 'prune-jobs': {
         const count = await jobStore.prune();
         if (count > 0) logger.info({ count }, 'pruned finished jobs');

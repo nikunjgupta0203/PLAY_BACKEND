@@ -52,6 +52,7 @@ export interface AuditEntry {
     | 'pro_match'
     | 'pro_match_message'
     | 'prediction_question'
+    | 'competition_question'
     | 'offer';
   targetId: string;
   reason?: string | null;

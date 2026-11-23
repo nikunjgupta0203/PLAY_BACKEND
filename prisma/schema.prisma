@@ -3035,3 +3035,209 @@ model ProFeedProvider {
 
   @@map("pro_feed_providers")
 }
+
+// --- 066 — prediction competitions (Campus Prediction Cup) ----------------------------
+// Apart from Floodlight predictions: own questions, picks and points. One structure
+// for every segment (campus, corporate, gym): `groupNoun` names the groups on screen.
+
+/// One season of one segment: "Campus Prediction Cup · Season 1".
+model Competition {
+  id              String   @id @db.Uuid
+  slug            String   @unique(map: "competitions_slug_key")
+  /// campus | corporate | gym | community | other
+  segment         String
+  name            String
+  seasonLabel     String   @map("season_label")
+  tagline         String?
+  groupNoun       String   @default("college") @map("group_noun")
+  groupNounPlural String   @default("colleges") @map("group_noun_plural")
+  startsAt        DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt          DateTime @map("ends_at") @db.Timestamptz(6)
+  /// draft | live | ended
+  status          String   @default("draft")
+  teamSize        Int      @default(20) @map("team_size")
+  activeDays      Int      @default(14) @map("active_days")
+  openHours       Int      @default(24) @map("open_hours")
+  codeRequired    Boolean  @default(true) @map("code_required")
+  onHome          Boolean  @default(true) @map("on_home")
+  homeOrder       Int      @default(0) @map("home_order")
+  prizes          Json     @default("[]")
+  scoring         Json     @default("[]")
+  finePrint       String?  @map("fine_print")
+  createdBy       String?  @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  groups    CompetitionGroup[]
+  codes     CompetitionCode[]
+  members   CompetitionMember[]
+  moments   CompetitionMoment[]
+  questions CompetitionQuestion[]
+
+  @@map("competitions")
+}
+
+/// The team a player plays for: a college, a company, a gym.
+model CompetitionGroup {
+  id            String   @id @db.Uuid
+  competitionId String   @map("competition_id") @db.Uuid
+  name          String
+  fullName      String?  @map("full_name")
+  city          String?
+  leadName      String?  @map("lead_name")
+  leadUserId    String?  @map("lead_user_id") @db.Uuid
+  /// active | hidden
+  status        String   @default("active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  competition Competition         @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  codes       CompetitionCode[]
+  members     CompetitionMember[]
+
+  @@map("competition_groups")
+}
+
+/// A join code ("AMB-002"): one group, one ambassador.
+model CompetitionCode {
+  code             String   @id
+  competitionId    String   @map("competition_id") @db.Uuid
+  groupId          String   @map("group_id") @db.Uuid
+  ambassadorName   String?  @map("ambassador_name")
+  ambassadorUserId String?  @map("ambassador_user_id") @db.Uuid
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  competition Competition      @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  group       CompetitionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId], map: "competition_codes_group_idx")
+  @@map("competition_codes")
+}
+
+/// user → group, set once, locked for the season.
+model CompetitionMember {
+  competitionId String   @map("competition_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  groupId       String   @map("group_id") @db.Uuid
+  code          String?
+  joinedAt      DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+
+  competition Competition      @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  group       CompetitionGroup @relation(fields: [groupId], references: [id])
+
+  @@id([competitionId, userId])
+  @@index([groupId], map: "competition_members_group_idx")
+  @@index([userId], map: "competition_members_user_idx")
+  @@map("competition_members")
+}
+
+/// A bonus moment: a big event whose questions earn ×1.5 or ×2.
+model CompetitionMoment {
+  id            String   @id @db.Uuid
+  competitionId String   @map("competition_id") @db.Uuid
+  sportId       String   @map("sport_id") @db.Uuid
+  title         String
+  subtitle      String?
+  multiplier    Decimal  @default(1.5) @db.Decimal(3, 1)
+  startsAt      DateTime @map("starts_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  competition Competition           @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  questions   CompetitionQuestion[]
+
+  @@index([competitionId, startsAt], map: "competition_moments_idx")
+  @@map("competition_moments")
+}
+
+model CompetitionQuestion {
+  id                String    @id @db.Uuid
+  competitionId     String    @map("competition_id") @db.Uuid
+  momentId          String?   @map("moment_id") @db.Uuid
+  sportId           String    @map("sport_id") @db.Uuid
+  matchId           String?   @map("match_id") @db.Uuid
+  eventLabel        String    @map("event_label")
+  /// choice | exact_score
+  kind              String
+  prompt            String
+  points            Int       @default(10)
+  multiplier        Decimal   @default(1) @db.Decimal(3, 1)
+  startsAt          DateTime  @map("starts_at") @db.Timestamptz(6)
+  opensAt           DateTime  @map("opens_at") @db.Timestamptz(6)
+  locksAt           DateTime  @map("locks_at") @db.Timestamptz(6)
+  /// open | settled | void
+  status            String    @default("open")
+  correctOptionId   String?   @map("correct_option_id") @db.Uuid
+  correctHome       Int?      @map("correct_home")
+  correctAway       Int?      @map("correct_away")
+  suggestedOptionId String?   @map("suggested_option_id") @db.Uuid
+  suggestedHome     Int?      @map("suggested_home")
+  suggestedAway     Int?      @map("suggested_away")
+  settledAt         DateTime? @map("settled_at") @db.Timestamptz(6)
+  settledBy         String?   @map("settled_by") @db.Uuid
+  openNotifiedAt    DateTime? @map("open_notified_at") @db.Timestamptz(6)
+  lockNotifiedAt    DateTime? @map("lock_notified_at") @db.Timestamptz(6)
+  createdBy         String?   @map("created_by") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  competition Competition         @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  moment      CompetitionMoment?  @relation(fields: [momentId], references: [id])
+  options     CompetitionOption[]
+  picks       CompetitionPick[]
+
+  @@index([competitionId, startsAt(sort: Desc)], map: "competition_questions_staff_idx")
+  @@map("competition_questions")
+}
+
+model CompetitionOption {
+  id         String  @id @db.Uuid
+  questionId String  @map("question_id") @db.Uuid
+  label      String
+  position   Int     @db.SmallInt
+  /// home | draw | away
+  outcome    String?
+
+  question CompetitionQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  picks    CompetitionPick[]
+
+  @@unique([questionId, position], map: "competition_options_position_key")
+  @@map("competition_options")
+}
+
+model CompetitionPick {
+  id            String   @id @db.Uuid
+  questionId    String   @map("question_id") @db.Uuid
+  competitionId String   @map("competition_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  optionId      String?  @map("option_id") @db.Uuid
+  home          Int?
+  away          Int?
+  correct       Boolean?
+  pointsAwarded Int?     @map("points_awarded")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  question CompetitionQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  option   CompetitionOption?  @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, userId], map: "competition_picks_one_key")
+  @@index([competitionId, userId, createdAt(sort: Desc)], map: "competition_picks_user_idx")
+  @@map("competition_picks")
+}
+
+/// The Cup's own points ledger: never PL4Y points.
+model CompetitionPoint {
+  id            String   @id @db.Uuid
+  competitionId String   @map("competition_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  groupId       String   @map("group_id") @db.Uuid
+  sportId       String?  @map("sport_id") @db.Uuid
+  points        Int
+  reason        String
+  ref           String
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([competitionId, userId, reason, ref], map: "competition_points_once_key")
+  @@index([competitionId, createdAt, userId], map: "competition_points_board_idx")
+  @@map("competition_points")
+}

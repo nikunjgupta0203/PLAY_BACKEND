@@ -1328,6 +1328,447 @@ enum CommunityVisibility {
   PUBLIC
 }
 
+"""
+competitions R1, R2 — a prediction competition played for a group. Its points are its own.
+"""
+type Competition {
+  activeDays: Int!
+
+  """Portal — every group, hidden ones too."""
+  adminGroups: [CompetitionGroup!]!
+
+  """Portal — newest first."""
+  adminMembers(first: Int = 200, groupId: ID): [CompetitionMemberRow!]!
+
+  """Portal — every bonus moment."""
+  adminMoments: [CompetitionMoment!]!
+
+  """Portal — every question, latest event first."""
+  adminQuestions(first: Int = 200, status: CompetitionQuestionStatus): [CompetitionQuestion!]!
+  board(first: Int = 50, kind: CompetitionBoardKind!, period: CompetitionBoardPeriod): CompetitionBoard!
+  codeRequired: Boolean!
+  endsAt: DateTime!
+  finePrint: String
+  groupNoun: String!
+  groupNounPlural: String!
+
+  """The list behind "Find your college"."""
+  groups(search: String): [CompetitionGroup!]!
+  groupsPlaying: Int!
+  homeOrder: Int!
+  id: ID!
+  isPlayable: Boolean!
+
+  """Null when you are not in it (or signed out)."""
+  me: CompetitionStanding
+
+  """Bonus moments still ahead."""
+  moments: [CompetitionMoment!]!
+  myWeek: CompetitionWeek
+  name: String!
+  nextToLock: CompetitionQuestion
+  onHome: Boolean!
+  openHours: Int!
+  openQuestionCount: Int!
+  openQuestions(first: Int = 50, sportId: ID): [CompetitionQuestion!]!
+  openSportCount: Int!
+  openingSoon(first: Int = 30): [CompetitionQuestion!]!
+  players: Int!
+  prizes: [CompetitionPrize!]!
+  scoring: [CompetitionScoringLine!]!
+  seasonLabel: String!
+  segment: CompetitionSegment!
+  slug: String!
+
+  """Sports with open or upcoming questions."""
+  sports: [Sport!]!
+  startsAt: DateTime!
+  status: CompetitionStatus!
+  tagline: String
+  teamSize: Int!
+}
+
+type CompetitionAhead {
+  by: Int!
+  name: String!
+}
+
+type CompetitionBestCall {
+  label: String!
+  points: Int!
+}
+
+type CompetitionBoard {
+  kind: CompetitionBoardKind!
+
+  """Your row, when it is below the list."""
+  me: CompetitionBoardRow
+  rows: [CompetitionBoardRow!]!
+  size: Int!
+}
+
+enum CompetitionBoardKind {
+  """Every group, by the average of its top players."""
+  GROUPS
+
+  """The members of your group."""
+  MY_GROUP
+
+  """Every member, by Cup points."""
+  PLAYERS
+
+  """The leader of each sport in your group."""
+  SPECIALISTS
+}
+
+enum CompetitionBoardPeriod {
+  """This calendar month, India time."""
+  MONTH
+  SEASON
+
+  """The last 7 days."""
+  WEEK
+}
+
+type CompetitionBoardRow {
+  isMe: Boolean!
+  isNew: Boolean!
+  key: String!
+  move: Int
+
+  """Null on the specialists board."""
+  rank: Int
+  score: Int!
+  subtitle: String!
+  title: String!
+}
+
+type CompetitionCodePayload {
+  code: CompetitionJoinCode
+  userError: UserError
+}
+
+type CompetitionCodePreview {
+  ambassadorName: String
+  code: String!
+  competition: Competition!
+  group: CompetitionGroup!
+  groupRank: Int
+}
+
+type CompetitionCountPayload {
+  count: Int!
+  userError: UserError
+}
+
+"""The team a player plays for: a college, a company, a gym."""
+type CompetitionGroup {
+  city: String
+
+  """Portal only."""
+  codes: [CompetitionJoinCode!]!
+  fullName: String
+  hidden: Boolean!
+  id: ID!
+  leadName: String
+  memberCount: Int!
+  name: String!
+}
+
+input CompetitionGroupInput {
+  city: String
+  fullName: String
+  hidden: Boolean
+  leadName: String
+  name: String!
+}
+
+type CompetitionGroupPayload {
+  group: CompetitionGroup
+  userError: UserError
+}
+
+type CompetitionGroupStanding {
+  """Members with a pick in the last `activeDays` days."""
+  active: Int!
+  groupId: ID!
+  members: Int!
+
+  """Places gained since a week ago."""
+  move: Int
+  name: String!
+
+  """At least `teamSize` active members: eligible for group prizes."""
+  qualified: Boolean!
+  rank: Int!
+  score: Int!
+}
+
+input CompetitionInput {
+  activeDays: Int
+  codeRequired: Boolean
+  endsAt: DateTime!
+  finePrint: String
+
+  """college, company, gym…"""
+  groupNoun: String
+  groupNounPlural: String
+  homeOrder: Int
+  name: String!
+  onHome: Boolean
+  openHours: Int
+  prizes: [CompetitionPrizeInput!]
+  scoring: [CompetitionScoringLineInput!]
+  seasonLabel: String!
+  segment: CompetitionSegment!
+  slug: String!
+  startsAt: DateTime!
+  status: CompetitionStatus
+  tagline: String
+  teamSize: Int
+}
+
+type CompetitionJoinCode {
+  active: Boolean!
+  ambassadorName: String
+  code: String!
+}
+
+type CompetitionMemberRow {
+  code: String
+  group: CompetitionGroup!
+  joinedAt: DateTime!
+  name: String!
+  userId: ID!
+}
+
+"""A bonus moment: a big event whose questions earn more."""
+type CompetitionMoment {
+  id: ID!
+  multiplier: Float!
+
+  """When its questions open: `openHours` before the start."""
+  opensAt: DateTime!
+  sport: Sport!
+  startsAt: DateTime!
+  subtitle: String
+  title: String!
+}
+
+input CompetitionMomentInput {
+  multiplier: Float
+  sportId: ID!
+  startsAt: DateTime!
+  subtitle: String
+  title: String!
+}
+
+type CompetitionMomentPayload {
+  moment: CompetitionMoment
+  userError: UserError
+}
+
+type CompetitionOption {
+  id: ID!
+  isCorrect: Boolean
+  label: String!
+  outcome: CompetitionOutcome
+  percent: Int!
+  picks: Int!
+}
+
+input CompetitionOptionInput {
+  label: String!
+  outcome: CompetitionOutcome
+}
+
+enum CompetitionOutcome {
+  AWAY
+  DRAW
+  HOME
+}
+
+type CompetitionPayload {
+  competition: Competition
+  userError: UserError
+}
+
+type CompetitionPick {
+  away: Int
+  correct: Boolean
+  home: Int
+  id: ID!
+  optionId: ID
+  pointsAwarded: Int
+  updatedAt: DateTime!
+}
+
+type CompetitionPrize {
+  detail: String!
+  title: String!
+}
+
+input CompetitionPrizeInput {
+  detail: String!
+  title: String!
+}
+
+"""
+competitions R4 — opens `openHours` before its event and locks when it starts.
+"""
+type CompetitionQuestion {
+  correctAway: Int
+  correctHome: Int
+
+  """What a right answer pays, multiplier included."""
+  earnable: Int!
+  eventLabel: String!
+  id: ID!
+  isLocked: Boolean!
+  isOpen: Boolean!
+  kind: CompetitionQuestionKind!
+  locksAt: DateTime!
+  match: ProMatch
+  momentId: ID
+  multiplier: Float!
+  myPick: CompetitionPick
+  opensAt: DateTime!
+  options: [CompetitionOption!]!
+  points: Int!
+  prompt: String!
+  settledAt: DateTime
+  sport: Sport!
+  startsAt: DateTime!
+  status: CompetitionQuestionStatus!
+  suggestedAway: Int
+  suggestedHome: Int
+  suggestedOptionId: ID
+  totalPicks: Int!
+}
+
+input CompetitionQuestionInput {
+  competitionId: ID!
+  eventLabel: String
+  kind: CompetitionQuestionKind!
+
+  """Default: the start."""
+  locksAt: DateTime
+
+  """
+  A pro match: sets the sport, the start, the event name, and settles tagged options from the result.
+  """
+  matchId: ID
+  momentId: ID
+
+  """Default: the moment’s, else 1."""
+  multiplier: Float
+
+  """Default: `openHours` before the start."""
+  opensAt: DateTime
+
+  """
+  A choice question: 2 to 6. None with a match: the two sides (and a draw).
+  """
+  options: [CompetitionOptionInput!]
+
+  """Default 10, or 25 for an exact score."""
+  points: Int
+
+  """Defaults: "Who wins?" with a match, "Call the exact score"."""
+  prompt: String
+
+  """Needed only without a match."""
+  sportId: ID
+  startsAt: DateTime
+}
+
+enum CompetitionQuestionKind {
+  CHOICE
+  EXACT_SCORE
+}
+
+input CompetitionQuestionPatch {
+  eventLabel: String
+  locksAt: DateTime
+  multiplier: Float
+  opensAt: DateTime
+  points: Int
+  prompt: String
+}
+
+type CompetitionQuestionPayload {
+  question: CompetitionQuestion
+  userError: UserError
+}
+
+enum CompetitionQuestionStatus {
+  OPEN
+  SETTLED
+  VOID
+}
+
+type CompetitionScoringLine {
+  label: String!
+  value: String!
+}
+
+input CompetitionScoringLineInput {
+  label: String!
+  value: String!
+}
+
+enum CompetitionSegment {
+  CAMPUS
+  COMMUNITY
+  CORPORATE
+  GYM
+  OTHER
+}
+
+"""
+The signed-in member’s place: their group, their rank, their Cup points. Never PL4Y points.
+"""
+type CompetitionStanding {
+  accuracy: Int
+  ahead: CompetitionAhead
+  group: CompetitionGroup!
+  groupPlayers: Int!
+  groupStanding: CompetitionGroupStanding!
+
+  """How many groups the board ranks."""
+  groups: Int!
+  joinedAt: DateTime!
+  move: Int
+  picks: Int!
+  players: Int!
+  points: Int!
+  rank: Int!
+  rankInGroup: Int!
+  shareCode: String
+  sportsPlayed: Int!
+}
+
+enum CompetitionStatus {
+  DRAFT
+  ENDED
+  LIVE
+}
+
+"""The share card: the last 7 days."""
+type CompetitionWeek {
+  accuracy: Int
+  best: CompetitionBestCall
+  picks: Int!
+  sports: [CompetitionWeekSport!]!
+}
+
+type CompetitionWeekSport {
+  correct: Int!
+  picks: Int!
+  settled: Int!
+  sport: Sport!
+}
+
 input ContentInput {
   body: String
 
@@ -1831,6 +2272,7 @@ scalar DateTime
 R10 — non-entity screens. Closed: a new route is a reviewed schema change.
 """
 enum DeepLinkRoute {
+  COMPETITION
   CONVERSATION
   COURT_BOOKING
   EVENT_DRAW
@@ -2967,6 +3409,11 @@ A JSON object, sent as a variable. The field that takes it says what may be in i
 """
 scalar JSONObject
 
+type JoinCompetitionPayload {
+  competition: Competition
+  userError: UserError
+}
+
 """
 A league table, or one group of a group stage. Ties: points, then score difference, then score for, then the matches between those still level, then the seeding.
 """
@@ -3002,6 +3449,12 @@ type LedgerEntry {
   amountPaise: Int!
   createdAt: DateTime!
   kind: String!
+}
+
+type MakeCompetitionPickPayload {
+  pick: CompetitionPick
+  question: CompetitionQuestion
+  userError: UserError
 }
 
 type MakePredictionPayload {
@@ -3454,6 +3907,20 @@ type Mutation {
     reason: String
     venueId: ID!
   ): VenuePayload!
+
+  """
+  A "Who wins?" on every upcoming feed match in the window that has no Cup question yet.
+  """
+  adminAddCompetitionWinnerQuestions(
+    competitionId: ID!
+    days: Int = 3
+
+    """Part of the league name, e.g. "Premier League"."""
+    league: String
+    momentId: ID
+    points: Int
+    sportId: ID
+  ): CompetitionCountPayload!
   adminAddOrganisationMember(email: String!, organisationId: ID!, reason: String!, role: OrganisationAddableRole!): AddOrganisationMemberPayload!
   adminAddProMoment(input: ProMomentInput!, matchId: ID!): ProMomentPayload!
 
@@ -3478,6 +3945,7 @@ type Mutation {
     """Omit for an item not saved yet."""
     itemId: ID
   ): MediaUploadPayload!
+  adminCreateCompetitionQuestion(input: CompetitionQuestionInput!): CompetitionQuestionPayload!
 
   """
   portal — PL4Y staff create a draft hosted by an organisation (required). Its draws, edits and publishing then go through the usual mutations, which staff may call on any event.
@@ -3498,6 +3966,9 @@ type Mutation {
   portal — PL4Y staff add a venue. With `ownerEmail`, that PL4Y account owns it: edits it and runs its desk from the app. Without, staff manage it from the portal.
   """
   adminCreateVenue(input: CreateVenueInput!, ownerEmail: String, reason: String!): VenuePayload!
+
+  """Its open questions drop back to ×1."""
+  adminDeleteCompetitionMoment(id: ID!): Boolean!
 
   """
   Portal — deletes a draft or archived item. A published one must be archived first.
@@ -3583,6 +4054,14 @@ type Mutation {
   """Portal — run a feed job now. Spends calls from the same daily budget."""
   adminRunFeed(job: FeedJob!): FeedRunPayload!
 
+  """Create (no id) or edit a competition."""
+  adminSaveCompetition(id: ID, input: CompetitionInput!): CompetitionPayload!
+
+  """Add a join code to a group, or edit / switch off an existing one."""
+  adminSaveCompetitionCode(active: Boolean, ambassadorName: String, code: String!, groupId: ID!): CompetitionCodePayload!
+  adminSaveCompetitionGroup(competitionId: ID!, id: ID, input: CompetitionGroupInput!): CompetitionGroupPayload!
+  adminSaveCompetitionMoment(competitionId: ID!, id: ID, input: CompetitionMomentInput!): CompetitionMomentPayload!
+
   """Portal — create (no `id`) or edit. Saving never publishes."""
   adminSaveContent(id: ID, input: ContentInput!): ContentItemPayload!
 
@@ -3631,6 +4110,11 @@ type Mutation {
   adminSetSupportTicketStatus(status: SupportTicketStatus!, ticketId: ID!): StaffSupportTicketPayload!
 
   """
+  competitions R5 — marks every pick and writes Cup points, once. Audited.
+  """
+  adminSettleCompetitionQuestion(away: Int, home: Int, id: ID!, optionId: ID, reason: String!): CompetitionQuestionPayload!
+
+  """
   predictions R3 — marks every pick and writes points, once. Settles a result: the reason is audited.
   """
   adminSettlePredictionQuestion(away: Int, home: Int, id: ID!, optionId: ID, reason: String!): PredictionQuestionPayload!
@@ -3642,6 +4126,9 @@ type Mutation {
 
   """identity R8 — signs them out everywhere and stops new sign-ins."""
   adminSuspendUser(reason: String!, userId: ID!): AdminUserPayload!
+
+  """Only while open. Set `locksAt` to now to lock it early."""
+  adminUpdateCompetitionQuestion(id: ID!, input: CompetitionQuestionPatch!): CompetitionQuestionPayload!
   adminUpdateOrganisation(input: OrganisationDetailsInput!, organisationId: ID!, reason: String!): OrganisationPayload!
 
   """Portal — only while open. Set `locksAt` to now to lock it early."""
@@ -3656,6 +4143,9 @@ type Mutation {
   portal — correct someone’s name, email, phone, city or bio. Only the fields sent change. A new city clears their map pin, as it does in the app.
   """
   adminUpdateUser(input: AdminUpdateUserInput!, reason: String!, userId: ID!): AdminUserPayload!
+
+  """Nobody earns anything. Audited."""
+  adminVoidCompetitionQuestion(id: ID!, reason: String!): CompetitionQuestionPayload!
 
   """predictions R4 — nobody earns anything. Audited."""
   adminVoidPredictionQuestion(id: ID!, reason: String!): PredictionQuestionPayload!
@@ -3948,6 +4438,11 @@ type Mutation {
   joinCommunity(communityId: ID!, inviteCode: String): CommunityPayload!
 
   """
+  competitions R3 — join with a code (or a group, where no code is needed). Locked for the season.
+  """
+  joinCompetition(code: String, groupId: ID): JoinCompetitionPayload!
+
+  """
   Automatic while a place is free: no approval. GAME_FULL, GAME_CLOSED, GAME_REMOVED, ALREADY_JOINED.
   """
   joinGame(gameId: ID!): GamePayload!
@@ -3969,6 +4464,11 @@ type Mutation {
   leaveOrganisation(organisationId: ID!): OrganisationOkPayload!
   leaveWaitlist(registrationId: ID!): RegistrationPayload!
   logout(allDevices: Boolean = false): OkPayload!
+
+  """
+  competitions R4 — pick an option, or both scores. Changeable until it locks.
+  """
+  makeCompetitionPick(away: Int, home: Int, optionId: ID, questionId: ID!): MakeCompetitionPickPayload!
 
   """
   predictions R2 — pick an option, or give both scores for an exact-score question. Changeable until it locks.
@@ -4616,6 +5116,8 @@ enum NotificationKind {
   COMMUNITY_RENEWAL_DUE
   COMMUNITY_REQUEST_APPROVED
   COMMUNITY_REQUEST_REJECTED
+  CUP_LOCKING_SOON
+  CUP_QUESTIONS_OPEN
   DRAW_FINISHED
   DRAW_GENERATED
   EVENT_CANCELLED
@@ -6272,6 +6774,7 @@ type Query {
   Portal — a community’s paid and refunded membership payments, newest first.
   """
   adminCommunityPayments(communityId: ID!): [CommunityPayment!]!
+  adminCompetitions: [Competition!]!
 
   """Portal — every item, last edited first."""
   adminContent(first: Int = 100, kind: ContentKind, status: ContentStatus): [ContentItem!]!
@@ -6392,6 +6895,10 @@ type Query {
   Portal — held and ready community payouts, oldest first. Any staff member reads; admin and finance pay.
   """
   communityPayoutsOpen: [CommunityPayout!]!
+  competition(id: ID, slug: String): Competition
+
+  """What a join code joins, before joining. Null for an unknown code."""
+  competitionCode(code: String!): CompetitionCodePreview
   contentFeed(after: String, first: Int = 20, kind: ContentKind, q: String, sportId: ID): ContentPage!
   contentItem(id: ID!): ContentItem
   contentShelf(sportId: ID): ContentShelf!
@@ -6472,6 +6979,9 @@ type Query {
   Fills the entire Home screen (home R1). Every city's events unless `city` is passed; the profile's city is not a default (home R2). Signed-out viewers get the shelf only.
   """
   home(city: String, sportId: ID): HomeFeed!
+
+  """Home’s top card(s): live competitions, the ones you play first."""
+  homeCompetitions: [Competition!]!
   match(id: ID!): Match
   me: Viewer
 

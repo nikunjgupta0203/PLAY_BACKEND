@@ -15,7 +15,7 @@ import { builder, clampFirst } from '../../../graphql/builder.js';
 import { attempt, requireActor, UserErrorRef } from '../../../graphql/userError.js';
 import type { UserErrorShape } from '../../../graphql/userError.js';
 import { SystemError } from '../../../platform/errors/index.js';
-import { categoryOf, notifications, tagOf, TEMPLATES } from '../index.js';
+import { categoryOf, DEEP_LINK_ROUTES, notifications, tagOf, TEMPLATES } from '../index.js';
 import type { DeepLinkRoute, Notification, Preferences, Target, TemplateKey } from '../index.js';
 
 const TargetKindEnum = builder.enumType('NotificationTargetKind', {
@@ -32,24 +32,9 @@ const TargetKindEnum = builder.enumType('NotificationTargetKind', {
 
 const DeepLinkRouteEnum = builder.enumType('DeepLinkRoute', {
   description: 'R10 — non-entity screens. Closed: a new route is a reviewed schema change.',
-  values: {
-    PAYMENT_HISTORY: { value: 'payment_history' as DeepLinkRoute },
-    ORGANIZER_PAYOUTS: { value: 'organizer_payouts' as DeepLinkRoute },
-    ORGANIZER_DASHBOARD: { value: 'organizer_dashboard' as DeepLinkRoute },
-    SUPPORT_TICKET: { value: 'support_ticket' as DeepLinkRoute },
-    CONVERSATION: { value: 'conversation' as DeepLinkRoute },
-    ORGANISATION: { value: 'organisation' as DeepLinkRoute },
-    COURT_BOOKING: { value: 'court_booking' as DeepLinkRoute },
-    EVENT_DRAW: { value: 'event_draw' as DeepLinkRoute },
-    VENUE_HOST: { value: 'venue_host' as DeepLinkRoute },
-    REWARDS: { value: 'rewards' as DeepLinkRoute },
-    VENUE_PAYMENT: { value: 'venue_payment' as DeepLinkRoute },
-    VENUE_DESK: { value: 'venue_desk' as DeepLinkRoute },
-    PARTNER_INVITE: { value: 'partner_invite' as DeepLinkRoute },
-    MY_BOOKINGS: { value: 'my_bookings' as DeepLinkRoute },
-    PRO_MATCH: { value: 'pro_match' as DeepLinkRoute },
-    PREDICTIONS: { value: 'predictions' as DeepLinkRoute },
-  },
+  // Derived from DEEP_LINK_ROUTES, so a route a template can target always serialises:
+  // a hand-kept list once broke the whole feed for a route it was missing (066 `competition`).
+  values: Object.fromEntries(DEEP_LINK_ROUTES.map((r) => [r.toUpperCase(), { value: r }])) as Record<string, { value: DeepLinkRoute }>,
 });
 
 const TemplateKeyEnum = builder.enumType('NotificationKind', {

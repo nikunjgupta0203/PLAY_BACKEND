@@ -37,11 +37,18 @@ export const pro = createProService({
     // predictions R10 — the system's own "Who wins?" settles from the result.
     const settled = await predictions.autoSettleMatch(match.id);
     if (settled > 0) logger.info({ matchId: match.id, settled }, 'system questions settled');
+    // 066 competitions R6 — Cup questions on the match settle from the same result.
+    const { competitions } = await import('../competitions/index.js');
+    const cup = await competitions.settleFromMatch(match.id, { homeScore: match.homeScore, awayScore: match.awayScore, winner: match.winner });
+    if (cup.suggested > 0) logger.info({ matchId: match.id, ...cup }, 'cup questions settled from the result');
   },
   async abandoned(match) {
     const { predictions } = await import('../predictions/index.js');
     const n = await predictions.voidOpenForMatch(match.id);
     if (n > 0) logger.info({ matchId: match.id, voided: n }, 'abandoned match: open questions voided');
+    const { competitions } = await import('../competitions/index.js');
+    const cup = await competitions.voidOpenForMatch(match.id);
+    if (cup > 0) logger.info({ matchId: match.id, voided: cup }, 'abandoned match: open cup questions voided');
   },
 });
 

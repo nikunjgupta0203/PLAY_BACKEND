@@ -32,6 +32,7 @@ import './modules/careers/schema/index.js';
 import './modules/rewards/schema/index.js';
 import './modules/pro/schema/index.js';
 import './modules/predictions/schema/index.js';
+import './modules/competitions/schema/index.js';
 import './modules/content/schema/index.js';
 import './modules/venuepay/schema/index.js';
 import './modules/pricing/schema/index.js';
