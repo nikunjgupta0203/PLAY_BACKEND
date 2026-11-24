@@ -121,6 +121,7 @@ const InningsRef = builder.objectRef<Innings>('ProInnings').implement({
     columns: t.exposeStringList('columns'),
     rows: t.field({ type: [ScoreRowRef], resolve: (i) => i.rows }),
     footer: t.string({ nullable: true, resolve: (i) => i.footer ?? null }),
+    extras: t.string({ nullable: true, description: 'A batting card’s extras: Extras 23 (b 4, lb 6, w 10, nb 3).', resolve: (i) => i.extras ?? null }),
   }),
 });
 

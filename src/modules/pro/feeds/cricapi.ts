@@ -428,10 +428,24 @@ export function parseCricBalls(raw: unknown): BallEvent[] {
   return out.sort((a, b) => a.inn - b.inn || a.over - b.over || a.ball - b.ball);
 }
 
+/** 2026-11-24 — "Extras 23 (b 4, lb 6, w 10, nb 3)" from an innings' extras, when the payload has them. Pure. */
+export function extrasText(raw: unknown): string | null {
+  const e = obj(raw);
+  const total = num(e['r']) ?? num(e['total']);
+  if (total === null) return null;
+  const parts = (['b', 'lb', 'w', 'nb', 'p'] as const).flatMap((k) => {
+    const v = num(e[k]);
+    return v === null ? [] : [`${k} ${v}`];
+  });
+  return cut(`Extras ${total}${parts.length ? ` (${parts.join(', ')})` : ''}`, 120);
+}
+
 /**
- * A CricAPI scorecard → pro R2 innings tables, latest innings first. Up to two
- * innings get batting and bowling; a longer match keeps the last four batting
- * cards (the shape holds four tables). Pure.
+ * A CricAPI scorecard → pro R2 innings tables. 2026-11-24 (scorecard v2) —
+ * every innings gets its batting card, then the bowling against it, titled
+ * with the innings ("Batting · 2nd inns"), so a Test keeps all four innings'
+ * bowling too (8 tables). Latest innings first, so the card in play leads.
+ * The batting card carries the innings' extras when the payload has them. Pure.
  */
 export function parseCricScorecard(raw: unknown): Innings[] {
   const d = obj(raw);
@@ -439,34 +453,33 @@ export function parseCricScorecard(raw: unknown): Innings[] {
   const teams = arr(d['teams']).map((t) => str(t)).filter((t): t is string => t !== null);
   const codeOf = (name: string) => str(info.find((t) => str(t['name'])?.toLowerCase() === name.toLowerCase())?.['shortname']) ?? codeFor(name);
   const scores = scoresOf(d, teams);
-  const innings = arr(d['scorecard']).map(obj);
+  const innings = arr(d['scorecard']).map(obj).slice(0, 4);
   const batted = inningsTeams(innings.map((inn) => str(inn['inning']) ?? ''), teams);
-  const tables: Innings[] = [];
-  const few = innings.length <= 2;
-  innings.forEach((inn, i) => {
+  const pairs: Innings[][] = innings.map((inn, i) => {
     const label = str(inn['inning']) ?? '';
     const battingName = teams.find((t) => t.toLowerCase() === batted[i]) ?? label.replace(/\s+inning.*$/i, '');
     const bowlingName = teams.find((t) => t !== battingName) ?? '';
     const s = scores[i];
-    const title = few ? 'Batting' : `Batting · ${ordinal(i + 1)} inns`;
-    tables.push({
-      team: (codeOf(battingName) || 'BAT').slice(0, 10),
-      title,
-      columns: ['R', 'B', '4s', '6s', 'SR'],
-      rows: arr(inn['batting'])
-        .map(obj)
-        .slice(0, 30)
-        .map((b) => ({
-          name: cut(str(obj(b['batsman'])['name']) ?? str(b['batsman']) ?? '—', 60)!,
-          detail: cut(str(b['dismissal-text']) ?? null, 80),
-          cells: [b['r'], b['b'], b['4s'], b['6s'], b['sr']].map((c) => (str(c) ?? '').slice(0, 10)),
-        })),
-      footer: s ? `Total ${scoreText(s)} (${s.o} ov)` : null,
-    });
-    if (few) {
-      tables.push({
+    const inns = `${ordinal(i + 1)} inns`;
+    return [
+      {
+        team: (codeOf(battingName) || 'BAT').slice(0, 10),
+        title: `Batting · ${inns}`,
+        columns: ['R', 'B', '4s', '6s', 'SR'],
+        rows: arr(inn['batting'])
+          .map(obj)
+          .slice(0, 30)
+          .map((b) => ({
+            name: cut(str(obj(b['batsman'])['name']) ?? str(b['batsman']) ?? '—', 60)!,
+            detail: cut(str(b['dismissal-text']) ?? null, 80),
+            cells: [b['r'], b['b'], b['4s'], b['6s'], b['sr']].map((c) => (str(c) ?? '').slice(0, 10)),
+          })),
+        footer: s ? `Total ${scoreText(s)} (${s.o} ov)` : null,
+        extras: extrasText(inn['extras']),
+      },
+      {
         team: (codeOf(bowlingName) || 'BOWL').slice(0, 10),
-        title: 'Bowling',
+        title: `Bowling · ${inns}`,
         columns: ['O', 'M', 'R', 'W', 'Econ'],
         rows: arr(inn['bowling'])
           .map(obj)
@@ -477,12 +490,11 @@ export function parseCricScorecard(raw: unknown): Innings[] {
             cells: [b['o'], b['m'], b['r'], b['w'], b['eco']].map((c) => (str(c) ?? '').slice(0, 10)),
           })),
         footer: null,
-      });
-    }
+      },
+    ];
   });
   // Latest innings first: the batting card in play leads the Match Centre.
-  const ordered = few ? (tables.length === 4 ? [tables[2]!, tables[3]!, tables[0]!, tables[1]!] : tables) : tables.reverse();
-  return ordered.slice(0, 4);
+  return pairs.reverse().flat().slice(0, 8);
 }
 
 export function cricapiAdapter(key: () => string = () => config.CRICAPI_KEY, dailyLimit: number = config.CRICAPI_DAILY_LIMIT): ScoreAdapter {

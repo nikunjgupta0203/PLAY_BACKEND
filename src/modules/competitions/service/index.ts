@@ -50,6 +50,8 @@ export const CompetitionCode = {
   CODE_INVALID: 'COMPETITION_CODE_INVALID',
   CODE_REQUIRED: 'COMPETITION_CODE_REQUIRED',
   ALREADY_IN_GROUP: 'COMPETITION_ALREADY_IN_GROUP',
+  /** 068 — an ambassador code that belongs to another group than the one picked. */
+  CODE_WRONG_GROUP: 'COMPETITION_CODE_WRONG_GROUP',
   NOT_MEMBER: 'COMPETITION_NOT_MEMBER',
   QUESTION_NOT_FOUND: 'COMPETITION_QUESTION_NOT_FOUND',
   NOT_OPEN: 'COMPETITION_QUESTION_NOT_OPEN',
@@ -123,6 +125,8 @@ export interface Group {
   leadName: string | null;
   leadUserId: string | null;
   status: 'active' | 'hidden';
+  /** 068 — the player who typed it in when joining; null = added by staff. */
+  addedByUserId: string | null;
 }
 
 export interface JoinCode {
@@ -607,6 +611,7 @@ const toGroup = (r: GroupRow): Group => ({
   leadName: r.leadName,
   leadUserId: r.leadUserId,
   status: r.status as Group['status'],
+  addedByUserId: r.addedByUserId,
 });
 
 type CodeRow = Awaited<ReturnType<Db['competitionCode']['findFirstOrThrow']>>;
@@ -881,33 +886,60 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
    * not need one) a group id. Once in, the group never changes this season;
    * joining the same group again is a no-op.
    */
-  async function join(userId: string, by: { code?: string | null; groupId?: string | null }): Promise<Member> {
+  /**
+   * competitions R3 — join, locked for the season. Three ways in:
+   *   - a code alone (a shared link): the code picks the group;
+   *   - a group from the list, with an optional ambassador code (068): the code
+   *     must be that group's, and is kept so the ambassador gets the credit;
+   *   - 068 — a group the player types in (`newGroup`), when theirs isn't listed:
+   *     an existing name (any case) joins that group, else a new one is made,
+   *     marked as added by the player. Only where no code is required.
+   */
+  async function join(
+    userId: string,
+    by: { code?: string | null; groupId?: string | null; competitionId?: string | null; newGroup?: { name: string; city?: string | null } | null },
+  ): Promise<Member> {
+    const typedCode = by.code?.trim() ? by.code : null;
+    const found = typedCode ? await previewCode(typedCode) : null;
+    if (typedCode && !found) throw new UserError(CompetitionCode.CODE_INVALID, 'That code didn’t work. Check it with your Campus Lead.');
+
     let competition: Competition;
-    let groupId: string;
-    let code: string | null = null;
-    if (by.code?.trim()) {
-      const found = await previewCode(by.code);
-      if (!found) throw new UserError(CompetitionCode.CODE_INVALID, 'That code didn’t work. Check it with your Campus Lead.');
-      competition = found.competition;
-      groupId = found.group.id;
-      code = found.code.code;
-    } else if (by.groupId) {
+    let groupId: string | null = null;
+    if (by.groupId) {
       const g = await group(by.groupId);
       if (!g || g.status !== 'active') throw new UserError(CompetitionCode.NOT_FOUND, 'That group is no longer there.');
       competition = await requireCompetition(g.competitionId);
-      if (competition.codeRequired) throw new UserError(CompetitionCode.CODE_REQUIRED, `Ask your ${competition.groupNoun}’s lead for the code to join.`);
+      if (found && found.group.id !== g.id) throw new UserError(CompetitionCode.CODE_WRONG_GROUP, `That code is for ${found.group.name}. Pick ${found.group.name}, or clear the code.`);
+      if (!found && competition.codeRequired) throw new UserError(CompetitionCode.CODE_REQUIRED, `Ask your ${competition.groupNoun}’s lead for the code to join.`);
       groupId = g.id;
+    } else if (by.newGroup) {
+      if (!by.competitionId) throw invalid('Which competition?');
+      competition = await requireCompetition(by.competitionId);
+      if (competition.codeRequired) throw new UserError(CompetitionCode.CODE_REQUIRED, `Ask your ${competition.groupNoun}’s lead for the code to join.`);
+      const name = by.newGroup.name.trim().replace(/\s+/g, ' ');
+      if (name.length < 2 || name.length > 40) throw invalid(`Your ${competition.groupNoun}’s name is 2 to 40 characters.`);
+      const same = await db.competitionGroup.findFirst({ where: { competitionId: competition.id, name: { equals: name, mode: 'insensitive' } } });
+      if (same && same.status !== 'active') throw new UserError(CompetitionCode.NOT_FOUND, `${same.name} can’t be joined right now.`);
+      if (found && found.group.id !== same?.id) throw new UserError(CompetitionCode.CODE_WRONG_GROUP, `That code is for ${found.group.name}. Pick ${found.group.name}, or clear the code.`);
+      groupId = same?.id ?? null;
+    } else if (found) {
+      competition = found.competition;
+      groupId = found.group.id;
     } else {
-      throw new UserError(CompetitionCode.CODE_INVALID, 'Type your code.');
+      throw new UserError(CompetitionCode.CODE_INVALID, `Pick your college, or type your code.`);
     }
+    if (found && found.competition.id !== competition.id) throw new UserError(CompetitionCode.CODE_INVALID, 'That code is for another competition.');
     if (!isPlayable(competition)) throw new UserError(CompetitionCode.CLOSED, `${competition.name} isn’t open to join right now.`);
+
     const existing = await membership(competition.id, userId);
     if (existing) {
-      if (existing.groupId === groupId) return existing;
+      if (groupId && existing.groupId === groupId) return existing;
       throw new UserError(CompetitionCode.ALREADY_IN_GROUP, `You already play for another ${competition.groupNoun} this season.`);
     }
+    if (!groupId && by.newGroup) groupId = await addPlayerGroup(competition.id, userId, by.newGroup);
+    const code = found?.code.code ?? null;
     try {
-      const row = await db.competitionMember.create({ data: { competitionId: competition.id, userId, groupId, code, joinedAt: now() } });
+      const row = await db.competitionMember.create({ data: { competitionId: competition.id, userId, groupId: groupId!, code, joinedAt: now() } });
       return toMember(row);
     } catch (e) {
       // A double tap: the first join won.
@@ -915,6 +947,23 @@ export function createCompetitionsService(deps: CompetitionsDeps) {
         const won = await membership(competition.id, userId);
         if (won?.groupId === groupId) return won;
         throw new UserError(CompetitionCode.ALREADY_IN_GROUP, `You already play for another ${competition.groupNoun} this season.`);
+      }
+      throw e;
+    }
+  }
+
+  /** 068 — a group a player typed in. Two players typing the same name at once end up in one group. */
+  async function addPlayerGroup(competitionId: string, userId: string, input: { name: string; city?: string | null }): Promise<string> {
+    const name = input.name.trim().replace(/\s+/g, ' ');
+    try {
+      const g = await db.competitionGroup.create({
+        data: { id: newId(), competitionId, name, city: trimOrNull(input.city ?? null)?.slice(0, 60) ?? null, addedByUserId: userId, status: 'active' },
+      });
+      return g.id;
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const won = await db.competitionGroup.findFirst({ where: { competitionId, name: { equals: name, mode: 'insensitive' } }, select: { id: true } });
+        if (won) return won.id;
       }
       throw e;
     }

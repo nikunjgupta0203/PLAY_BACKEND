@@ -72,6 +72,8 @@ export const InningsSchema = z.object({
   columns: z.array(z.string().trim().max(6)).max(8),
   rows: z.array(ScoreRowSchema).max(30),
   footer: z.string().trim().max(120).nullable().optional(),
+  /** 2026-11-24 — a batting card's extras line: "Extras 23 (b 4, lb 6, w 10, nb 3)". */
+  extras: z.string().trim().max(120).nullable().optional(),
 });
 
 /** 064 — one Info row: "Format" · "T20", "Toss" · "India, chose to bat". */
@@ -579,7 +581,7 @@ export function createProService(deps: ProDeps) {
     if (patch.startsAt !== undefined) data.startsAt = patch.startsAt;
     if (patch.stats !== undefined) data.stats = parseJson(z.array(StatSchema).max(6), patch.stats, 'stats row');
     if (patch.currentOver !== undefined) data.currentOver = parseJson(z.array(BallSchema).max(12), patch.currentOver, 'over');
-    if (patch.scorecard !== undefined) data.scorecard = parseJson(z.array(InningsSchema).max(4), patch.scorecard, 'scorecard');
+    if (patch.scorecard !== undefined) data.scorecard = parseJson(z.array(InningsSchema).max(8), patch.scorecard, 'scorecard');
     if (patch.facts !== undefined) data.facts = parseJson(z.array(FactSchema).max(10), patch.facts, 'match info');
     if (patch.squads !== undefined) data.squads = parseJson(z.array(SquadSchema).max(2), patch.squads, 'squads');
     if (patch.progress !== undefined) data.progress = parseJson(z.array(ProgressPointSchema).max(MAX_PROGRESS), patch.progress, 'score progress');

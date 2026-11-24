@@ -135,6 +135,7 @@ export const CompetitionGroupRef = builder.objectRef<CompetitionGroup>('Competit
     city: t.exposeString('city', { nullable: true }),
     leadName: t.exposeString('leadName', { nullable: true }),
     hidden: t.boolean({ resolve: (g) => g.status === 'hidden' }),
+    addedByPlayer: t.boolean({ description: '068 — a player typed this group in when joining (staff may rename, merge or hide it).', resolve: (g) => g.addedByUserId !== null }),
     memberCount: t.int({ resolve: (g, _a, ctx) => memberCountOf(ctx, g.id) }),
   }),
 });
@@ -487,11 +488,19 @@ const PickPayload = builder
 builder.mutationFields((t) => ({
   joinCompetition: t.field({
     type: JoinPayload,
-    description: 'competitions R3 — join with a code (or a group, where no code is needed). Locked for the season.',
-    args: { code: t.arg.string(), groupId: t.arg.id() },
+    description:
+      'competitions R3 — join, locked for the season: a code alone; a group from the list with an optional ambassador code (068); or (068) `newGroupName` + `competitionId` when your group is not listed, where no code is required.',
+    args: { code: t.arg.string(), groupId: t.arg.id(), competitionId: t.arg.id(), newGroupName: t.arg.string(), newGroupCity: t.arg.string() },
     resolve: async (_r, args, ctx) => {
       const actor = requireActor(ctx);
-      const { data, userError } = await attempt(() => competitions.join(actor.userId, { code: args.code ?? null, groupId: args.groupId ? String(args.groupId) : null }));
+      const { data, userError } = await attempt(() =>
+        competitions.join(actor.userId, {
+          code: args.code ?? null,
+          groupId: args.groupId ? String(args.groupId) : null,
+          competitionId: args.competitionId ? String(args.competitionId) : null,
+          newGroup: args.newGroupName?.trim() ? { name: args.newGroupName, city: args.newGroupCity ?? null } : null,
+        }),
+      );
       return { competition: data ? await competitions.byId(data.competitionId) : null, userError };
     },
   }),

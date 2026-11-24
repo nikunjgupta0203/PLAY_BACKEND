@@ -230,6 +230,51 @@ describe('competitions: joining (R3)', () => {
   });
 });
 
+describe('competitions: entry by college, optional code (068)', () => {
+  it('pick a college from the list; an ambassador code is optional and must be the college’s', async () => {
+    const c = await cup({ codeRequired: false });
+    const dtu = await college(c, 'DTU', 'AMB-001');
+    const nsut = await college(c, 'NSUT', 'AMB-002');
+    const [a, b, d] = [await user('Aarav M'), await user('Ishita K'), await user('Dev T')];
+    // No code: joins, no credit.
+    expect(await cups.join(a, { groupId: dtu.id })).toMatchObject({ groupId: dtu.id, code: null });
+    // The college's own code: joins, and the ambassador gets the credit.
+    expect(await cups.join(b, { groupId: dtu.id, code: ' amb-001 ' })).toMatchObject({ groupId: dtu.id, code: 'AMB-001' });
+    // Another college's code: refused, nothing joined.
+    expect(await codeOf(() => cups.join(d, { groupId: dtu.id, code: 'AMB-002' }))).toBe(CompetitionCode.CODE_WRONG_GROUP);
+    expect(await codeOf(() => cups.join(d, { groupId: nsut.id, code: 'WHAT-9' }))).toBe(CompetitionCode.CODE_INVALID);
+    expect(await cups.join(d, { groupId: nsut.id })).toMatchObject({ groupId: nsut.id });
+  });
+
+  it('a college that is not listed is typed in: made once, marked as added by the player, then reused', async () => {
+    const c = await cup({ codeRequired: false });
+    await college(c, 'DTU', 'AMB-001');
+    const [a, b] = [await user('Aarav M'), await user('Ishita K')];
+    const m = await cups.join(a, { competitionId: c.id, newGroup: { name: '  Amity   Noida ', city: 'Noida' } });
+    const g = await prisma.competitionGroup.findUniqueOrThrow({ where: { id: m.groupId } });
+    expect([g.name, g.city, g.addedByUserId]).toEqual(['Amity Noida', 'Noida', a]);
+    // The same name in any case joins that group, not a second one.
+    expect((await cups.join(b, { competitionId: c.id, newGroup: { name: 'AMITY NOIDA' } })).groupId).toBe(m.groupId);
+    expect(await prisma.competitionGroup.count({ where: { competitionId: c.id } })).toBe(2);
+    // A typed name that is a listed college joins it.
+    const e = await user('Esha P');
+    expect((await cups.join(e, { competitionId: c.id, newGroup: { name: 'dtu' } })).groupId).not.toBe(m.groupId);
+  });
+
+  it('typing a college: refused where a code is required, for a bad name, or once you play for another', async () => {
+    const strict = await cup();
+    const a = await user('Aarav M');
+    expect(await codeOf(() => cups.join(a, { competitionId: strict.id, newGroup: { name: 'Amity' } }))).toBe(CompetitionCode.CODE_REQUIRED);
+    const c = await cup({ slug: 'open-cup', codeRequired: false });
+    const dtu = await college(c, 'DTU', 'AMB-001');
+    expect(await codeOf(() => cups.join(a, { competitionId: c.id, newGroup: { name: 'A' } }))).toBe(CompetitionCode.INVALID);
+    await cups.join(a, { groupId: dtu.id });
+    expect(await codeOf(() => cups.join(a, { competitionId: c.id, newGroup: { name: 'Amity' } }))).toBe(CompetitionCode.ALREADY_IN_GROUP);
+    // Nothing was made for the refused attempts.
+    expect(await prisma.competitionGroup.count({ where: { competitionId: c.id, addedByUserId: { not: null } } })).toBe(0);
+  });
+});
+
 describe('competitions: questions and picks (R4, R5)', () => {
   it('opens open_hours before the event and locks at its start; members only', async () => {
     const c = await cup();

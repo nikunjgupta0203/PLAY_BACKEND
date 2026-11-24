@@ -3095,6 +3095,8 @@ model CompetitionGroup {
   /// active | hidden
   status        String   @default("active")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// 068 — the player who typed this college in when joining. Null = added by staff.
+  addedByUserId String?  @map("added_by_user_id") @db.Uuid
 
   competition Competition         @relation(fields: [competitionId], references: [id], onDelete: Cascade)
   codes       CompetitionCode[]

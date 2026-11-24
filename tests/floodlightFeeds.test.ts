@@ -14,7 +14,7 @@ import { CRICKET, FOOTBALL, SNOOKER, seedSport } from '../src/modules/sport/seed
 import { createProService, leagueTier, type ProService } from '../src/modules/pro/service/index.js';
 import { createFeedRunner, feedPatch, type FeedRunner } from '../src/modules/pro/feeds/runner.js';
 import { cricSeriesDates, cricSeriesWanted, moreSeries, pickCricSeries } from '../src/modules/pro/feeds/cricSeries.js';
-import { cricapiAdapter, cricBehind, cricCadence, cricEvery, cricPollDue, cricRecheck, recheckWait, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads } from '../src/modules/pro/feeds/cricapi.js';
+import { cricapiAdapter, cricBehind, cricCadence, cricEvery, cricPollDue, cricRecheck, recheckWait, cricFacts, cricProgress, mergeProgress, parseCricBalls, inningsTeams, parseCricMatch, parseCricScorecard, parseCricSquads, extrasText } from '../src/modules/pro/feeds/cricapi.js';
 import { apiFootballAdapter, parseFootballFixture } from '../src/modules/pro/feeds/apiFootball.js';
 import { parseSnookerMatch, parseSnookerPlayers, parseSnookerRounds, snookerAdapter } from '../src/modules/pro/feeds/snooker.js';
 import { codeFor, logoUrl } from '../src/modules/pro/feeds/types.js';
@@ -249,8 +249,38 @@ describe('adapters (pure)', () => {
         { inning: 'Australia Inning 1', batting: [{ batsman: { name: 'S Smith' }, r: 40, b: 30, '4s': 4, '6s': 1, sr: 133.33 }], bowling: [] },
       ],
     });
-    expect(card.map((c) => `${c.team} ${c.title}`)).toEqual(['AUS Batting', 'IND Bowling', 'IND Batting', 'AUS Bowling']);
-    expect(card[2]).toMatchObject({ columns: ['R', 'B', '4s', '6s', 'SR'], rows: [{ name: 'R Sharma', detail: 'c Smith b Starc', cells: ['64', '38', '6', '3', '168.42'] }], footer: 'Total 182/4 (20 ov)' });
+    expect(card.map((c) => `${c.team} ${c.title}`)).toEqual(['AUS Batting · 2nd inns', 'IND Bowling · 2nd inns', 'IND Batting · 1st inns', 'AUS Bowling · 1st inns']);
+    expect(card[2]).toMatchObject({ columns: ['R', 'B', '4s', '6s', 'SR'], rows: [{ name: 'R Sharma', detail: 'c Smith b Starc', cells: ['64', '38', '6', '3', '168.42'] }], footer: 'Total 182/4 (20 ov)', extras: null });
+  });
+
+  it('scorecard v2: a Test keeps batting AND bowling for all four innings, with extras when sent', () => {
+    const inn = (team: string, n: number) => ({
+      inning: `${team} Inning ${n}`,
+      batting: [{ batsman: { name: `${team} bat ${n}` }, 'dismissal-text': 'not out', r: 10, b: 20, '4s': 1, '6s': 0, sr: 50 }],
+      bowling: [{ bowler: { name: `${team} bowl ${n}` }, o: 10, m: 2, r: 30, w: 1, eco: 3 }],
+      ...(n === 1 ? { extras: { r: 23, b: 4, lb: 6, w: 10, nb: 3 } } : {}),
+    });
+    const card = parseCricScorecard({
+      teams: ['New Zealand', 'India'],
+      teamInfo: [{ name: 'New Zealand', shortname: 'NZ' }, { name: 'India', shortname: 'IND' }],
+      score: [
+        { r: 368, w: 10, o: '121', inning: 'New Zealand Inning 1' },
+        { r: 486, w: 10, o: '140', inning: 'India Inning 1' },
+        { r: 200, w: 10, o: '70', inning: 'New Zealand Inning 2' },
+        { r: 85, w: 2, o: '20', inning: 'India Inning 2' },
+      ],
+      scorecard: [inn('New Zealand', 1), inn('India', 1), inn('New Zealand', 2), inn('India', 2)],
+    });
+    expect(card.map((c) => `${c.team} ${c.title}`)).toEqual([
+      'IND Batting · 4th inns', 'NZ Bowling · 4th inns',
+      'NZ Batting · 3rd inns', 'IND Bowling · 3rd inns',
+      'IND Batting · 2nd inns', 'NZ Bowling · 2nd inns',
+      'NZ Batting · 1st inns', 'IND Bowling · 1st inns',
+    ]);
+    expect(card[6]!.extras).toBe('Extras 23 (b 4, lb 6, w 10, nb 3)');
+    expect(card[0]!.extras).toBeNull();
+    expect(extrasText({ r: 7 })).toBe('Extras 7');
+    expect(extrasText(null)).toBeNull();
   });
 
   it('an API-Football fixture: minute, stats, goals and cards as moments, the winner', () => {

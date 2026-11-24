@@ -1472,6 +1472,10 @@ type CompetitionCountPayload {
 
 """The team a player plays for: a college, a company, a gym."""
 type CompetitionGroup {
+  """
+  068 — a player typed this group in when joining (staff may rename, merge or hide it).
+  """
+  addedByPlayer: Boolean!
   city: String
 
   """Portal only."""
@@ -4467,9 +4471,9 @@ type Mutation {
   joinCommunity(communityId: ID!, inviteCode: String): CommunityPayload!
 
   """
-  competitions R3 — join with a code (or a group, where no code is needed). Locked for the season.
+  competitions R3 — join, locked for the season: a code alone; a group from the list with an optional ambassador code (068); or (068) `newGroupName` + `competitionId` when your group is not listed, where no code is required.
   """
-  joinCompetition(code: String, groupId: ID): JoinCompetitionPayload!
+  joinCompetition(code: String, competitionId: ID, groupId: ID, newGroupCity: String, newGroupName: String): JoinCompetitionPayload!
 
   """
   Automatic while a place is free: no approval. GAME_FULL, GAME_CLOSED, GAME_REMOVED, ALREADY_JOINED.
@@ -6494,6 +6498,9 @@ type ProChatPage {
 """One table of the scorecard: a batting or bowling card, a box score."""
 type ProInnings {
   columns: [String!]!
+
+  """A batting card’s extras: Extras 23 (b 4, lb 6, w 10, nb 3)."""
+  extras: String
   footer: String
   rows: [ProScoreRow!]!
   team: String!
